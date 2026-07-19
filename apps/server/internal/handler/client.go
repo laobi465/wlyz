@@ -190,7 +190,7 @@ func ClientLogin(deps *Deps) gin.HandlerFunc {
 		card, err := loadCardByCardKey(deps.DB, tenantID, req.CardKey)
 		if err != nil {
 			if err == gorm.ErrRecordNotFound {
-				writeVerifyLog(deps, app, req.HWID, req.CardKey, "login", "fail", "卡密不存在")
+				writeVerifyLogCtx(deps, c, app, req.HWID, req.CardKey, "login", "fail", "卡密不存在")
 				middleware.Fail(c, http.StatusUnauthorized, 2001, "卡密不存在或已失效")
 				return
 			}
@@ -200,14 +200,14 @@ func ClientLogin(deps *Deps) gin.HandlerFunc {
 
 		// 校验卡密属于当前应用
 		if card.AppID != app.ID {
-			writeVerifyLog(deps, app, req.HWID, req.CardKey, "login", "fail", "卡密不属于该应用")
+			writeVerifyLogCtx(deps, c, app, req.HWID, req.CardKey, "login", "fail", "卡密不属于该应用")
 			middleware.Fail(c, http.StatusUnauthorized, 2001, "卡密不存在或已失效")
 			return
 		}
 
 		// 2. 校验卡密状态
 		if valid, reason := isCardValid(card); !valid {
-			writeVerifyLog(deps, app, req.HWID, req.CardKey, "login", "fail", reason)
+			writeVerifyLogCtx(deps, c, app, req.HWID, req.CardKey, "login", "fail", reason)
 			middleware.Fail(c, http.StatusForbidden, 2002, reason)
 			return
 		}
@@ -221,7 +221,7 @@ func ClientLogin(deps *Deps) gin.HandlerFunc {
 			// 3.2 新设备：校验绑定数量上限
 			boundCount, _ := countBoundDevices(deps.DB, card.ID)
 			if int(boundCount) >= app.MaxDevices {
-				writeVerifyLog(deps, app, req.HWID, req.CardKey, "login", "fail",
+				writeVerifyLogCtx(deps, c, app, req.HWID, req.CardKey, "login", "fail",
 					fmt.Sprintf("设备数已达上限 %d", app.MaxDevices))
 				middleware.Fail(c, http.StatusForbidden, 2003,
 					fmt.Sprintf("设备绑定数已达上限 %d，请先解绑其他设备", app.MaxDevices))
@@ -297,7 +297,7 @@ func ClientLogin(deps *Deps) gin.HandlerFunc {
 		card, _ = loadCardByCardKey(deps.DB, tenantID, req.CardKey)
 
 		// 7. 写日志
-		writeVerifyLog(deps, app, req.HWID, req.CardKey, "login", "success", "登录成功")
+		writeVerifyLogCtx(deps, c, app, req.HWID, req.CardKey, "login", "success", "登录成功")
 
 		// 8. 返回
 		boundCount, _ := countBoundDevices(deps.DB, card.ID)
@@ -334,19 +334,19 @@ func ClientVerify(deps *Deps) gin.HandlerFunc {
 		// 1. 查卡密
 		card, err := loadCardByCardKey(deps.DB, app.TenantID, req.CardKey)
 		if err != nil {
-			writeVerifyLog(deps, app, req.HWID, req.CardKey, "verify", "fail", "卡密不存在")
+			writeVerifyLogCtx(deps, c, app, req.HWID, req.CardKey, "verify", "fail", "卡密不存在")
 			middleware.Fail(c, http.StatusUnauthorized, 2001, "卡密不存在或已失效")
 			return
 		}
 		if card.AppID != app.ID {
-			writeVerifyLog(deps, app, req.HWID, req.CardKey, "verify", "fail", "卡密不属于该应用")
+			writeVerifyLogCtx(deps, c, app, req.HWID, req.CardKey, "verify", "fail", "卡密不属于该应用")
 			middleware.Fail(c, http.StatusUnauthorized, 2001, "卡密不存在或已失效")
 			return
 		}
 
 		// 2. 校验状态
 		if valid, reason := isCardValid(card); !valid {
-			writeVerifyLog(deps, app, req.HWID, req.CardKey, "verify", "fail", reason)
+			writeVerifyLogCtx(deps, c, app, req.HWID, req.CardKey, "verify", "fail", reason)
 			middleware.Fail(c, http.StatusForbidden, 2002, reason)
 			return
 		}
@@ -356,7 +356,7 @@ func ClientVerify(deps *Deps) gin.HandlerFunc {
 		err = deps.DB.Where("card_id = ? AND hwid = ? AND status = ?", card.ID, req.HWID, "active").
 			First(&dev).Error
 		if err == gorm.ErrRecordNotFound {
-			writeVerifyLog(deps, app, req.HWID, req.CardKey, "verify", "fail", "设备未绑定")
+			writeVerifyLogCtx(deps, c, app, req.HWID, req.CardKey, "verify", "fail", "设备未绑定")
 			middleware.Fail(c, http.StatusForbidden, 2004, "设备未绑定或已被解绑，请重新登录")
 			return
 		}
@@ -365,7 +365,7 @@ func ClientVerify(deps *Deps) gin.HandlerFunc {
 		if app.OfflineGrace > 0 && dev.LastHeartbeatAt != nil {
 			sinceLast := time.Since(*dev.LastHeartbeatAt)
 			if sinceLast > time.Duration(app.OfflineGrace)*time.Second {
-				writeVerifyLog(deps, app, req.HWID, req.CardKey, "verify", "fail",
+				writeVerifyLogCtx(deps, c, app, req.HWID, req.CardKey, "verify", "fail",
 					"超过离线宽限期 "+itoa(app.OfflineGrace)+" 秒")
 				middleware.Fail(c, http.StatusForbidden, 2005, "超过离线宽限期，请重新登录")
 				return
@@ -376,7 +376,7 @@ func ClientVerify(deps *Deps) gin.HandlerFunc {
 		now := time.Now()
 		deps.DB.Model(&model.AppCard{}).Where("id = ?", card.ID).Update("last_verify_at", now)
 
-		writeVerifyLog(deps, app, req.HWID, req.CardKey, "verify", "success", "验证通过")
+		writeVerifyLogCtx(deps, c, app, req.HWID, req.CardKey, "verify", "success", "验证通过")
 
 		boundCount, _ := countBoundDevices(deps.DB, card.ID)
 		middleware.Success(c, gin.H{
@@ -504,7 +504,7 @@ func ClientBind(deps *Deps) gin.HandlerFunc {
 		}
 
 		_ = heartbeat.Record(c.Request.Context(), deps.Redis, app.ID, dev.ID, c.ClientIP(), c.Request.UserAgent())
-		writeVerifyLog(deps, app, req.HWID, req.CardKey, "bind", "success", "绑定成功")
+		writeVerifyLogCtx(deps, c, app, req.HWID, req.CardKey, "bind", "success", "绑定成功")
 
 		middleware.Success(c, gin.H{
 			"device_id":  dev.ID,
@@ -576,7 +576,7 @@ func ClientUnbind(deps *Deps) gin.HandlerFunc {
 
 		// 3. Redis 移除在线状态
 		_ = heartbeat.Remove(c.Request.Context(), deps.Redis, app.ID, dev.ID)
-		writeVerifyLog(deps, app, req.HWID, req.CardKey, "unbind", "success", "解绑成功")
+		writeVerifyLogCtx(deps, c, app, req.HWID, req.CardKey, "unbind", "success", "解绑成功")
 
 		middleware.Success(c, gin.H{
 			"unbound":           true,
@@ -597,7 +597,7 @@ func ClientLogout(deps *Deps) gin.HandlerFunc {
 			return
 		}
 		app := c.MustGet("app").(*model.App)
-		writeVerifyLog(deps, app, req.HWID, req.CardKey, "logout", "success", "退出登录")
+		writeVerifyLogCtx(deps, c, app, req.HWID, req.CardKey, "logout", "success", "退出登录")
 		middleware.Success(c, gin.H{"logged_out": true})
 	}
 }
@@ -723,19 +723,26 @@ func ClientVersion(deps *Deps) gin.HandlerFunc {
 
 // ============== 辅助：写验证日志 ==============
 
-// writeVerifyLog 写入验证日志（同步，生产环境 v0.3.0 应改为异步队列写入）
+// writeVerifyLog 写入验证日志（v0.3.3 起改为异步队列，不阻塞验证 API）
 // LogVerify 表无 CardKey/HWID/Message 字段，相关信息通过 Action/Result/Extra 表达
+// 注：调用方需通过 c 传递 IP/UA；本函数从 c.MustGet("app") 取 app 之外，从 c 读取客户端信息
 func writeVerifyLog(deps *Deps, app *model.App, hwid, cardKey, action, result, message string) {
-	log := &model.LogVerify{
-		TenantID:  app.TenantID,
-		AppID:     app.ID,
-		Action:    action,
-		Result:    result,
-		ClientIP:  "",
-		UserAgent: "",
-		Extra:     fmt.Sprintf(`{"card_key":"%s","hwid":"%s","message":"%s"}`, cardKey, hwid, message),
+	writeVerifyLogCtx(deps, nil, app, hwid, cardKey, action, result, message)
+}
+
+// writeVerifyLogCtx 带 gin.Context 的验证日志写入（v0.3.3 推荐使用）
+func writeVerifyLogCtx(deps *Deps, c *gin.Context, app *model.App, hwid, cardKey, action, result, message string) {
+	ip, ua := "", ""
+	if c != nil {
+		ip = c.ClientIP()
+		ua = c.Request.UserAgent()
 	}
-	_ = deps.DB.Create(log).Error
+	extra := map[string]interface{}{
+		"card_key": cardKey,
+		"hwid":     hwid,
+		"message":  message,
+	}
+	enqueueVerifyLog(deps, app.TenantID, app.ID, nil, nil, action, result, ip, ua, extra)
 }
 
 // 标记未使用导入

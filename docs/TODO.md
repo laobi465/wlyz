@@ -134,9 +134,9 @@
 #### 代理购买卡密
 - [x] [已完成] 代理充值申请（P-09） - v0.3.0（v0.3.1 AgentRecharge + v0.3.2 审核闭环）
 - [x] [已完成] 开发者审核充值（D-19） - v0.3.0（v0.3.2 充值审核闭环）
-- [ ] [待开始] 代理余额扣款生成卡密 - v0.3.0
+- [x] [已完成] 代理余额扣款生成卡密 - v0.3.0（AgentGenerateCards 事务化：扣余额→生成卡密→写 deduct 流水→加佣金→写 commission 流水）
 - [ ] [待开始] 代理实时扫码购卡（P-10，备用） - v0.3.0
-- [ ] [待开始] 代理佣金计算（percentage / diff 两种模式） - v0.3.0
+- [x] [已完成] 代理佣金计算（percentage / diff 两种模式） - v0.3.0（AgentGenerateCards 内联实现）
 - [x] [已完成] 代理提现申请（P-05） - v0.3.0（v0.3.0 AgentWithdraw）
 - [x] [已完成] 开发者审核提现 + 打款（D-14） - v0.3.0（v0.3.2 提现审核闭环：pay + reject）
 - [ ] [待开始] 代理独立门户（P-06，仅展示，收款走开发者） - v0.3.0
@@ -214,6 +214,20 @@
 - [x] [已完成] 提现驳回事务：退回余额 + withdraw.status=rejected + balance_log.status=rejected - v0.3.2
 - [x] [已完成] 提现打款事务：withdraw.status=paid + paid_at + pay_trade_no + balance_log.status=settled - v0.3.2
 - [x] [已完成] `go build` + `go vet` + `pnpm run build` 三重编译验证通过 - v0.3.2
+
+#### v0.3.3 日志系统（后端已完成，前端进行中） ⏳ v0.3.3 进行中
+- [x] [已完成] `log_worker.go` 验证日志异步 worker（`verifyLogCh` 容量 4096，超出丢弃保证验证 API 性能） - v0.3.3
+- [x] [已完成] `log_worker.go` 操作日志异步 worker（`operationLogCh` 容量 2048） - v0.3.3
+- [x] [已完成] `RecordOperation` 切面 helper：从 gin.Context 抽取 role/userID/username/IP/UA - v0.3.3
+- [x] [已完成] `client.go` 14 处 `writeVerifyLog` → `writeVerifyLogCtx(deps, c, ...)` 升级，捕获 IP/UA - v0.3.3
+- [x] [已完成] `AdminListOperationLogs` / `AdminListVerifyLogs` / `AdminListLoginFailedLogs` 三表独立查询 Handler - v0.3.3
+- [x] [已完成] `AdminExportLogs` CSV 导出（UTF-8 BOM `\xEF\xBB\xBF` 兼容 Excel，上限 10000 条） - v0.3.3
+- [x] [已完成] 路由注册 4 条新路由：`/admin/logs/operations` + `/verify` + `/login_failed` + `/export` - v0.3.3
+- [x] [已完成] `main.go` 启动 `StartVerifyLogWorker` + `StartOperationLogWorker` - v0.3.3
+- [x] [已完成] `go build` + `go vet` 后端编译验证通过 - v0.3.3
+- [ ] [待开始] 前端 `api/admin.ts` 增补 `LogOperation` / `LogVerify` / `LogLoginFailed` 类型 + 3 个 list API + 1 个 export API - v0.3.3
+- [ ] [待开始] 前端 `admin/Logs.vue` 升级：el-tabs 三表切换 + 每表独立筛选 + 顶部「导出 CSV」按钮 - v0.3.3
+- [ ] [待开始] `pnpm run build` 前端编译验证 - v0.3.3
 - [迁移] avatar 字段（三表均无对应列）→ v0.4.x 加列后落库
 - [迁移] 2FA `backup_codes` Redis 持久化 → v0.4.x 加表字段后迁移
 - [迁移] UA 解析库（mileusna/ua 或 ua-parser）→ v0.4.x 引入
@@ -254,9 +268,9 @@
 - [ ] [待开始] SDK 文档与示例 - v0.3.0
 
 #### 日志系统
-- [ ] [待开始] 验证日志写入（异步） - v0.3.0
-- [ ] [待开始] 操作日志写入（AOP 切面） - v0.3.0
-- [ ] [待开始] 日志检索与导出 - v0.3.0
+- [x] [已完成] 验证日志写入（异步 channel worker，容量 4096，超出丢弃） - v0.3.3
+- [x] [已完成] 操作日志写入（RecordOperation 切面 helper，容量 2048） - v0.3.3
+- [x] [已完成] 日志检索与导出（3 表独立查询 + CSV 导出含 UTF-8 BOM，上限 10000 条） - v0.3.3
 - [x] [已完成] 日志按月分区表结构（log_verify RANGE PARTITION） - v0.3.0
 
 ---
@@ -415,6 +429,7 @@
 | v0.3.0 | 2026-07-19 | ✅ 已完成（后端业务 API 全量实现，替换全部 501 占位） |
 | v0.3.1 | 2026-07-19 | ✅ 已完成（v0.3.0 全部「待核实 v0.3.x」归零：字段补全 + AgentRecharge + ListLoginDevices + 登录失败日志） |
 | v0.3.2 | 2026-07-19 | ✅ 已完成（代理充值审核闭环 + 提现审核闭环：tenant_finance.go + 双审核页面） |
+| v0.3.3 | 2026-07-19 | ⏳ 进行中（日志系统：后端 worker + 三表查询 + CSV 导出已完成；前端 3 Tab 升级待续） |
 | v0.4.0 | 待定 | [待开始] 三期商业化 |
 
 ---

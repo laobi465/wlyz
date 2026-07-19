@@ -9,6 +9,41 @@
 
 ---
 
+## [0.3.3] - 2026-07-19（后端部分，前端待续）
+
+### [功能] 日志系统后端：异步 Worker + 三表独立查询 + CSV 导出
+
+#### 后端：异步日志 Worker
+- [新增] `apps/server/internal/handler/log_worker.go`
+  - `verifyLogCh`（容量 4096）+ `StartVerifyLogWorker`：验证日志异步消费 goroutine，超出容量丢弃以保证验证 API 性能
+  - `operationLogCh`（容量 2048）+ `StartOperationLogWorker`：操作日志异步消费 goroutine
+  - `enqueueVerifyLog` / `enqueueOperationLog`：非阻塞 `select/default` 投递
+  - `RecordOperation(deps, c, module, action, status, targetType, targetID, detail)`：从 `gin.Context` 抽取 role/userID/username/IP/UA 的一致切面 helper，供各业务 handler 调用
+- [修改] `apps/server/internal/handler/client.go`
+  - 新增 `writeVerifyLogCtx(deps, c, app, hwid, cardKey, action, result, message)`：捕获客户端 IP + User-Agent
+  - 保留 `writeVerifyLog` 作为向后兼容包装（c=nil）
+  - 14 处 `writeVerifyLog(deps, app,` → `writeVerifyLogCtx(deps, c, app,` 批量升级
+- [修改] `apps/server/cmd/main.go`：启动时调用 `StartVerifyLogWorker` + `StartOperationLogWorker`
+
+#### 后端：三表独立查询 + CSV 导出
+- [新增] `AdminListOperationLogs` GET `/admin/logs/operations`：支持 operator_type / module / action / status / start_date / end_date / keyword 筛选
+- [新增] `AdminListVerifyLogs` GET `/admin/logs/verify`：支持 app_id / action / result / start_date / end_date / keyword 筛选
+- [新增] `AdminListLoginFailedLogs` GET `/admin/logs/login_failed`：支持 user_type / username / ip / start_date / end_date 筛选
+- [新增] `AdminExportLogs` GET `/admin/logs/export?log_type=operation|verify|login_failed`：
+  - 输出 `Content-Type: text/csv` + `Content-Disposition: attachment`
+  - 写入 UTF-8 BOM `\xEF\xBB\xBF` 保证 Excel 正确识别编码
+  - 单次导出上限 10000 条（防止 OOM）
+  - `csvRow` helper 处理字段转义
+- [新增] 路由注册 4 条新路由到 `adminAuth` 组（保留旧 `/admin/logs` 兼容接口）
+- [验证] `go build ./...` + `go vet ./...` 双双通过
+
+#### 待办（v0.3.3 前端待续）
+- [ ] `apps/admin/src/api/admin.ts` 增补 `LogOperation` / `LogVerify` / `LogLoginFailed` 类型 + 3 个 list API + 1 个 export API
+- [ ] `apps/admin/src/views/admin/Logs.vue` 升级：el-tabs 三表切换 + 每表独立筛选 + 顶部「导出 CSV」按钮（响应式 H5）
+- [ ] `pnpm run build` 前端编译验证
+
+---
+
 ## [0.3.2] - 2026-07-19
 
 ### [功能] 代理充值审核闭环 + 提现审核闭环

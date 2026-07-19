@@ -52,6 +52,8 @@ func main() {
 		CfgCache: container.ConfigCache(),
 	}
 	handler.StartLoginFailureWorker(deps)
+	handler.StartVerifyLogWorker(deps)
+	handler.StartOperationLogWorker(deps)
 
 	// 5. 启动 HTTP 服务
 	srv := &http.Server{

@@ -97,8 +97,12 @@ func Register(container *config.Container) *gin.Engine {
 		adminAuth.PUT("/notices/:id", handler.AdminUpdateNotice(deps))
 		adminAuth.DELETE("/notices/:id", handler.AdminDeleteNotice(deps))
 
-		// 日志审计
-		adminAuth.GET("/logs", handler.AdminListLogs(deps))
+		// 日志审计（v0.3.3 升级：3 表独立查询 + CSV 导出）
+		adminAuth.GET("/logs", handler.AdminListLogs(deps))                           // 兼容旧接口（仅 operation）
+		adminAuth.GET("/logs/operations", handler.AdminListOperationLogs(deps))       // 操作日志
+		adminAuth.GET("/logs/verify", handler.AdminListVerifyLogs(deps))              // 验证日志
+		adminAuth.GET("/logs/login_failed", handler.AdminListLoginFailedLogs(deps))   // 登录失败日志
+		adminAuth.GET("/logs/export", handler.AdminExportLogs(deps))                  // CSV 导出
 
 		// 安全中心
 		adminAuth.GET("/security/stats", handler.AdminSecurityStats(deps))
