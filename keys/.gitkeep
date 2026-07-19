@@ -1,0 +1,5 @@
+# RSA 私钥占位（请通过 openssl 重新生成，勿直接使用此空文件）
+# 生成命令：
+#   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out keys/rsa_private.pem
+#   openssl rsa -in keys/rsa_private.pem -pubout -out keys/rsa_public.pem
+# 此文件仅为占位，防止容器挂载失败

@@ -1,0 +1,82 @@
+@use './variables.scss' as *;
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: $color-bg-page;
+  color: $color-text-primary;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+a {
+  color: $color-primary;
+  text-decoration: none;
+  &:hover { opacity: 0.8; }
+}
+
+// 通用卡片
+.app-card {
+  background: $color-bg-card;
+  border-radius: $radius-md;
+  box-shadow: $shadow-card;
+  padding: $spacing-lg;
+}
+
+// 页面标题
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: $spacing-lg;
+
+  h2 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+  }
+}
+
+// 表格搜索栏
+.search-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-sm;
+  margin-bottom: $spacing-md;
+}
+
+// 平台公告横幅（铁律 05：实际颜色从 sys_config 读取，此处为默认 fallback）
+.platform-notice-banner {
+  background: $color-notice-banner-bg;
+  color: $color-notice-banner-text;
+  padding: $spacing-sm $spacing-md;
+  border-radius: $radius-sm;
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
+  font-size: 13px;
+  font-weight: 500;
+
+  .banner-label {
+    background: $color-notice-banner-text;
+    color: #fff;
+    padding: 2px 8px;
+    border-radius: $radius-sm;
+    font-size: 12px;
+  }
+}
+
+// 滚动条美化
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-thumb {
+  background: $color-border;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: $color-text-secondary;
+}

@@ -1,0 +1,47 @@
+# 环境变量（含密钥）
+.env
+.env.local
+.env.*.local
+
+# 编译产物
+dist/
+build/
+tmp/
+
+# 依赖
+node_modules/
+vendor/
+
+# Go
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+keyauth-server
+keyauth-cli
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 日志
+logs/
+*.log
+
+# RSA 密钥（实际部署时挂载）
+keys/*.pem
+
+# 运行时配置
+configs/config.yaml
+
+# Vite 自动生成
+src/auto-imports.d.ts
+src/components.d.ts
