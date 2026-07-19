@@ -1,53 +1,12 @@
 // 平台超管 / 开发者 / 代理 处理器骨架
 // 实际业务逻辑在各模块的 service 层实现，handler 仅做参数转发
+// 注意：登录/注册/刷新/登出 接口已迁移至 auth.go（认证模块）
 package handler
 
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 )
-
-// ============== 公共认证 ==============
-
-// AdminLogin 超管登录
-func AdminLogin(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// TODO(v0.2.0): 用户名密码校验 + 2FA + 生成 JWT
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.2.0 交付")
-	}
-}
-
-// TenantRegister 开发者注册
-func TenantRegister(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// TODO(v0.2.0): 注册 + 套餐分配 + 验证码
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.2.0 交付")
-	}
-}
-
-// TenantLogin 开发者登录
-func TenantLogin(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// TODO(v0.2.0): 登录 + 2FA + JWT
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.2.0 交付")
-	}
-}
-
-// AgentLogin 代理登录
-func AgentLogin(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// TODO(v0.2.0): 登录 + JWT
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.2.0 交付")
-	}
-}
-
-// AgentRegister 代理注册（邀请码 + 支付注册费）
-func AgentRegister(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// TODO(v0.3.0): 邀请码校验 + 支付注册费 + 创建代理账号
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.3.0 交付")
-	}
-}
 
 // PublicPlatformNotices 公开平台公告
 func PublicPlatformNotices(deps *Deps) gin.HandlerFunc {

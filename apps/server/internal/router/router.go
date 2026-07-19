@@ -117,8 +117,18 @@ func Register(container *config.Container) *gin.Engine {
 		publicGroup.POST("/auth/tenant/login", handler.TenantLogin(deps))
 		publicGroup.POST("/auth/agent/login", handler.AgentLogin(deps))
 		publicGroup.POST("/auth/agent/register", handler.AgentRegister(deps))
+		publicGroup.POST("/auth/refresh", handler.RefreshToken(deps))  // 三角色共用
 		publicGroup.GET("/notices/platform", handler.PublicPlatformNotices(deps))
 	}
+
+	// ----- 三角色通用鉴权后接口（登出 / 当前用户） -----
+	// 注：这些端点位于各自角色组下，共享 JWT 中间件
+	adminAuth.POST("/auth/logout", handler.Logout(deps))
+	adminAuth.GET("/auth/me", handler.CurrentUser(deps))
+	tenantAuth.POST("/auth/logout", handler.Logout(deps))
+	tenantAuth.GET("/auth/me", handler.CurrentUser(deps))
+	agentAuth.POST("/auth/logout", handler.Logout(deps))
+	agentAuth.GET("/auth/me", handler.CurrentUser(deps))
 
 	// ----- 支付回调（无鉴权，靠签名校验） -----
 	payGroup := v1.Group("/pay")

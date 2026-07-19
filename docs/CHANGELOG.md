@@ -9,6 +9,57 @@
 
 ---
 
+## [0.2.1] - 2026-07-19
+
+### [新增] 认证模块（P0 核心闭环）
+
+#### 认证工具包 `internal/auth/`
+- [新增] `jwt.go`：JWT 双 Token 机制（access + refresh），支持 Token 解析、黑名单、Bearer 提取
+- [新增] `totp.go`：TOTP 2FA 工具包（基于 pquerna/otp），支持生成密钥、校验验证码、备用码、AES 加密入库
+- [新增] `login_lock.go`：登录失败计数器 + 账号锁定（Redis 滑动窗口），支持锁定状态查询、人类可读剩余时间格式化
+- [新增] `context.go`：Redis 操作默认 context
+
+#### 认证处理器 `internal/handler/auth.go`
+- [新增] `AdminLogin`：超管登录（用户名/密码/TOTP 校验 + JWT 签发 + 失败计数）
+- [新增] `TenantLogin`：开发者登录（同上）
+- [新增] `TenantRegister`：开发者注册（注册开关 + 密码长度校验 + 用户名唯一 + 默认套餐 + 试用天数 + 自动签发 Token）
+- [新增] `AgentLogin`：代理登录（同超管登录流程）
+- [新增] `RefreshToken`：三角色共用 Token 刷新（refresh token 轮换 + 旧 token 加入黑名单）
+- [新增] `Logout`：登出（refresh token 加入黑名单）
+- [新增] `CurrentUser`：返回 JWT 中的当前用户信息
+
+#### 路由
+- [新增] `POST /api/v1/public/auth/refresh`：三角色共用刷新端点
+- [新增] `POST /api/v1/{admin|tenant|agent}/auth/logout`：三角色登出端点
+- [新增] `GET /api/v1/{admin|tenant|agent}/auth/me`：当前用户信息端点
+
+#### 数据库迁移
+- [新增] `migrations/003_auth_config.up.sql`：19 项认证相关 sys_config 配置
+  - 登录失败锁定：max_attempts/lock_seconds/window_seconds/require_captcha
+  - JWT：access_ttl_seconds/refresh_ttl_seconds/issuer
+  - TOTP：issuer/period/digits/algorithm/skew/backup_codes_count
+  - 2FA 强制策略：admin/tenant/agent 2fa_required
+  - 开发者注册：enabled/default_package_id/trial_days
+- [新增] `migrations/003_auth_config.down.sql`：回滚脚本
+
+#### 修复
+- [修复] `pkg/crypto/crypto.go`：DecryptAES 函数 ciphertext 变量重用导致类型冲突的 bug
+- [修复] `apps/server/go.mod`：module path 缺少 `/apps/server` 后缀导致内部包导入失败
+
+#### 安全特性
+- [安全] 登录失败 5 次锁定账号 15 分钟（参数均可后台调整）
+- [安全] 账号不存在时不暴露存在性，统一返回「用户名或密码错误」
+- [安全] refresh token 轮换机制（旧的立即失效）
+- [安全] refresh token 黑名单（登出 / 改密后旧 token 失效）
+- [安全] TOTP 密钥 AES-256-GCM 加密入库
+- [安全] 2FA 验证码错误不计入账号锁定计数（防止遗忘手机导致账号被锁）
+- [安全] 2FA 强制策略可按角色独立配置
+
+#### 待核实项（铁律 06）
+- [待核实] `genTenantCode` 当前用纳秒时间戳简化实现，生产环境应改用 crypto/rand 生成不可预测的随机部分
+
+---
+
 ## [0.2.0] - 2026-07-19
 
 ### [新增] 一期 MVP 骨架（计划中 → 已完成骨架）

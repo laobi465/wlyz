@@ -109,8 +109,8 @@ func (m *Manager) DecryptAES(ciphertext string) (string, error) {
 		return "", errors.New("密文长度不足")
 	}
 	nonce := data[:gcm.NonceSize()]
-	ciphertext = data[gcm.NonceSize():]
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	ct := data[gcm.NonceSize():]
+	plaintext, err := gcm.Open(nil, nonce, ct, nil)
 	if err != nil {
 		return "", err
 	}
