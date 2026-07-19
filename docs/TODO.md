@@ -229,6 +229,24 @@
 - [x] [已完成] 前端 `admin/Logs.vue` 升级：el-tabs 三表切换 + 每表独立筛选 + 顶部「导出 CSV」按钮（响应式 H5） - v0.3.3
 - [x] [已完成] `pnpm run build` 前端编译验证通过 - v0.3.3
 - [迁移] avatar 字段（三表均无对应列）→ v0.4.x 加列后落库
+
+#### v0.3.4 结算与对账闭环 ✅ v0.3.4 已完成
+- [x] [已完成] 迁移 007：sys_tenant 增 balance/frozen_balance；新建 tenant_balance_log + tenant_withdraw 表 - v0.3.4
+- [x] [已完成] model.go：SysTenant 增 Balance/FrozenBalance；新增 TenantBalanceLog / TenantWithdraw struct - v0.3.4
+- [x] [已完成] `pay.go` AdminSettleOrder 改造：事务保护 + FOR UPDATE + 累加开发者 balance + 写 tenant_balance_log - v0.3.4
+- [x] [已完成] `tenant_settle.go` 新建：5 个开发者侧 Handler（结算查询/余额概览/流水/我的提现/发起提现） - v0.3.4
+- [x] [已完成] `admin_finance.go` 新建：5 个超管 Handler（提现列表/打款/驳回/批量结算/对账报表） - v0.3.4
+- [x] [已完成] 批量结算按 tenant_id 分组累计 net_amount，单次最多 100 条 - v0.3.4
+- [x] [已完成] 对账报表聚合 SQL（SUM + CASE WHEN）统计订单总额/抽成/应结/已结/未结/已提现/理论余额 - v0.3.4
+- [x] [已完成] 路由注册 10 条新路由（adminAuth 5 + tenantAuth 5） - v0.3.4
+- [x] [已完成] `go build` + `go vet` 后端编译验证通过 - v0.3.4
+- [x] [已完成] 前端 `api/tenantFinance.ts`：6 类型 + 10 API 函数（开发者侧 5 + 超管侧 5） - v0.3.4
+- [x] [已完成] 前端 `tenant/Settlements.vue` 开发者结算记录页（余额概览 + 双 Tab：结算记录/余额流水，响应式 H5） - v0.3.4
+- [x] [已完成] 前端 `tenant/Withdrawal.vue` 开发者提现申请页（余额概览 + 提现表单 + 提现记录，响应式 H5） - v0.3.4
+- [x] [已完成] 前端 `admin/TenantWithdrawalReview.vue` 超管审核页（列表 + 打款对话框 + 驳回对话框，响应式 H5） - v0.3.4
+- [x] [已完成] 前端 `admin/Settlements.vue` 升级：双 Tab（结算记录 + 批量结算 / 对账报表 9 卡片） - v0.3.4
+- [x] [已完成] 路由注册：admin 加 `/tenant-withdrawal-review`；tenant 加 `/settlements` + `/withdrawal` - v0.3.4
+- [x] [已完成] `pnpm run build` 前端编译验证通过 - v0.3.4
 - [迁移] 2FA `backup_codes` Redis 持久化 → v0.4.x 加表字段后迁移
 - [迁移] UA 解析库（mileusna/ua 或 ua-parser）→ v0.4.x 引入
 - [迁移] 登录失败日志结构化记录 → v0.4.x 引入 zap/zerolog
@@ -430,6 +448,7 @@
 | v0.3.1 | 2026-07-19 | ✅ 已完成（v0.3.0 全部「待核实 v0.3.x」归零：字段补全 + AgentRecharge + ListLoginDevices + 登录失败日志） |
 | v0.3.2 | 2026-07-19 | ✅ 已完成（代理充值审核闭环 + 提现审核闭环：tenant_finance.go + 双审核页面） |
 | v0.3.3 | 2026-07-19 | ✅ 已完成（日志系统：异步 Worker + 三表独立查询 + CSV 导出 + 前端 3 Tab 升级） |
+| v0.3.4 | 2026-07-19 | ✅ 已完成（结算与对账闭环：开发者 balance/frozen_balance + tenant_balance_log + tenant_withdraw + 批量结算 + 对账报表 + 双审核页面） |
 | v0.4.0 | 待定 | [待开始] 三期商业化 |
 
 ---

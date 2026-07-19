@@ -9,6 +9,92 @@
 
 ---
 
+## [0.3.4] - 2026-07-19
+
+### [功能] 开发者结算与对账闭环（事务保护 + 批量结算 + 余额流水对称设计）
+
+#### 后端：数据库迁移
+- [新增] `apps/server/migrations/007_v0.3.4_tenant_finance.up.sql`
+  - `sys_tenant` 增 `balance` DECIMAL(12,2) + `frozen_balance` DECIMAL(12,2) 字段
+  - 新建 `tenant_balance_log` 表（type: settle/withdraw/refund/adjust，status: pending/settled/rejected）
+  - 新建 `tenant_withdraw` 表（status: pending/paid/rejected/failed）
+- [新增] `007_v0.3.4_tenant_finance.down.sql` 回滚迁移
+
+#### 后端：模型 + AdminSettleOrder 改造
+- [修改] `apps/server/internal/model/model.go`
+  - `SysTenant` 增 `Balance float64` + `FrozenBalance float64` 字段
+  - 新增 `TenantBalanceLog` struct（含 TenantID/Type/Amount/BalanceAfter/RelatedSettlementID/RelatedWithdrawID/PayMethod/SettleBatchNo/Status/Remark）
+  - 新增 `TenantWithdraw` struct（含 TenantID/Amount/PayMethod/PayAccount/Status/AuditRemark/PayTradeNo/PaidAt/AuditedBy）
+- [修改] `apps/server/internal/handler/pay.go` `AdminSettleOrder`：
+  - 改造为事务保护 + `tx.Set("gorm:query_option", "FOR UPDATE")` 防并发
+  - 累加开发者可提现 `balance`
+  - 写 `tenant_balance_log`（type=settle, status=settled）
+
+#### 后端：开发者侧 Handler（tenant_settle.go，对称 agent_business.go）
+- [新增] `apps/server/internal/handler/tenant_settle.go`（5 个 handler 全事务保护）
+  - `TenantListSettlements` GET `/tenant/settlements` 查自己的 platform_settlement，含 pending_sum/settled_sum 汇总
+  - `TenantBalanceOverview` GET `/tenant/balance_overview` 余额概览（balance/frozen/settled_total/withdrawn_total/pending_withdraw）
+  - `TenantListBalanceLogs` GET `/tenant/balance_logs` 查自己的余额流水（type/status 筛选）
+  - `TenantListOwnWithdrawals` GET `/tenant/withdrawals/mine` 查自己的提现申请
+  - `TenantWithdraw` POST `/tenant/withdraw` 事务：扣 balance + 加 frozen_balance + 写 withdraw + 写 balance_log
+
+#### 后端：超管审核 Handler（admin_finance.go，对称 tenant_finance.go）
+- [新增] `apps/server/internal/handler/admin_finance.go`（5 个 handler 全事务保护）
+  - `AdminListTenantWithdrawals` GET `/admin/tenant_withdrawals` 联表 sys_tenant，默认 status=pending
+  - `AdminPayTenantWithdraw` POST `/admin/tenant_withdrawals/:id/pay` 事务：withdraw.status=paid + frozen_balance -= amount + balance_log.status=settled
+  - `AdminRejectTenantWithdraw` POST `/admin/tenant_withdrawals/:id/reject` 事务：退 balance + 减 frozen_balance + withdraw.status=rejected + 写 refund 流水
+  - `AdminBatchSettle` POST `/admin/settlements/batch_settle` 批量结算，按 tenant_id 分组累计 net_amount，单次最多 100 条
+  - `AdminReconciliation` GET `/admin/reconciliation` 对账报表，聚合 SQL（SUM + CASE WHEN）统计订单总额/抽成/应结/已结/未结/已提现/理论余额
+
+#### 后端：路由注册
+- [修改] `apps/server/internal/router/router.go`
+  - adminAuth 段新增 5 条：`/settlements/batch_settle` + `/tenant_withdrawals` (GET/POST 两条) + `/reconciliation`
+  - tenantAuth 段新增 5 条：`/settlements` + `/balance_overview` + `/balance_logs` + `/withdrawals/mine` + `/withdraw`
+- [验证] `go build ./...` + `go vet ./...` 双双通过
+
+#### 前端：API 层
+- [新增] `apps/admin/src/api/tenantFinance.ts`：6 个类型 + 10 个 API 函数
+  - 类型：`PlatformSettlement` / `TenantBalanceLog` / `TenantWithdrawal` / `AdminTenantWithdrawal` / `TenantBalanceOverview` / `ReconciliationData`
+  - 开发者侧 5 个：`listTenantSettlementsApi` / `tenantBalanceOverviewApi` / `listTenantBalanceLogsApi` / `listTenantOwnWithdrawalsApi` / `tenantWithdrawApi`
+  - 超管侧 5 个：`listAdminTenantWithdrawalsApi` / `payAdminTenantWithdrawalApi` / `rejectAdminTenantWithdrawalApi` / `batchSettleApi` / `reconciliationApi`
+
+#### 前端：开发者后台 2 个新页面
+- [新增] `apps/admin/src/views/tenant/Settlements.vue` 开发者结算记录页
+  - 余额概览卡片：可用余额 / 冻结 / 累计已结 / 累计已提现 / 待审核提现
+  - 双 Tab：结算记录（订单号/抽成比例/平台抽成/应得/状态/批次号 + pending_sum/settled_sum 汇总）+ 余额流水（类型/金额变动+/-/操作后余额/状态）
+  - 完整响应式 H5：钱包概览 4 列 → 2 列，搜索栏水平 → 垂直
+- [新增] `apps/admin/src/views/tenant/Withdrawal.vue` 开发者提现申请页
+  - 余额概览：可用 / 冻结 / 累计已提现 / 待审核提现
+  - 提现表单：金额（≤ balance 校验）+ 收款方式（alipay/wechat/bank radio）+ 收款账号（动态 placeholder）+ 备注
+  - 快捷按钮：「全部提现」「提现一半」
+  - 提现记录列表：金额/方式/账号/状态/审核备注/打款流水号/打款时间
+  - 完整响应式 H5：表单 + 记录双栏布局 → 移动端单列堆叠
+
+#### 前端：超管后台 1 个新页面 + 1 个升级
+- [新增] `apps/admin/src/views/admin/TenantWithdrawalReview.vue` 开发者提现审核页
+  - 列表：开发者用户名/公司名/金额/收款方式/收款账号/状态/打款流水号/打款时间
+  - 操作：打款对话框（含打款流水号 + 备注）+ 驳回对话框（必填原因，退回余额）
+  - 完整响应式 H5
+- [修改] `apps/admin/src/views/admin/Settlements.vue` 升级双 Tab
+  - Tab 1 结算记录：保留原单条结算 + 新增多选批量结算按钮（仅 pending 可选，单次最多 100 条，含「选中应结」「涉及开发者数」预览）
+  - Tab 2 对账报表：9 个聚合卡片（订单总数/总额/平台抽成/应结/已结/未结/已提现/待审核提现/理论余额 = 已结 - 已提）
+  - 完整响应式 H5：3 列 → 2 列
+
+#### 前端：路由注册
+- [修改] `apps/admin/src/router/index.ts`
+  - admin 段新增 `/admin/tenant-withdrawal-review`
+  - tenant 段新增 `/tenant/settlements` + `/tenant/withdrawal`
+- [验证] `pnpm run build` 通过
+
+#### 设计要点
+- 事务安全：所有金额变动走 `deps.DB.Transaction()` + `FOR UPDATE`，避免并发提现 / 结算竞争
+- 对称设计：`tenant_withdraw` / `tenant_balance_log` / `sys_tenant.balance` 对称于 `agent_withdraw` / `agent_balance_log` / `agent.balance`
+- 余额模型：`balance`（可提现）+ `frozen_balance`（冻结，提现申请中）；提现时 balance→frozen，打款时 frozen 清除，驳回时 frozen→balance
+- 批量结算：按 tenant_id 分组累计 net_amount，避免同一开发者多次更新
+- 对账差计算：`balance_theory = settled_sum - withdrawn_sum`，用于校验开发者账户余额理论值
+
+---
+
 ## [0.3.3] - 2026-07-19
 
 ### [功能] 日志系统：异步 Worker + 三表独立查询 + CSV 导出 + 前端 3 Tab 升级
