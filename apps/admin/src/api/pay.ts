@@ -12,6 +12,7 @@ export interface PayOrder {
   total_amount: number
   quantity: number
   card_ids: number[]
+  card_keys: string[]  // v0.3.5：订单已支付时返回卡密明文，供 H5 直接展示
   pay_trade_no: string
   paid_at: string | null
   created_at: string

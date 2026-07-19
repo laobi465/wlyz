@@ -5,6 +5,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
+	"github.com/your-org/keyauth-saas/apps/server/internal/quota"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/crypto"
 )
 
@@ -227,16 +229,15 @@ func TenantGenerateCards(deps *Deps) gin.HandlerFunc {
 			return
 		}
 
-		// 3. 校验套餐配额（卡密总数上限）
-		var pkg model.SysPackage
-		var tenant model.SysTenant
-		_ = deps.DB.First(&tenant, tenantID).Error
-		_ = deps.DB.First(&pkg, tenant.PackageID).Error
-		var cardCount int64
-		deps.DB.Model(&model.AppCard{}).Where("tenant_id = ?", tenantID).Count(&cardCount)
-		if pkg.MaxCards > 0 && int(cardCount)+req.Quantity > pkg.MaxCards {
-			middleware.Fail(c, http.StatusForbidden, 1007,
-				"将超过套餐卡密上限 "+itoa(pkg.MaxCards)+" 张（当前 "+itoa(int(cardCount))+" 张，本次生成 "+itoa(req.Quantity)+" 张）")
+		// 3. 校验套餐配额（卡密总数上限）—— v0.3.5：抽到 quota 包统一管理
+		if err := quota.CheckMaxCards(deps.DB, tenantID, req.Quantity); err != nil {
+			var qErr *quota.ExceededError
+			if errors.As(err, &qErr) {
+				middleware.Fail(c, http.StatusForbidden, 1007,
+					"将超过套餐卡密上限 "+itoa(qErr.Limit)+" 张（当前 "+itoa(qErr.Current)+" 张，本次生成 "+itoa(qErr.AddCount)+" 张）")
+			} else {
+				middleware.Fail(c, http.StatusForbidden, 1007, err.Error())
+			}
 			return
 		}
 

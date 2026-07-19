@@ -2,53 +2,45 @@
 # KeyAuth SaaS —— 后端配置文件样例
 # ============================================================
 # 用法：复制到 configs/config.yaml，按需修改
-# 敏感字段（AES_KEY / JWT_SECRET）建议从环境变量传入（铁律 04）
+# 敏感字段（AES_KEY / JWT_SECRET）必须从环境变量传入（铁律 04）
 # ============================================================
 
-server:
+app:
   port: 8080
   mode: release   # debug / release / test
-  read_timeout: 30s
-  write_timeout: 30s
-  shutdown_timeout: 15s
 
-database:
-  driver: mysql
+mysql:
   host: mysql       # docker compose 内部域名
   port: 3306
-  username: keyauth
-  password: ""      # 从环境变量 DB_PASSWORD 传入
   database: keyauth
-  charset: utf8mb4
+  username: keyauth
+  password: ""      # 从环境变量 MYSQL_PASSWORD 传入
   max_open_conns: 100
   max_idle_conns: 20
-  conn_max_lifetime: 30m
-  log_level: warn   # silent / error / warn / info
 
 redis:
   host: redis
   port: 6379
   password: ""      # 从环境变量 REDIS_PASSWORD 传入
   db: 0
-  pool_size: 50
-  min_idle_conns: 5
+
+jwt:
+  secret: ""                # 必填：通过 JWT_SECRET 环境变量传入
+  expire_hours: 24          # Token 有效期（小时）
+  refresh_hours: 168        # 刷新有效期（7 天）
+  issuer: keyauth-saas
 
 # 敏感字段：从环境变量传入（铁律 04）
-aes_key: ""         # 必填：32 字节，base64 编码，通过 AES_KEY 环境变量传入
-jwt_secret: ""      # 必填：通过 JWT_SECRET 环境变量传入
+crypto:
+  aes_key: ""               # 必填：32 字节，通过 AES_KEY / APP_AES_KEY 环境变量传入
+  rsa_private_key_path: /app/keys/rsa_private.pem
+  rsa_public_key_path: /app/keys/rsa_public.pem
 
-rsa:
-  private_key_path: /app/keys/rsa_private.pem
-  public_key_path: /app/keys/rsa_public.pem
-
-log:
-  level: info       # debug / info / warn / error
-  format: json      # json / text
-  output: /app/logs/server.log
-  max_size_mb: 100
-  max_backups: 7
-  max_age_days: 30
-
+# 数据库迁移（v0.3.5 新增：server 启动时自动执行）
+# 铁律 05：迁移目录路径走配置
 migration:
-  auto: true        # 启动时自动执行 migrations 目录下的 SQL
-  dir: /app/migrations
+  auto: true                # 启动时是否自动执行迁移
+  dir: /app/migrations      # 迁移文件目录（容器内绝对路径）
+
+# 业务域名（用于回调 URL / 邮件链接等）
+domain: ""

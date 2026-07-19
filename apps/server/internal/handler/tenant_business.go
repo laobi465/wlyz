@@ -5,6 +5,7 @@ package handler
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	"github.com/your-org/keyauth-saas/apps/server/internal/heartbeat"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
+	"github.com/your-org/keyauth-saas/apps/server/internal/quota"
 )
 
 // ============== 辅助 ==============
@@ -869,6 +871,23 @@ func TenantGenInviteCode(deps *Deps) gin.HandlerFunc {
 		}
 		if req.ExpireDays == 0 {
 			req.ExpireDays = 30
+		}
+
+		// 校验套餐配额（代理数上限）—— v0.3.5：抽到 quota 包统一管理
+		// 注：邀请码本身不是代理，但生成邀请码隐含招募代理意图，提前校验避免发放无效邀请码
+		if err := quota.CheckMaxAgents(deps.DB, tenantID); err != nil {
+			var qErr *quota.ExceededError
+			if errors.As(err, &qErr) {
+				if qErr.Limit == 0 {
+					middleware.Fail(c, http.StatusForbidden, 1007, "当前套餐不支持招募代理，请升级套餐")
+				} else {
+					middleware.Fail(c, http.StatusForbidden, 1007,
+						"已达套餐代理数上限 "+itoa(qErr.Limit)+" 个，无法生成新邀请码")
+				}
+			} else {
+				middleware.Fail(c, http.StatusForbidden, 1007, err.Error())
+			}
+			return
 		}
 
 		ctx := c.Request.Context()

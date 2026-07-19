@@ -269,6 +269,16 @@ func GetPayOrder(deps *Deps) gin.HandlerFunc {
 			_ = json.Unmarshal([]byte(order.CardIDs), &cardIDs)
 		}
 
+		// v0.3.5：订单已支付时返回卡密明文，供 H5 终端用户直接查看
+		// 安全：仅返回该订单关联的卡密；卡密 ID 数组从订单 card_ids 字段解析
+		var cardKeys []string
+		if order.PayStatus == "paid" && len(cardIDs) > 0 {
+			deps.DB.Model(&model.AppCard{}).
+				Where("id IN ?", cardIDs).
+				Order("id ASC").
+				Pluck("card_key", &cardKeys)
+		}
+
 		middleware.Success(c, gin.H{
 			"order_no":       order.OrderNo,
 			"pay_status":     order.PayStatus,
@@ -276,6 +286,7 @@ func GetPayOrder(deps *Deps) gin.HandlerFunc {
 			"total_amount":   order.TotalAmount,
 			"quantity":       order.Quantity,
 			"card_ids":       cardIDs,
+			"card_keys":      cardKeys, // v0.3.5：仅在 paid 时非空
 			"pay_trade_no":   order.PayTradeNo,
 			"paid_at":        order.PaidAt,
 			"created_at":     order.CreatedAt,

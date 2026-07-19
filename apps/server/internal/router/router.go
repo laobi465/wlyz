@@ -278,6 +278,10 @@ func Register(container *config.Container) *gin.Engine {
 		publicGroup.POST("/auth/agent/register", handler.AgentRegister(deps))
 		publicGroup.POST("/auth/refresh", handler.RefreshToken(deps)) // 三角色共用
 		publicGroup.GET("/notices/platform", handler.PublicPlatformNotices(deps))
+
+		// H5 终端用户购卡流程公开接口（v0.3.5 新增）
+		publicGroup.GET("/apps/info", handler.PublicAppInfo(deps))    // 按 app_key 查应用公开信息
+		publicGroup.GET("/card_types", handler.PublicCardTypes(deps)) // 按 app_id 查可购卡类列表
 	}
 
 	// ----- 支付回调（无鉴权，靠签名校验） -----

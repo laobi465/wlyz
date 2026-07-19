@@ -68,11 +68,9 @@ const fetchOrder = async () => {
   try {
     const resp = await getPayOrderApi(orderNo.value)
     status.value = resp.pay_status
-    if (resp.pay_status === 'paid' && resp.card_ids?.length) {
-      // 待核实：后端是否在订单查询接口返回 card_keys
-      // 当前假设 card_ids 为卡密 ID 数组，需要额外请求获取卡密明文
-      // 暂用订单返回的 card_ids 占位（实际应从 getCardApi 拉取 card_key）
-      cards.value = [] // 铁律 04：不编造数据
+    // v0.3.5：后端在订单已支付时直接返回 card_keys 明文数组
+    if (resp.pay_status === 'paid' && resp.card_keys?.length) {
+      cards.value = resp.card_keys
     }
     if (resp.pay_status === 'pending' && pollCount < 30) {
       // 每 3 秒轮询一次，最多 30 次（90 秒）

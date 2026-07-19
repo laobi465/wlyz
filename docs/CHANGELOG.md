@@ -9,6 +9,88 @@
 
 ---
 
+## [0.3.5] - 2026-07-19
+
+### [修复] P0 紧急修复：RSA 脚本 / 数据库迁移 / H5 公共 API / 套餐配额
+
+本次发布聚焦 4 项 P0 缺陷修复，覆盖部署脚本、数据库迁移机制、H5 购卡闭环、套餐配额统一管理。
+
+#### 后端：RSA-4096 密钥生成独立脚本
+- [新增] `scripts/gen_rsa_key.sh`：从 `baota_deploy.sh` 抽取为独立脚本
+  - 支持 `--force` 覆盖已存在密钥
+  - 支持自定义输出目录（`--dir /path` 或位置参数）
+  - 私钥 PKCS#8/PEM + 公钥 PKIX/PEM，chmod 600/644
+  - 生成后自动密钥配对校验（openssl rsa -in priv -pubout 对比公钥）
+  - 修复 OUTPUT_DIR 拼接 bug（原代码因运算符优先级导致 pwd 输出两次）
+
+#### 后端：数据库迁移机制修复
+- [新增] `apps/server/internal/migration/migrator.go`：轻量级 SQL 文件迁移机制
+  - `schema_migrations` 表跟踪版本号 + dirty 状态
+  - 扫描 `*.up.sql` 文件，按文件名前缀数字排序
+  - 每个迁移在独立事务中执行，失败标记 dirty 阻止启动
+  - 幂等：已应用的迁移不会重复执行
+- [修改] `apps/server/internal/config/config.go`
+  - 新增 `MigrationConfig` struct（Auto bool, Dir string）
+  - Config 加 `Migration MigrationConfig` 字段，默认 `{Auto: true, Dir: "apps/server/migrations"}`
+  - `applyEnvConfig` 加 `MIGRATION_AUTO` / `MIGRATION_DIR` 环境变量覆盖
+  - DSN 加 `multiStatements=true` 参数（迁移文件含多语句）
+  - `InitContainer` 中加 `migration.Run(db, cfg.Migration.Dir)` 调用
+- [修改] `docker-compose.yml`
+  - mysql 服务移除 `./apps/server/migrations:/docker-entrypoint-initdb.d:ro` 挂载
+    - 修复缺陷：原挂载方式按字母序执行所有 .sql（含 .down.sql），存在迁移顺序错误风险
+  - server 服务 environment 加 `MIGRATION_AUTO: "true"` 和 `MIGRATION_DIR: /app/migrations`
+- [修改] `configs/config.yaml.example`：完全重写以对齐 Config struct 的 yaml tag（app/mysql/redis/jwt/crypto/migration/domain）
+
+#### 后端：H5 公共 API 补齐（购卡闭环）
+- [新增] `apps/server/internal/handler/public.go`：H5 终端用户购卡流程公开 API（无需鉴权）
+  - `PublicAppInfo` GET `/public/apps/info?app_key=xxx`：按 app_key 查应用公开信息，联表校验 SysTenant active 状态
+  - `PublicCardTypes` GET `/public/card_types?app_id=xxx`：按 app_id 查可购卡类列表，仅返回 active 卡类
+  - 安全：`publicAppInfo` / `publicCardType` DTO 过滤敏感字段（app_secret / sign_secret / agent_base_price）
+- [修改] `apps/server/internal/handler/pay.go` `GetPayOrder`：订单已支付时返回卡密明文
+  - 新增 `card_keys []string` 字段：从 AppCard 表按 card_ids Pluck card_key
+  - 供 H5 终端用户支付成功后直接查看卡密，无需另调查询接口
+- [修改] `apps/server/internal/router/router.go`：publicGroup 新增 2 条路由
+  - `GET /public/apps/info`
+  - `GET /public/card_types`
+- [修改] `apps/admin/src/api/pay.ts`：`PayOrder` 接口加 `card_keys: string[]` 字段
+- [修改] `apps/admin/src/views/h5/Home.vue`：移除"待核实"注释，更新 `loadCardTypes` 使用已实现的 `/public/apps/info` + `/public/card_types`
+- [修改] `apps/admin/src/views/h5/PayResult.vue`：`fetchOrder` 使用 `resp.card_keys` 替代空数组占位
+
+#### 后端：套餐配额检查统一封装
+- [新增] `apps/server/internal/quota/quota.go`：套餐配额检查 helper 包
+  - `ExceededError` 自定义错误类型（Resource / Current / Limit / AddCount）
+  - `loadTenantPackage` 内部 helper：校验 tenant.Status == "active" && tenant.ExpiresAt 未过期 && pkg.Status == "active"
+  - `CheckMaxApps`：校验开发者创建应用是否超出套餐上限（`App` COUNT）
+  - `CheckMaxCards`：校验开发者生成卡密是否超出套餐上限（`AppCard` COUNT + addCount）
+  - `CheckMaxAgents`：校验开发者代理数是否超出套餐上限（`Agent` COUNT，Limit==0 表示套餐不支持招募代理）
+  - `CheckMaxDevices`：校验单卡密绑定设备数是否超出应用配置上限（`AppDevice` COUNT，MaxDevices 是应用级配置）
+  - 设计：不在 helper 内开事务（避免嵌套事务），TOCTOU 风险由调用方在事务内处理
+- [修改] `apps/server/internal/handler/app.go` `TenantCreateApp`
+  - 将内联 MaxApps 检查替换为 `quota.CheckMaxApps(deps.DB, tenantID)`
+  - 使用 `errors.As(err, &qErr)` 区分配额超限错误和系统错误
+- [修改] `apps/server/internal/handler/card.go` `TenantGenerateCards`
+  - 将内联 MaxCards 检查（含 tenant/pkg 查询）替换为 `quota.CheckMaxCards(deps.DB, tenantID, req.Quantity)`
+  - 错误消息保留原格式：「将超过套餐卡密上限 N 张（当前 X 张，本次生成 Y 张）」
+- [修改] `apps/server/internal/handler/tenant_business.go` `TenantGenInviteCode`
+  - 在事务前新增 `quota.CheckMaxAgents(deps.DB, tenantID)` 调用
+  - 区分两种场景：`Limit == 0`（套餐不支持招募代理）vs `Limit > 0`（已达上限）
+  - 注释说明：邀请码本身不是代理，但生成邀请码隐含招募代理意图，提前校验避免发放无效邀请码
+- [修改] `apps/server/internal/handler/client.go` `ClientLogin` + `ClientBind`
+  - `ClientLogin` 新设备绑定前：将内联 MaxDevices 检查替换为 `quota.CheckMaxDevices`
+  - `ClientBind` 手动绑定前：将内联 MaxDevices 检查替换为 `quota.CheckMaxDevices`
+  - `ClientBind` 保留 `countBoundDevices` 调用以在响应中展示当前绑定数（双重查询可接受，绑定非高频操作）
+
+#### 验证
+- [验证] `go build ./...` 通过（0 错误）
+- [验证] `go vet ./...` 通过（0 警告）
+- [验证] `pnpm run build`（admin）通过（8.56s）
+
+#### 文档
+- [修改] `docs/TODO.md`：标记 3 项 P0 已完成 + 新增 v0.3.5 章节（17 项明细）
+- [修改] `docs/CHANGELOG.md`：新增 v0.3.5 版本条目
+
+---
+
 ## [0.3.4] - 2026-07-19
 
 ### [功能] 开发者结算与对账闭环（事务保护 + 批量结算 + 余额流水对称设计）

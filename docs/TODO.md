@@ -19,19 +19,19 @@
 - [x] [已完成] 编写 Dockerfile（多阶段构建） - v0.2.0
 - [x] [已完成] 编写宝塔面板安装脚本 baota_deploy.sh - v0.2.0
 - [x] [已完成] 编写 .env.example 和配置加载逻辑 - v0.2.0
-- [ ] [待开始] 生成 RSA-4096 密钥对工具脚本（脚本中已有命令，待封装） - v0.2.0
+- [x] [已完成] 生成 RSA-4096 密钥对工具脚本（scripts/gen_rsa_key.sh，支持 --force / 自定义输出目录 / 密钥配对校验） - v0.3.5
 
 #### 数据库初始化 ✅ 已完成
 - [x] [已完成] 编写全部 26 张表的 migration 文件 - v0.2.0
 - [x] [已完成] 编写 seed 数据（超管账号、默认套餐、默认 sys_config 47 项） - v0.2.0
-- [ ] [待开始] 实现 golang-migrate 自动迁移机制（当前依赖 mysql entrypoint 自动执行） - v0.2.0
+- [x] [已完成] 实现 golang-migrate 自动迁移机制（轻量级 SQL 文件迁移 + schema_migrations 表 + dirty 状态 + 事务保护） - v0.3.5
 
 #### 认证与多租户 ⏳ 下一步重点
 - [x] [已完成] 平台超管登录 + JWT - v0.2.0
 - [x] [已完成] 开发者注册/登录/2FA - v0.2.0
 - [x] [已完成] 代理登录 + JWT - v0.2.0
 - [x] [已完成] 多租户隔离中间件骨架（自动注入 tenant_id） - v0.2.0
-- [ ] [待开始] 套餐配额检查中间件 - v0.2.0
+- [x] [已完成] 套餐配额检查中间件（internal/quota 包：CheckMaxApps/MaxCards/MaxAgents/MaxDevices + ExceededError + 4 个 handler 接入） - v0.3.5
 - [x] [已完成] 密码 bcrypt (cost=12) 工具函数 - v0.2.0
 - [x] [已完成] JWT Token 刷新机制 - v0.2.0
 
@@ -251,6 +251,25 @@
 - [迁移] UA 解析库（mileusna/ua 或 ua-parser）→ v0.4.x 引入
 - [迁移] 登录失败日志结构化记录 → v0.4.x 引入 zap/zerolog
 - [迁移] JWT jti 精确单设备踢出 → v0.4.x
+
+#### v0.3.5 P0 修复：RSA 脚本 / 数据库迁移 / H5 公共 API / 套餐配额 ✅ v0.3.5 已完成
+- [x] [已完成] `scripts/gen_rsa_key.sh` 独立 RSA-4096 密钥对生成脚本（从 baota_deploy.sh 抽取，支持 --force / 自定义输出目录 / 密钥配对校验） - v0.3.5
+- [x] [已完成] `internal/migration/migrator.go` 轻量级 SQL 文件迁移机制（schema_migrations 表 + dirty 状态 + 单迁移事务） - v0.3.5
+- [x] [已完成] `config.go` 增 MigrationConfig（Auto/Dir）+ MIGRATION_AUTO/MIGRATION_DIR 环境变量 + DSN 加 multiStatements=true + InitContainer 调用 migration.Run - v0.3.5
+- [x] [已完成] `docker-compose.yml` 移除 mysql entrypoint 挂载（避免 .down.sql 误执行）+ server 加 MIGRATION_AUTO/MIGRATION_DIR 环境变量 - v0.3.5
+- [x] [已完成] `configs/config.yaml.example` 完全重写对齐 Config struct yaml tag - v0.3.5
+- [x] [已完成] `internal/handler/public.go` 新建：PublicAppInfo + PublicCardTypes 两个 H5 公共 API（无需鉴权 + DTO 过滤敏感字段） - v0.3.5
+- [x] [已完成] `pay.go` GetPayOrder 订单已支付时返回卡密明文（card_keys 字段，供 H5 终端用户查看） - v0.3.5
+- [x] [已完成] `router.go` publicGroup 新增 /apps/info + /card_types 两条路由 - v0.3.5
+- [x] [已完成] `api/pay.ts` PayOrder 接口加 card_keys 字段 - v0.3.5
+- [x] [已完成] `h5/Home.vue` + `h5/PayResult.vue` 接入真实 H5 公共 API + 展示卡密明文 - v0.3.5
+- [x] [已完成] `internal/quota/quota.go` 新建套餐配额检查包：ExceededError + CheckMaxApps/MaxCards/MaxAgents/MaxDevices - v0.3.5
+- [x] [已完成] `handler/app.go` TenantCreateApp 接入 quota.CheckMaxApps - v0.3.5
+- [x] [已完成] `handler/card.go` TenantGenerateCards 接入 quota.CheckMaxCards（替换内联检查） - v0.3.5
+- [x] [已完成] `handler/tenant_business.go` TenantGenInviteCode 接入 quota.CheckMaxAgents（区分 Limit==0 不支持招募代理场景） - v0.3.5
+- [x] [已完成] `handler/client.go` ClientLogin + ClientBind 接入 quota.CheckMaxDevices（替换内联检查） - v0.3.5
+- [x] [已完成] `go build` + `go vet` 后端编译验证通过 - v0.3.5
+- [x] [已完成] `pnpm run build` 前端编译验证通过 - v0.3.5
 
 #### 三级公告体系
 - [ ] [待开始] 统一公告表 notice 读写 - v0.3.0

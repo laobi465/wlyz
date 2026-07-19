@@ -8,6 +8,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/your-org/keyauth-saas/apps/server/internal/heartbeat"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
+	"github.com/your-org/keyauth-saas/apps/server/internal/quota"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/crypto"
 )
 
@@ -218,13 +220,17 @@ func ClientLogin(deps *Deps) gin.HandlerFunc {
 		err = deps.DB.Where("card_id = ? AND hwid = ? AND status = ?", card.ID, req.HWID, "active").
 			First(&existingDev).Error
 		if err == gorm.ErrRecordNotFound {
-			// 3.2 新设备：校验绑定数量上限
-			boundCount, _ := countBoundDevices(deps.DB, card.ID)
-			if int(boundCount) >= app.MaxDevices {
-				writeVerifyLogCtx(deps, c, app, req.HWID, req.CardKey, "login", "fail",
-					fmt.Sprintf("设备数已达上限 %d", app.MaxDevices))
-				middleware.Fail(c, http.StatusForbidden, 2003,
-					fmt.Sprintf("设备绑定数已达上限 %d，请先解绑其他设备", app.MaxDevices))
+			// 3.2 新设备：校验绑定数量上限 —— v0.3.5：抽到 quota 包统一管理
+			if err := quota.CheckMaxDevices(deps.DB, card.ID, app.MaxDevices); err != nil {
+				var qErr *quota.ExceededError
+				if errors.As(err, &qErr) {
+					writeVerifyLogCtx(deps, c, app, req.HWID, req.CardKey, "login", "fail",
+						fmt.Sprintf("设备数已达上限 %d", app.MaxDevices))
+					middleware.Fail(c, http.StatusForbidden, 2003,
+						fmt.Sprintf("设备绑定数已达上限 %d，请先解绑其他设备", app.MaxDevices))
+				} else {
+					middleware.Fail(c, http.StatusInternalServerError, 5001, err.Error())
+				}
 				return
 			}
 		}
@@ -468,11 +474,17 @@ func ClientBind(deps *Deps) gin.HandlerFunc {
 			return
 		}
 
-		// 校验设备数上限
+		// 校验设备数上限 —— v0.3.5：抽到 quota 包统一管理
+		// 注：boundCount 仍需保留以在响应中展示当前绑定数
 		boundCount, _ := countBoundDevices(deps.DB, card.ID)
-		if int(boundCount) >= app.MaxDevices {
-			middleware.Fail(c, http.StatusForbidden, 2003,
-				fmt.Sprintf("设备绑定数已达上限 %d", app.MaxDevices))
+		if err := quota.CheckMaxDevices(deps.DB, card.ID, app.MaxDevices); err != nil {
+			var qErr *quota.ExceededError
+			if errors.As(err, &qErr) {
+				middleware.Fail(c, http.StatusForbidden, 2003,
+					fmt.Sprintf("设备绑定数已达上限 %d，请先解绑其他设备", app.MaxDevices))
+			} else {
+				middleware.Fail(c, http.StatusInternalServerError, 5001, err.Error())
+			}
 			return
 		}
 

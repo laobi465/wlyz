@@ -5,6 +5,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
+	"github.com/your-org/keyauth-saas/apps/server/internal/quota"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/crypto"
 )
 
@@ -80,20 +82,15 @@ func TenantCreateApp(deps *Deps) gin.HandlerFunc {
 			return
 		}
 
-		// 2. 校验套餐配额（创建应用数上限）
-		var pkg model.SysPackage
-		if err := deps.DB.First(&pkg, tenant.PackageID).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "查询套餐失败")
-			return
-		}
-		var appCount int64
-		if err := deps.DB.Model(&model.App{}).Where("tenant_id = ?", tenantID).Count(&appCount).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5003, "查询应用数失败")
-			return
-		}
-		if pkg.MaxApps > 0 && int(appCount) >= pkg.MaxApps {
-			middleware.Fail(c, http.StatusForbidden, 1007,
-				"已达套餐应用数上限 "+itoa(pkg.MaxApps)+" 个，请升级套餐")
+		// 2. 校验套餐配额（创建应用数上限）—— v0.3.5：抽到 middleware/quota.go 统一管理
+		if err := quota.CheckMaxApps(deps.DB, tenantID); err != nil {
+			var qErr *quota.ExceededError
+			if errors.As(err, &qErr) {
+				middleware.Fail(c, http.StatusForbidden, 1007,
+					"已达套餐应用数上限 "+itoa(qErr.Limit)+" 个，请升级套餐")
+			} else {
+				middleware.Fail(c, http.StatusForbidden, 1007, err.Error())
+			}
 			return
 		}
 

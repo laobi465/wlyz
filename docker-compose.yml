@@ -42,7 +42,8 @@ services:
       - --long_query_time=2
     volumes:
       - mysql-data:/var/lib/mysql
-      - ./apps/server/migrations:/docker-entrypoint-initdb.d:ro
+      # 注：不再挂载 migrations 到 docker-entrypoint-initdb.d（v0.3.5 起改由 server 容器启动时执行）
+      # 原挂载方式会按字母序执行所有 .sql（含 .down.sql），存在迁移顺序错误风险
     ports:
       - "${MYSQL_PORT:-3306}:3306"
     networks: [keyauth-net]
@@ -105,6 +106,9 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       RSA_PRIVATE_KEY_PATH: /app/keys/rsa_private.pem
       RSA_PUBLIC_KEY_PATH: /app/keys/rsa_public.pem
+      # 数据库迁移（v0.3.5：server 启动时自动执行 migrations 目录下 .up.sql）
+      MIGRATION_AUTO: "true"
+      MIGRATION_DIR: /app/migrations
       # 运行
       SERVER_PORT: 8080
       GIN_MODE: release

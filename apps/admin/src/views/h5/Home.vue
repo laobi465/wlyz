@@ -100,7 +100,7 @@ const totalAmount = computed(() => {
   return (selectedCardType.value.price * quantity.value).toFixed(2)
 })
 
-// 加载卡类列表（公开接口，待核实：后端是否提供 public/card_types?app_key=xxx）
+// 加载卡类列表（公开接口 v0.3.5：/public/apps/info + /public/card_types）
 const loadCardTypes = async () => {
   if (!appKey.value) {
     cardTypes.value = []
@@ -109,14 +109,17 @@ const loadCardTypes = async () => {
   }
   loading.value = true
   try {
-    // 待核实：当前后端未提供公开的应用信息查询接口，暂用客户端 API 反向获取
-    // 此处调用一个待实现的公共接口 /public/apps/info?app_key=xxx
-    const info = await request.get<{ id: number; name: string; description: string }>('/public/apps/info', { app_key: appKey.value })
+    // 1. 按 app_key 查询应用公开信息
+    const info = await request.get<{ id: number; name: string; description: string; icon?: string; tenant_name?: string }>(
+      '/public/apps/info',
+      { app_key: appKey.value }
+    )
     appInfo.value = info
-    const list = await request.get<{ list: CardType[] }>('/public/card_types', { app_id: info.id, status: 'active' })
+    // 2. 按 app_id 查询可购卡类列表（后端只返回 active 卡类）
+    const list = await request.get<{ list: CardType[]; total: number }>('/public/card_types', { app_id: info.id })
     cardTypes.value = list.list || []
   } catch (e: any) {
-    // 接口未实现时给用户友好提示
+    // 接口已实现，错误由 http 拦截器处理；这里清空本地状态
     ElMessage.error('应用不存在或已禁用')
     cardTypes.value = []
     appInfo.value = null
