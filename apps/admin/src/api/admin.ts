@@ -199,9 +199,111 @@ export interface AdminLog {
   created_at: string
 }
 
-/** 日志审计列表（GET /admin/logs）—— v0.3.1 已实现 */
+/** 日志审计列表（GET /admin/logs）—— v0.3.1 已实现（兼容旧接口，仅 operation） */
 export const listAdminLogsApi = (params: { page?: number; page_size?: number; type?: AdminLogType; user_id?: number; start_date?: string; end_date?: string; keyword?: string }) => {
   return request.get<{ list: AdminLog[]; total: number }>('/admin/logs', params)
+}
+
+// ---- v0.3.3：三表独立查询 + CSV 导出 ----
+
+/** 操作日志（log_operation）—— v0.3.3 新增 */
+export interface LogOperation {
+  id: number
+  operator_type: 'admin' | 'tenant' | 'agent' | string
+  operator_id: number
+  username: string
+  operator_ip: string
+  user_agent: string
+  module: string
+  action: string
+  status: 'success' | 'fail' | string
+  target_type: string
+  target_id: number | null
+  detail: string
+  created_at: string
+}
+
+/** 验证日志（log_verify）—— v0.3.3 新增 */
+export interface LogVerify {
+  id: number
+  tenant_id: number
+  app_id: number
+  card_id: number | null
+  device_id: number | null
+  action: string  // login/verify/heartbeat/bind/unbind/getvar/notice/version
+  result: string  // success/fail/banned/expired/device_mismatch/rate_limited
+  client_ip: string
+  user_agent: string
+  extra: string   // JSON 字符串
+  created_at: string
+}
+
+/** 登录失败日志（log_login_failed）—— v0.3.3 新增 */
+export interface LogLoginFailed {
+  id: number
+  user_type: 'admin' | 'tenant' | 'agent' | string
+  username: string
+  client_ip: string
+  reason: string  // wrong_password/disabled/locked/unknown
+  user_agent: string
+  created_at: string
+}
+
+export type AdminLogTab = 'operation' | 'verify' | 'login_failed'
+
+/** 操作日志列表（GET /admin/logs/operations）—— v0.3.3 */
+export const listAdminOperationLogsApi = (params: {
+  page?: number
+  page_size?: number
+  operator_type?: string
+  operator_id?: number
+  module?: string
+  action?: string
+  status?: string
+  start_date?: string
+  end_date?: string
+  keyword?: string
+}) => {
+  return request.get<{ list: LogOperation[]; total: number; page: number; page_size: number }>('/admin/logs/operations', params)
+}
+
+/** 验证日志列表（GET /admin/logs/verify）—— v0.3.3 */
+export const listAdminVerifyLogsApi = (params: {
+  page?: number
+  page_size?: number
+  tenant_id?: number
+  app_id?: number
+  action?: string
+  result?: string
+  start_date?: string
+  end_date?: string
+  keyword?: string
+}) => {
+  return request.get<{ list: LogVerify[]; total: number; page: number; page_size: number }>('/admin/logs/verify', params)
+}
+
+/** 登录失败日志列表（GET /admin/logs/login_failed）—— v0.3.3 */
+export const listAdminLoginFailedLogsApi = (params: {
+  page?: number
+  page_size?: number
+  user_type?: string
+  username?: string
+  ip?: string
+  reason?: string
+  start_date?: string
+  end_date?: string
+}) => {
+  return request.get<{ list: LogLoginFailed[]; total: number; page: number; page_size: number }>('/admin/logs/login_failed', params)
+}
+
+/**
+ * 导出日志 CSV（GET /admin/logs/export?type=xxx）—— v0.3.3
+ * 后端返回 text/csv + UTF-8 BOM，前端转 Blob 触发下载
+ * @returns 后端原始 Response（已带 body），调用方负责转 Blob 下载
+ */
+export const exportAdminLogsApi = (params: { type: AdminLogTab }) => {
+  // 注意：这里需要绕过通用拦截器的 JSON 解析，直接拿原始 response
+  return request.get<Blob>('/admin/logs/export', params, { responseType: 'blob' })
 }
 
 // ============== 安全防护 ==============

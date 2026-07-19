@@ -9,9 +9,9 @@
 
 ---
 
-## [0.3.3] - 2026-07-19（后端部分，前端待续）
+## [0.3.3] - 2026-07-19
 
-### [功能] 日志系统后端：异步 Worker + 三表独立查询 + CSV 导出
+### [功能] 日志系统：异步 Worker + 三表独立查询 + CSV 导出 + 前端 3 Tab 升级
 
 #### 后端：异步日志 Worker
 - [新增] `apps/server/internal/handler/log_worker.go`
@@ -37,10 +37,17 @@
 - [新增] 路由注册 4 条新路由到 `adminAuth` 组（保留旧 `/admin/logs` 兼容接口）
 - [验证] `go build ./...` + `go vet ./...` 双双通过
 
-#### 待办（v0.3.3 前端待续）
-- [ ] `apps/admin/src/api/admin.ts` 增补 `LogOperation` / `LogVerify` / `LogLoginFailed` 类型 + 3 个 list API + 1 个 export API
-- [ ] `apps/admin/src/views/admin/Logs.vue` 升级：el-tabs 三表切换 + 每表独立筛选 + 顶部「导出 CSV」按钮（响应式 H5）
-- [ ] `pnpm run build` 前端编译验证
+#### 前端：3 Tab 切换 + CSV 下载
+- [新增] `apps/admin/src/api/admin.ts`：`LogOperation` / `LogVerify` / `LogLoginFailed` 三个接口类型 + `AdminLogTab` 联合类型
+- [新增] 4 个 API 函数：`listAdminOperationLogsApi` / `listAdminVerifyLogsApi` / `listAdminLoginFailedLogsApi` / `exportAdminLogsApi`（后者使用 `responseType: 'blob'` 绕过 JSON 拦截器）
+- [修改] `apps/admin/src/views/admin/Logs.vue` 全面重构：
+  - el-tabs 三表切换：操作日志 / 验证日志 / 登录失败日志
+  - 每表独立筛选条件（操作日志：operator_type/operator_id/module/action/status/keyword；验证日志：tenant_id/app_id/action/result/keyword；登录失败日志：user_type/username/ip/reason）
+  - 顶部「导出 CSV」按钮：按当前 Tab 调用 `/admin/logs/export?type=xxx`，前端 `createObjectURL` + `<a download>` 触发下载，文件名带时间戳
+  - 每表独立的 ResponsiveTable 列定义 + mobileFields（响应式 H5）
+  - 详情对话框按 kind 区分操作/验证两种字段集
+  - 完整中文映射：operatorType / verifyAction / verifyResult / reason 等 tag/text
+- [验证] `pnpm run build` 通过（Logs 模块 18.18 kB / gzip 4.94 kB）
 
 ---
 

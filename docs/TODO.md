@@ -215,7 +215,7 @@
 - [x] [已完成] 提现打款事务：withdraw.status=paid + paid_at + pay_trade_no + balance_log.status=settled - v0.3.2
 - [x] [已完成] `go build` + `go vet` + `pnpm run build` 三重编译验证通过 - v0.3.2
 
-#### v0.3.3 日志系统（后端已完成，前端进行中） ⏳ v0.3.3 进行中
+#### v0.3.3 日志系统 ✅ v0.3.3 已完成
 - [x] [已完成] `log_worker.go` 验证日志异步 worker（`verifyLogCh` 容量 4096，超出丢弃保证验证 API 性能） - v0.3.3
 - [x] [已完成] `log_worker.go` 操作日志异步 worker（`operationLogCh` 容量 2048） - v0.3.3
 - [x] [已完成] `RecordOperation` 切面 helper：从 gin.Context 抽取 role/userID/username/IP/UA - v0.3.3
@@ -225,9 +225,9 @@
 - [x] [已完成] 路由注册 4 条新路由：`/admin/logs/operations` + `/verify` + `/login_failed` + `/export` - v0.3.3
 - [x] [已完成] `main.go` 启动 `StartVerifyLogWorker` + `StartOperationLogWorker` - v0.3.3
 - [x] [已完成] `go build` + `go vet` 后端编译验证通过 - v0.3.3
-- [ ] [待开始] 前端 `api/admin.ts` 增补 `LogOperation` / `LogVerify` / `LogLoginFailed` 类型 + 3 个 list API + 1 个 export API - v0.3.3
-- [ ] [待开始] 前端 `admin/Logs.vue` 升级：el-tabs 三表切换 + 每表独立筛选 + 顶部「导出 CSV」按钮 - v0.3.3
-- [ ] [待开始] `pnpm run build` 前端编译验证 - v0.3.3
+- [x] [已完成] 前端 `api/admin.ts` 增补 `LogOperation` / `LogVerify` / `LogLoginFailed` 类型 + 3 个 list API + 1 个 export API - v0.3.3
+- [x] [已完成] 前端 `admin/Logs.vue` 升级：el-tabs 三表切换 + 每表独立筛选 + 顶部「导出 CSV」按钮（响应式 H5） - v0.3.3
+- [x] [已完成] `pnpm run build` 前端编译验证通过 - v0.3.3
 - [迁移] avatar 字段（三表均无对应列）→ v0.4.x 加列后落库
 - [迁移] 2FA `backup_codes` Redis 持久化 → v0.4.x 加表字段后迁移
 - [迁移] UA 解析库（mileusna/ua 或 ua-parser）→ v0.4.x 引入
@@ -429,7 +429,7 @@
 | v0.3.0 | 2026-07-19 | ✅ 已完成（后端业务 API 全量实现，替换全部 501 占位） |
 | v0.3.1 | 2026-07-19 | ✅ 已完成（v0.3.0 全部「待核实 v0.3.x」归零：字段补全 + AgentRecharge + ListLoginDevices + 登录失败日志） |
 | v0.3.2 | 2026-07-19 | ✅ 已完成（代理充值审核闭环 + 提现审核闭环：tenant_finance.go + 双审核页面） |
-| v0.3.3 | 2026-07-19 | ⏳ 进行中（日志系统：后端 worker + 三表查询 + CSV 导出已完成；前端 3 Tab 升级待续） |
+| v0.3.3 | 2026-07-19 | ✅ 已完成（日志系统：异步 Worker + 三表独立查询 + CSV 导出 + 前端 3 Tab 升级） |
 | v0.4.0 | 待定 | [待开始] 三期商业化 |
 
 ---
