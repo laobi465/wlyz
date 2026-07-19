@@ -151,6 +151,19 @@
 - [x] [已完成] AgentLayout 顶部余额标签改为调用 `/agent/auth/me` 真实获取 + 路由切换自动刷新 - v0.2.5
 - [待核实] 后端 agent 路由现仅占位（501 待实现），待 v0.3.0 完成对端接口 - v0.3.0
 
+#### 三角色 Profile + 双 Dashboard（响应式 H5） ✅ v0.2.6 已完成
+- [x] [已完成] 三角色共享账号设置 API 模块 `api/profile.ts`（currentUser/updateProfile/changePassword/setup2FA/verify2FA/disable2FA/listLoginDevices/kickDevice + 5 个类型） - v0.2.6
+- [x] [已完成] 超管后台 API 模块 `api/admin.ts`（dashboard/tenants/packages/agents/notices/logs/security + 8 个类型） - v0.2.6
+- [x] [已完成] 开发者控制台 API 模块 `api/tenant.ts`（dashboard/devices/orders/cloud-vars/versions/agents/invite-codes/pay-config/notices + 9 个类型） - v0.2.6
+- [x] [已完成] 超管账号设置 `views/admin/Profile.vue`（基础资料 + 修改密码 + 2FA TOTP + 登录设备） - v0.2.6
+- [x] [已完成] 开发者账号设置 `views/tenant/Profile.vue`（基础资料 + 公司信息 + 修改密码 + 2FA） - v0.2.6
+- [x] [已完成] 代理账号设置 `views/agent/Profile.vue`（账户概览 + 基础资料 + 提现账户 + 修改密码） - v0.2.6
+- [x] [已完成] 超管平台概览 `views/admin/Dashboard.vue`（8 数据卡 + 待办列表 + 收入趋势 + 最近开发者/订单表） - v0.2.6
+- [x] [已完成] 开发者工作台 `views/tenant/Dashboard.vue`（8 数据卡 + 8 快捷入口 + 收入趋势 + 应用 TOP5 + 最近订单） - v0.2.6
+- [x] [已完成] 路由 5 个 PlaceholderView 替换为真实页面（admin/Dashboard + admin/Profile + tenant/Dashboard + tenant/Profile + agent/Profile） - v0.2.6
+- [待核实] 后端 `/admin/dashboard` `/tenant/dashboard` 及 Profile 相关接口当前为 501 占位，待 v0.3.0 实现 - v0.3.0
+- [待核实] 后端 `/{role}/auth/me` 仅返回基本字段，Profile 中 email/phone/real_name/totp_enabled 暂为空，待 v0.3.0 扩展 - v0.3.0
+
 #### 三级公告体系
 - [ ] [待开始] 统一公告表 notice 读写 - v0.3.0
 - [ ] [待开始] notice_target 精准投递 - v0.3.0
@@ -341,6 +354,7 @@
 | v0.2.3 | 2026-07-19 | ✅ 已完成（平台总支付：彩虹易支付下单/回调/自动发卡/抽成结算） |
 | v0.2.4 | 2026-07-19 | ✅ 已完成（前端响应式 H5 全栈：三角色 + 官网 + H5） |
 | v0.2.5 | 2026-07-19 | ✅ 已完成（代理核心页面：购卡/订单/佣金/提现，响应式 H5） |
+| v0.2.6 | 2026-07-19 | ✅ 已完成（三角色 Profile + 双 Dashboard，响应式 H5） |
 | v0.3.0 | 待定 | [待开始] 二期增值 |
 | v0.4.0 | 待定 | [待开始] 三期商业化 |
 
@@ -370,6 +384,6 @@
 
 ---
 
-**文档版本**：0.2.5  
+**文档版本**：0.2.6  
 **最后更新**：2026-07-19  
 **维护者**：KeyAuth SaaS Team
