@@ -43,11 +43,11 @@ func Register(container *config.Container) *gin.Engine {
 
 	// 初始化依赖注入（简化版直接构造，正式版应用 wire/fx）
 	deps := &handler.Deps{
-		DB:        container.DB,
-		Redis:     container.Redis,
-		Crypto:    container.Crypto,
-		Config:    container.Config,
-		CfgCache:  container.ConfigCache(),
+		DB:       container.DB,
+		Redis:    container.Redis,
+		Crypto:   container.Crypto,
+		Config:   container.Config,
+		CfgCache: container.ConfigCache(),
 	}
 
 	// ----- 客户端验证 API（HMAC 签名鉴权） -----
@@ -70,21 +70,57 @@ func Register(container *config.Container) *gin.Engine {
 	adminAuth := v1.Group("/admin")
 	adminAuth.Use(middleware.JWTAuth(cfg.JWT.Secret, "admin"))
 	{
+		// 工作台
 		adminAuth.GET("/dashboard", handler.AdminDashboard(deps))
+
+		// 租户管理
 		adminAuth.GET("/tenants", handler.AdminListTenants(deps))
 		adminAuth.POST("/tenants", handler.AdminCreateTenant(deps))
 		adminAuth.PUT("/tenants/:id", handler.AdminUpdateTenant(deps))
+
+		// 套餐管理
 		adminAuth.GET("/packages", handler.AdminListPackages(deps))
 		adminAuth.POST("/packages", handler.AdminCreatePackage(deps))
+		adminAuth.PUT("/packages/:id", handler.AdminUpdatePackage(deps))
+
+		// 系统配置
 		adminAuth.GET("/config", handler.AdminListConfig(deps))
 		adminAuth.PUT("/config/:key", handler.AdminUpdateConfig(deps))
+
+		// 平台代理管理
+		adminAuth.GET("/agents", handler.AdminListAgents(deps))
+		adminAuth.PUT("/agents/:id", handler.AdminUpdateAgent(deps))
+
+		// 公告管理
 		adminAuth.GET("/notices", handler.AdminListNotices(deps))
 		adminAuth.POST("/notices", handler.AdminCreateNotice(deps))
+		adminAuth.PUT("/notices/:id", handler.AdminUpdateNotice(deps))
+		adminAuth.DELETE("/notices/:id", handler.AdminDeleteNotice(deps))
+
+		// 日志审计
+		adminAuth.GET("/logs", handler.AdminListLogs(deps))
+
+		// 安全中心
+		adminAuth.GET("/security/stats", handler.AdminSecurityStats(deps))
+		adminAuth.GET("/security/ip_blacklist", handler.AdminListIPBlacklist(deps))
+		adminAuth.POST("/security/ip_blacklist", handler.AdminAddIPBlacklist(deps))
+		adminAuth.DELETE("/security/ip_blacklist/:id", handler.AdminRemoveIPBlacklist(deps))
 
 		// 支付结算管理（v0.2.3）
 		adminAuth.GET("/settlements", handler.AdminListSettlements(deps))
 		adminAuth.POST("/settlements/:id/settle", handler.AdminSettleOrder(deps))
 		adminAuth.POST("/pay/test", handler.AdminTestPayConfig(deps))
+
+		// 账号设置（v0.3.0 三角色统一）
+		adminAuth.GET("/auth/me", handler.ProfileMe(deps))
+		adminAuth.PUT("/auth/profile", handler.UpdateProfile(deps))
+		adminAuth.POST("/auth/change_password", handler.ChangePassword(deps))
+		adminAuth.POST("/auth/2fa/setup", handler.Setup2FA(deps))
+		adminAuth.POST("/auth/2fa/verify", handler.Verify2FA(deps))
+		adminAuth.POST("/auth/2fa/disable", handler.Disable2FA(deps))
+		adminAuth.GET("/auth/devices", handler.ListLoginDevices(deps))
+		adminAuth.POST("/auth/devices/:id/kick", handler.KickDevice(deps))
+		adminAuth.POST("/auth/logout", handler.Logout(deps))
 	}
 
 	// ----- 开发者控制台 API（JWT 鉴权 + 多租户隔离） -----
@@ -92,6 +128,7 @@ func Register(container *config.Container) *gin.Engine {
 	tenantAuth.Use(middleware.JWTAuth(cfg.JWT.Secret, "tenant"))
 	tenantAuth.Use(middleware.TenantScope(container.DB))
 	{
+		// 工作台
 		tenantAuth.GET("/dashboard", handler.TenantDashboard(deps))
 
 		// 应用管理
@@ -115,9 +152,55 @@ func Register(container *config.Container) *gin.Engine {
 		tenantAuth.POST("/cards/:id/unban", handler.TenantUnbanCard(deps))
 		tenantAuth.DELETE("/cards/:id", handler.TenantDeleteCard(deps))
 
-		// 代理管理
+		// 设备管理（v0.3.0）
+		tenantAuth.GET("/devices", handler.TenantListDevices(deps))
+		tenantAuth.POST("/devices/:id/kick", handler.TenantKickDevice(deps))
+
+		// 订单管理（v0.3.0）
+		tenantAuth.GET("/orders", handler.TenantListOrders(deps))
+
+		// 云变量（v0.3.0）
+		tenantAuth.GET("/cloud_vars", handler.TenantListCloudVars(deps))
+		tenantAuth.POST("/cloud_vars", handler.TenantUpsertCloudVar(deps))
+		tenantAuth.PUT("/cloud_vars/:id", handler.TenantUpsertCloudVar(deps))
+		tenantAuth.DELETE("/cloud_vars/:id", handler.TenantDeleteCloudVar(deps))
+
+		// 版本管理（v0.3.0）
+		tenantAuth.GET("/versions", handler.TenantListVersions(deps))
+		tenantAuth.POST("/versions", handler.TenantCreateVersion(deps))
+		tenantAuth.DELETE("/versions/:id", handler.TenantDeleteVersion(deps))
+
+		// 代理管理（v0.3.0）
 		tenantAuth.GET("/agents", handler.TenantListAgents(deps))
+		tenantAuth.PUT("/agents/:id", handler.TenantUpdateAgent(deps))
+
+		// 邀请码（v0.3.0）
+		tenantAuth.GET("/agents/invite_codes", handler.TenantListInviteCodes(deps))
 		tenantAuth.POST("/agents/invite_codes", handler.TenantGenInviteCode(deps))
+		tenantAuth.POST("/agents/invite_codes/:id/disable", handler.TenantDisableInviteCode(deps))
+
+		// 开发者支付配置（v0.3.0）
+		tenantAuth.GET("/pay_config", handler.TenantListPayConfig(deps))
+		tenantAuth.POST("/pay_config", handler.TenantSavePayConfig(deps))
+		tenantAuth.PUT("/pay_config/:channel", handler.TenantSavePayConfig(deps))
+		tenantAuth.POST("/pay_config/test", handler.TenantTestPayConfig(deps))
+
+		// 开发者公告（v0.3.0）
+		tenantAuth.GET("/notices", handler.TenantListNotices(deps))
+		tenantAuth.POST("/notices", handler.TenantCreateNotice(deps))
+		tenantAuth.PUT("/notices/:id", handler.TenantUpdateNotice(deps))
+		tenantAuth.DELETE("/notices/:id", handler.TenantDeleteNotice(deps))
+
+		// 账号设置（v0.3.0 三角色统一）
+		tenantAuth.GET("/auth/me", handler.ProfileMe(deps))
+		tenantAuth.PUT("/auth/profile", handler.UpdateProfile(deps))
+		tenantAuth.POST("/auth/change_password", handler.ChangePassword(deps))
+		tenantAuth.POST("/auth/2fa/setup", handler.Setup2FA(deps))
+		tenantAuth.POST("/auth/2fa/verify", handler.Verify2FA(deps))
+		tenantAuth.POST("/auth/2fa/disable", handler.Disable2FA(deps))
+		tenantAuth.GET("/auth/devices", handler.ListLoginDevices(deps))
+		tenantAuth.POST("/auth/devices/:id/kick", handler.KickDevice(deps))
+		tenantAuth.POST("/auth/logout", handler.Logout(deps))
 	}
 
 	// ----- 代理商控制台 API（JWT 鉴权 + 多租户隔离） -----
@@ -125,11 +208,36 @@ func Register(container *config.Container) *gin.Engine {
 	agentAuth.Use(middleware.JWTAuth(cfg.JWT.Secret, "agent"))
 	agentAuth.Use(middleware.TenantScope(container.DB))
 	{
+		// 工作台
 		agentAuth.GET("/dashboard", handler.AgentDashboard(deps))
+
+		// 账号信息（v0.3.0 扩展，覆盖原 CurrentUser）
+		agentAuth.GET("/auth/me", handler.AgentMe(deps))
+		agentAuth.PUT("/auth/profile", handler.UpdateProfile(deps))
+		agentAuth.POST("/auth/change_password", handler.ChangePassword(deps))
+		agentAuth.POST("/auth/2fa/setup", handler.Setup2FA(deps))
+		agentAuth.POST("/auth/2fa/verify", handler.Verify2FA(deps))
+		agentAuth.POST("/auth/2fa/disable", handler.Disable2FA(deps))
+		agentAuth.GET("/auth/devices", handler.ListLoginDevices(deps))
+		agentAuth.POST("/auth/devices/:id/kick", handler.KickDevice(deps))
+		agentAuth.POST("/auth/logout", handler.Logout(deps))
+
+		// 卡类与卡密
+		agentAuth.GET("/card_types", handler.AgentListCardTypes(deps))
 		agentAuth.GET("/cards", handler.AgentListCards(deps))
 		agentAuth.POST("/cards/generate", handler.AgentGenerateCards(deps))
+
+		// 订单
+		agentAuth.GET("/orders", handler.AgentListOrders(deps))
+
+		// 佣金与提现
 		agentAuth.GET("/commission", handler.AgentListCommission(deps))
 		agentAuth.POST("/withdraw", handler.AgentWithdraw(deps))
+		agentAuth.POST("/recharge", handler.AgentRecharge(deps)) // 待核实 v0.3.x：当前返回 501
+
+		// 消息通知
+		agentAuth.GET("/notices", handler.AgentListNotices(deps))
+		agentAuth.POST("/notices/:id/read", handler.AgentReadNotice(deps))
 	}
 
 	// ----- 公共 API（无需鉴权） -----
@@ -140,18 +248,9 @@ func Register(container *config.Container) *gin.Engine {
 		publicGroup.POST("/auth/tenant/login", handler.TenantLogin(deps))
 		publicGroup.POST("/auth/agent/login", handler.AgentLogin(deps))
 		publicGroup.POST("/auth/agent/register", handler.AgentRegister(deps))
-		publicGroup.POST("/auth/refresh", handler.RefreshToken(deps))  // 三角色共用
+		publicGroup.POST("/auth/refresh", handler.RefreshToken(deps)) // 三角色共用
 		publicGroup.GET("/notices/platform", handler.PublicPlatformNotices(deps))
 	}
-
-	// ----- 三角色通用鉴权后接口（登出 / 当前用户） -----
-	// 注：这些端点位于各自角色组下，共享 JWT 中间件
-	adminAuth.POST("/auth/logout", handler.Logout(deps))
-	adminAuth.GET("/auth/me", handler.CurrentUser(deps))
-	tenantAuth.POST("/auth/logout", handler.Logout(deps))
-	tenantAuth.GET("/auth/me", handler.CurrentUser(deps))
-	agentAuth.POST("/auth/logout", handler.Logout(deps))
-	agentAuth.GET("/auth/me", handler.CurrentUser(deps))
 
 	// ----- 支付回调（无鉴权，靠签名校验） -----
 	payGroup := v1.Group("/pay")
@@ -167,8 +266,6 @@ func Register(container *config.Container) *gin.Engine {
 		// 开发者自有易支付回调（v0.3.0）
 		payGroup.POST("/notify/tenant/:tenant_id", handler.EpayTenantNotify(deps))
 	}
-
-	// ----- 超管：支付结算管理路由已注册在上方 adminAuth 组 -----
 
 	return r
 }

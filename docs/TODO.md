@@ -170,7 +170,25 @@
 - [x] [已完成] Agent 1 页：Notices（含 agent.ts 扩展 listAgentNoticesApi/readAgentNoticeApi） - v0.2.7
 - [x] [已完成] 路由 16 个 PlaceholderView 全部替换为懒加载真实组件 + 移除 PlaceholderView 导入 - v0.2.7
 - [里程碑] PlaceholderView 占位阶段彻底结束，前端三角色所有路由全部由真实响应式 H5 页面承载 - v0.2.7
-- [待核实] 后端 admin/tenant/agent 业务接口（dashboard/profile/CRUD 等）当前为 501，待 v0.3.0 实现 - v0.3.0
+- [x] [已完成] 后端 admin/tenant/agent 业务接口（dashboard/profile/CRUD 等）从 501 升级为真实实现 - v0.3.0
+
+#### 后端业务 API 全量实现（替换全部 501 占位） ✅ v0.3.0 已完成
+- [x] [已完成] `internal/handler/admin_business.go` 18 个超管接口（公开平台公告 + 工作台 + 租户/套餐/代理/公告 CRUD + 日志审计 + 安全中心） - v0.3.0
+- [x] [已完成] `internal/handler/tenant_business.go` 22 个开发者接口（工作台 + 设备/订单/云变量/版本/代理/邀请码/支付配置/公告 全套 CRUD） - v0.3.0
+- [x] [已完成] `internal/handler/agent_business.go` 11 个代理接口（工作台 + AgentMe + 卡类/卡密/订单/佣金/提现/通知） - v0.3.0
+- [x] [已完成] `internal/handler/profile.go` 三角色统一账号设置（ProfileMe + UpdateProfile + ChangePassword + 2FA 全流程 + LoginDevices） - v0.3.0
+- [x] [已完成] `internal/router/router.go` 注册 40+ 新端点 + 三角色 `/auth/me` 切换为 `ProfileMe` - v0.3.0
+- [x] [已完成] admin.go 清理：移除 12 个 501 占位函数，保留 AdminListConfig/AdminUpdateConfig 真实实现 - v0.3.0
+- [x] [已完成] AgentGenerateCards 事务化（扣余额 → 生成卡密 → 写扣费日志 → 结算佣金 + 写佣金日志） - v0.3.0
+- [x] [已完成] 2FA 全流程（setup Redis 中转 10min → verify AES 加密入库 + 备用码 Redis 持久化 → disable 黑名单 refresh token） - v0.3.0
+- [x] [已完成] 三级公告体系后端实现（平台/开发者/代理 notice 表统一读写 + notice_read 已读记录） - v0.3.0
+- [x] [已完成] 邀请码生成（crypto/rand 16 位 + 5 次重试唯一性 + 状态机 active/disabled/exhausted/expired） - v0.3.0
+- [x] [已完成] 云变量 CRUD + 版本管理 CRUD - v0.3.0
+- [x] [已完成] `go build ./...` + `go vet ./...` 全部通过（0 错误 0 警告） - v0.3.0
+- [待核实] `sys_tenant/sys_package/notice/log_operation/sec_ip_blacklist/AppCloudVar/AppVersion/Agent/AgentInviteCode` 部分字段缺失（已在 CHANGELOG 标注，不阻塞编译） - v0.3.x
+- [待核实] `AgentRecharge` 返回 501（待接入支付回调或开发者手工充值流程） - v0.3.x
+- [待核实] agent 表暂无 `totp_secret` 字段，代理 2FA setup 返回 501 - v0.3.x
+- [待核实] `ListLoginDevices` 简化为当前会话信息（待引入完整 refresh token 设备表） - v0.3.x
 
 #### 三级公告体系
 - [ ] [待开始] 统一公告表 notice 读写 - v0.3.0

@@ -1,6 +1,7 @@
-// 平台超管 / 开发者 / 代理 处理器骨架
-// 实际业务逻辑在各模块的 service 层实现，handler 仅做参数转发
-// 注意：登录/注册/刷新/登出 接口已迁移至 auth.go（认证模块）
+// 平台超管系统配置 Handler
+// 注：业务接口（Dashboard / Tenants / Packages / Agents / Notices / Logs / Security）
+//     已迁移至 admin_business.go（v0.3.0）
+//     登录/注册/刷新/登出 接口已迁移至 auth.go
 package handler
 
 import (
@@ -8,65 +9,10 @@ import (
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 )
 
-// PublicPlatformNotices 公开平台公告
-func PublicPlatformNotices(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// TODO(v0.3.0): 查询 type=platform AND status=published
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.3.0 交付")
-	}
-}
-
-// ============== 平台超管 ==============
-
-// AdminDashboard 平台看板（S-01）
-func AdminDashboard(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// TODO(v0.3.0): 全局统计
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.3.0 交付")
-	}
-}
-
-// AdminListTenants 租户列表（S-02）
-func AdminListTenants(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// TODO(v0.2.0): 分页查询
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.2.0 交付")
-	}
-}
-
-// AdminCreateTenant 创建租户
-func AdminCreateTenant(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.2.0 交付")
-	}
-}
-
-// AdminUpdateTenant 更新租户
-func AdminUpdateTenant(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.2.0 交付")
-	}
-}
-
-// AdminListPackages 套餐列表（S-03）
-func AdminListPackages(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.2.0 交付")
-	}
-}
-
-// AdminCreatePackage 创建套餐
-func AdminCreatePackage(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.2.0 交付")
-	}
-}
-
 // AdminListConfig 系统配置列表（S-07）
 // 按 config_group 分组返回
 func AdminListConfig(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// TODO(v0.2.0): 按 group 分组查询 sys_config
 		group := c.Query("group")
 		rows, err := deps.CfgCache.ListByGroup(c.Request.Context(), group)
 		if err != nil {
@@ -82,9 +28,9 @@ func AdminUpdateConfig(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		key := c.Param("key")
 		var req struct {
-			Value string `json:"value" binding:"required"`
-			Name  string `json:"name"`
-			Group string `json:"group"`
+			Value  string `json:"value" binding:"required"`
+			Name   string `json:"name"`
+			Group  string `json:"group"`
 			Remark string `json:"remark"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -99,88 +45,3 @@ func AdminUpdateConfig(deps *Deps) gin.HandlerFunc {
 		middleware.Success(c, nil)
 	}
 }
-
-// AdminListNotices 公告列表（S-15/S-16）
-func AdminListNotices(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.3.0 交付")
-	}
-}
-
-// AdminCreateNotice 创建公告
-func AdminCreateNotice(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.3.0 交付")
-	}
-}
-
-// ============== 开发者控制台 ==============
-
-// TenantDashboard 开发者工作台（D-01）
-func TenantDashboard(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// TODO(v0.3.0): 统计卡密数/在线数/今日销量/本月收入
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.3.0 交付")
-	}
-}
-
-// TenantListApps 应用列表（D-02）—— 已迁移至 app.go
-// TenantCreateApp 创建应用 —— 已迁移至 app.go
-// TenantUpdateApp 更新应用 —— 已迁移至 app.go
-// TenantListCards 卡密列表（D-03）—— 已迁移至 card.go
-// TenantGenerateCards 批量生成卡密 —— 已迁移至 card.go
-
-// TenantListAgents 代理列表（D-08）
-func TenantListAgents(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.3.0 交付")
-	}
-}
-
-// TenantGenInviteCode 生成代理邀请码
-func TenantGenInviteCode(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.3.0 交付")
-	}
-}
-
-// ============== 代理商控制台 ==============
-
-// AgentDashboard 代理工作台（P-01）
-func AgentDashboard(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.3.0 交付")
-	}
-}
-
-// AgentListCards 代理卡密列表（P-03）
-func AgentListCards(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.3.0 交付")
-	}
-}
-
-// AgentGenerateCards 代理生成卡密（扣余额）
-func AgentGenerateCards(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// TODO(v0.3.0): 校验授权范围 → 扣余额 → 生成卡密
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.3.0 交付")
-	}
-}
-
-// AgentListCommission 佣金明细（P-05）
-func AgentListCommission(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.3.0 交付")
-	}
-}
-
-// AgentWithdraw 提现申请
-func AgentWithdraw(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.3.0 交付")
-	}
-}
-
-// ============== 支付回调 ==============
-// EpayNotify / EpayReturn / EpayTenantNotify 已迁移至 pay.go（v0.2.3）
