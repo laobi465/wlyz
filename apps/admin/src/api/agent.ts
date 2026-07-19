@@ -1,7 +1,6 @@
 // 代理控制台 API
 // 对应后端路由：/api/v1/agent/*
-// 注意（铁律 06 待核实）：后端 agent 业务接口当前为 501 占位（v0.3.0 交付），
-// 调用时会被 http 拦截器以业务错误提示，前端列表/统计保持空状态，不编造假数据（铁律 04）。
+// v0.3.1 已交付：dashboard / me / card_types / cards / orders / balance_logs / withdraw / recharge / notices
 import { request } from './http'
 import type { CardStatus } from './cards'
 
@@ -203,12 +202,12 @@ export interface AgentNotice {
   created_at: string
 }
 
-/** 代理消息通知列表（GET /agent/notices）—— 待核实 v0.3.0 */
+/** 代理消息通知列表（GET /agent/notices）—— v0.3.1 已实现 */
 export const listAgentNoticesApi = (params: { page?: number; page_size?: number; type?: string; unread_only?: boolean }) => {
   return request.get<{ list: AgentNotice[]; total: number }>('/agent/notices', params)
 }
 
-/** 标记通知为已读（POST /agent/notices/:id/read）—— 待核实 v0.3.0 */
+/** 标记通知为已读（POST /agent/notices/:id/read）—— v0.3.1 已实现 */
 export const readAgentNoticeApi = (id: number) => {
   return request.post(`/agent/notices/${id}/read`, {})
 }

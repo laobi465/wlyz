@@ -2,7 +2,7 @@
   代理订单（响应式 H5）
   - 状态筛选 + 列表 + 分页
   - 每条订单显示：订单号 / 卡类 / 数量 / 金额 / 佣金 / 状态 / 时间
-  铁律 06 待核实：后端 /agent/orders 当前为 501 占位（v0.3.0 交付）。
+  v0.3.1 已交付 /agent/orders。
 -->
 <template>
   <div class="agent-orders-page">

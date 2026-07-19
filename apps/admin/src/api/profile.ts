@@ -2,13 +2,13 @@
 // 对应后端路由：
 //   GET    /api/v1/{role}/auth/me           —— 当前用户信息（已实现）
 //   POST   /api/v1/{role}/auth/logout        —— 登出（已实现）
-//   POST   /api/v1/{role}/auth/change_password   —— 修改密码（待核实，v0.3.0）
-//   PUT    /api/v1/{role}/auth/profile           —— 更新基本资料（待核实，v0.3.0）
-//   POST   /api/v1/{role}/auth/2fa/setup         —— 2FA 生成密钥+二维码（待核实，v0.3.0）
-//   POST   /api/v1/{role}/auth/2fa/verify        —— 2FA 启用验证（待核实，v0.3.0）
-//   POST   /api/v1/{role}/auth/2fa/disable       —— 2FA 关闭（待核实，v0.3.0）
-//   GET    /api/v1/{role}/auth/devices           —— 登录设备列表（待核实，v0.3.0）
-//   DELETE /api/v1/{role}/auth/devices/:id       —— 踢下线（待核实，v0.3.0）
+//   POST   /api/v1/{role}/auth/change_password   —— 修改密码（v0.3.1 已实现）
+//   PUT    /api/v1/{role}/auth/profile           —— 更新基本资料（v0.3.1 已实现）
+//   POST   /api/v1/{role}/auth/2fa/setup         —— 2FA 生成密钥+二维码（v0.3.1 已实现）
+//   POST   /api/v1/{role}/auth/2fa/verify        —— 2FA 启用验证（v0.3.1 已实现）
+//   POST   /api/v1/{role}/auth/2fa/disable       —— 2FA 关闭（v0.3.1 已实现）
+//   GET    /api/v1/{role}/auth/devices           —— 登录设备列表（v0.3.1 已实现）
+//   DELETE /api/v1/{role}/auth/devices/:id       —— 踢下线（v0.3.1 已实现）
 import { request } from './http'
 import type { UserRole } from './auth'
 
@@ -18,7 +18,6 @@ export interface CurrentUser {
   username: string
   role: UserRole
   tenant_id?: number
-  /** 后端未来扩展字段（待核实，v0.3.0 补全） */
   email?: string
   phone?: string
   real_name?: string
@@ -47,14 +46,14 @@ export interface UpdateProfileReq {
   avatar?: string
 }
 
-/** 2FA 启用返回（待核实） */
+/** 2FA 启用返回 */
 export interface TwoFASetupResp {
   secret: string
   qr_code_url: string
   backup_codes: string[]
 }
 
-/** 登录设备记录（待核实） */
+/** 登录设备记录 */
 export interface LoginDevice {
   id: number
   device_name: string
@@ -70,37 +69,37 @@ export const currentUserApi = (role: UserRole) => {
   return request.get<CurrentUser>(`/${role}/auth/me`)
 }
 
-/** 修改登录密码（待核实，v0.3.0） */
+/** 修改登录密码（POST /{role}/auth/change_password）—— v0.3.1 已实现 */
 export const changePasswordApi = (role: UserRole, data: ChangePasswordReq) => {
   return request.post(`/${role}/auth/change_password`, data)
 }
 
-/** 更新基本资料（待核实，v0.3.0） */
+/** 更新基本资料（PUT /{role}/auth/profile）—— v0.3.1 已实现 */
 export const updateProfileApi = (role: UserRole, data: UpdateProfileReq) => {
   return request.put(`/${role}/auth/profile`, data)
 }
 
-/** 生成 2FA 密钥与二维码（待核实，v0.3.0） */
+/** 生成 2FA 密钥与二维码（POST /{role}/auth/2fa/setup）—— v0.3.1 已实现 */
 export const setup2FAApi = (role: UserRole) => {
   return request.post<TwoFASetupResp>(`/${role}/auth/2fa/setup`, {})
 }
 
-/** 启用 2FA 验证（待核实，v0.3.0） */
+/** 启用 2FA 验证（POST /{role}/auth/2fa/verify）—— v0.3.1 已实现 */
 export const verify2FAApi = (role: UserRole, data: { code: string }) => {
   return request.post(`/${role}/auth/2fa/verify`, data)
 }
 
-/** 关闭 2FA（待核实，v0.3.0） */
+/** 关闭 2FA（POST /{role}/auth/2fa/disable）—— v0.3.1 已实现 */
 export const disable2FAApi = (role: UserRole, data: { code: string; password: string }) => {
   return request.post(`/${role}/auth/2fa/disable`, data)
 }
 
-/** 登录设备列表（待核实，v0.3.0） */
+/** 登录设备列表（GET /{role}/auth/devices）—— v0.3.1 已实现 */
 export const listLoginDevicesApi = (role: UserRole) => {
   return request.get<{ list: LoginDevice[] }>(`/${role}/auth/devices`)
 }
 
-/** 踢指定设备下线（待核实，v0.3.0） */
+/** 踢指定设备下线（DELETE /{role}/auth/devices/:id）—— v0.3.1 已实现 */
 export const kickDeviceApi = (role: UserRole, id: number) => {
   return request.delete(`/${role}/auth/devices/${id}`)
 }

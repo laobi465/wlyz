@@ -5,7 +5,7 @@
   - 列表：ID / 类型 / 标题 / 置顶 / 已读 / 发布时间 / 操作
   - 查看对话框：完整内容（标题 + 类型 + 发布时间 + 内容 textarea readonly）
   - 标为已读：仅未读状态显示，调用 readAgentNoticeApi
-  铁律 06 待核实：后端 /agent/notices 当前为 501 占位（v0.3.0 交付），调用失败时静默降级保持空状态（铁律 04 不编造数据）。
+  v0.3.1 已交付 /agent/notices + /agent/notices/:id/read。
 -->
 <template>
   <div class="notices-page">

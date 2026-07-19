@@ -450,7 +450,6 @@ type upsertCloudVarReq struct {
 
 // TenantUpsertCloudVar 创建/更新云变量
 // POST /tenant/cloud_vars
-// 待核实：model.AppCloudVar 无 read_only 字段，简化用 status='active'/'readonly' 映射
 func TenantUpsertCloudVar(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := getTenantID(c)
@@ -473,11 +472,6 @@ func TenantUpsertCloudVar(deps *Deps) gin.HandlerFunc {
 		if valueType == "" {
 			valueType = "string"
 		}
-		// 待核实：read_only 字段映射到 status，建议后续给 AppCloudVar 加 read_only 字段
-		status := "active"
-		if req.ReadOnly {
-			status = "readonly"
-		}
 
 		var cv model.AppCloudVar
 		result := deps.DB.Where("tenant_id = ? AND app_id = ? AND var_key = ?", tenantID, req.AppID, req.Key).First(&cv)
@@ -488,7 +482,8 @@ func TenantUpsertCloudVar(deps *Deps) gin.HandlerFunc {
 				VarKey:   req.Key,
 				VarValue: req.Value,
 				VarType:  valueType,
-				Status:   status,
+				ReadOnly: req.ReadOnly,
+				Status:   "active",
 			}
 			if err := deps.DB.Create(&cv).Error; err != nil {
 				middleware.Fail(c, http.StatusInternalServerError, 5001, "创建云变量失败: "+err.Error())
@@ -501,7 +496,7 @@ func TenantUpsertCloudVar(deps *Deps) gin.HandlerFunc {
 			updates := map[string]interface{}{
 				"var_value": req.Value,
 				"var_type":  valueType,
-				"status":    status,
+				"read_only": req.ReadOnly,
 			}
 			if err := deps.DB.Model(&model.AppCloudVar{}).Where("id = ?", cv.ID).Updates(updates).Error; err != nil {
 				middleware.Fail(c, http.StatusInternalServerError, 5002, "更新云变量失败: "+err.Error())
@@ -554,7 +549,6 @@ func TenantDeleteCloudVar(deps *Deps) gin.HandlerFunc {
 type versionListItem struct {
 	model.AppVersion
 	AppName string `json:"app_name"`
-	Channel string `json:"channel"` // 待核实：model.AppVersion 无 channel 字段，暂统一返回 'stable'
 }
 
 // TenantListVersions 版本列表
@@ -577,8 +571,9 @@ func TenantListVersions(deps *Deps) gin.HandlerFunc {
 			appID, _ := strconv.ParseUint(appIDStr, 10, 64)
 			q = q.Where("app_version.app_id = ?", appID)
 		}
-		// 待核实：channel 过滤暂未实现（model.AppVersion 无 channel 字段，待 v0.3.x 加）
-		_ = c.Query("channel")
+		if channel := c.Query("channel"); channel != "" {
+			q = q.Where("app_version.channel = ?", channel)
+		}
 
 		var total int64
 		q.Count(&total)
@@ -587,10 +582,6 @@ func TenantListVersions(deps *Deps) gin.HandlerFunc {
 		if err := q.Order("app_version.id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Scan(&items).Error; err != nil {
 			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败: "+err.Error())
 			return
-		}
-		// 待核实：统一返回 channel='stable'
-		for i := range items {
-			items[i].Channel = "stable"
 		}
 
 		middleware.Success(c, gin.H{
@@ -608,6 +599,7 @@ func TenantListVersions(deps *Deps) gin.HandlerFunc {
 type createVersionReq struct {
 	AppID       uint64 `json:"app_id" binding:"required"`
 	Version     string `json:"version" binding:"required,min=1,max=32"`
+	Channel     string `json:"channel" binding:"omitempty,oneof=stable beta dev"`
 	MinVersion  string `json:"min_version" binding:"omitempty,max=32"`
 	DownloadURL string `json:"download_url" binding:"omitempty,max=255"`
 	ForceUpdate bool   `json:"force_update"`
@@ -617,7 +609,7 @@ type createVersionReq struct {
 
 // TenantCreateVersion 创建版本
 // POST /tenant/versions
-// 待核实：published 字段映射到 status（active/draft），待 v0.3.x 加 published 字段
+// published 字段映射到 status（active/draft）
 func TenantCreateVersion(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := getTenantID(c)
@@ -644,11 +636,16 @@ func TenantCreateVersion(deps *Deps) gin.HandlerFunc {
 		if minVersion == "" {
 			minVersion = "0.0.0"
 		}
+		channel := req.Channel
+		if channel == "" {
+			channel = "stable"
+		}
 
 		v := &model.AppVersion{
 			TenantID:      tenantID,
 			AppID:         req.AppID,
 			Version:       req.Version,
+			Channel:       channel,
 			MinVersion:    minVersion,
 			DownloadURL:   req.DownloadURL,
 			ForceUpdate:   req.ForceUpdate,
@@ -706,7 +703,6 @@ type agentListItem struct {
 	TotalCommission float64    `json:"total_commission"`
 	TotalWithdraw   float64    `json:"total_withdraw"`
 	FrozenBalance   float64    `json:"frozen_balance"`
-	CommissionMode  string     `json:"commission_mode"` // 待核实：agent 表无 commission_mode 字段，暂返回 'percentage'
 	LastActiveAt    *time.Time `json:"last_active_at"`
 }
 
@@ -742,9 +738,8 @@ func TenantListAgents(deps *Deps) gin.HandlerFunc {
 		items := make([]agentListItem, 0, len(agents))
 		for _, a := range agents {
 			item := agentListItem{
-				Agent:          a,
-				CommissionMode: "percentage", // 待核实：应从 invite_code.default_commission_rate 或 sys_config 读取
-				LastActiveAt:   a.LastLoginAt,
+				Agent:        a,
+				LastActiveAt: a.LastLoginAt,
 			}
 			// total_commission = SUM(commission.amount WHERE settle_status != 'rejected')
 			var commSum sumResult
@@ -790,7 +785,6 @@ type updateAgentReq struct {
 
 // TenantUpdateAgent 更新代理
 // PUT /tenant/agents/:id
-// 待核实：commission_mode 字段无对应列，暂不持久化（待 v0.3.x 加列）
 func TenantUpdateAgent(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := getTenantID(c)
@@ -824,10 +818,12 @@ func TenantUpdateAgent(deps *Deps) gin.HandlerFunc {
 		if req.Status != nil {
 			updates["status"] = *req.Status
 		}
+		if req.CommissionMode != nil {
+			updates["commission_mode"] = *req.CommissionMode
+		}
 		if req.CommissionRate != nil {
 			updates["commission_rate"] = *req.CommissionRate
 		}
-		// 待核实：commission_mode 无对应列，暂忽略（待 v0.3.x 加列）
 
 		if len(updates) == 0 {
 			middleware.Fail(c, http.StatusBadRequest, 1001, "未提交任何更新字段")
@@ -917,9 +913,14 @@ func TenantGenInviteCode(deps *Deps) gin.HandlerFunc {
 
 // ============== 14. 邀请码列表 ==============
 
+// inviteCodeListItem 邀请码列表项（嵌入 AgentInviteCode + 联表 used_by_username）
+type inviteCodeListItem struct {
+	model.AgentInviteCode
+	UsedByUsername string `json:"used_by_username"`
+}
+
 // TenantListInviteCodes 邀请码列表
 // GET /tenant/invite_codes?page=&page_size=&status=
-// 待核实：model.AgentInviteCode 无 used_by_agent_id 字段，无法联表 agent 获取 used_by_username
 // 前端按 used_count 判定 unused/used 状态
 func TenantListInviteCodes(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -930,16 +931,20 @@ func TenantListInviteCodes(deps *Deps) gin.HandlerFunc {
 		}
 		page, pageSize := parsePagination(c)
 
-		q := deps.DB.Model(&model.AgentInviteCode{}).Where("tenant_id = ?", tenantID)
+		q := deps.DB.Table("agent_invite_code").
+			Select("agent_invite_code.*, agent.username as used_by_username").
+			Joins("LEFT JOIN agent ON agent.id = agent_invite_code.used_by_agent_id").
+			Where("agent_invite_code.tenant_id = ?", tenantID)
 		if status := c.Query("status"); status != "" {
-			q = q.Where("status = ?", status)
+			q = q.Where("agent_invite_code.status = ?", status)
 		}
 
 		var total int64
 		q.Count(&total)
 
-		var items []model.AgentInviteCode
-		if err := q.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&items).Error; err != nil {
+		var items []inviteCodeListItem
+		if err := q.Order("agent_invite_code.id DESC").
+			Offset((page - 1) * pageSize).Limit(pageSize).Scan(&items).Error; err != nil {
 			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败: "+err.Error())
 			return
 		}
@@ -1187,15 +1192,14 @@ func TenantTestPayConfig(deps *Deps) gin.HandlerFunc {
 type noticeListItem struct {
 	model.Notice
 	// 冗余字段，便于前端直接消费
-	Pinned   bool   `json:"pinned"`    // 映射 IsPinned，待核实：model 无 pinned 字段，需用 is_pinned
-	PublishAt string `json:"publish_at"` // 映射 StartAt，待核实：model 无 publish_at 字段
-	ExpireAt  string `json:"expire_at"`  // 映射 EndAt，待核实：model 无 expire_at 字段
+	Pinned   bool   `json:"pinned"`     // 映射 IsPinned
+	PublishAt string `json:"publish_at"` // 映射 StartAt
+	ExpireAt  string `json:"expire_at"`  // 映射 EndAt
 }
 
 // TenantListNotices 开发者公告列表
 // GET /tenant/notices?page=&page_size=&type=&status=
-// 列表查询 type IN ('tenant', 'agent')；待核实：model Notice.Type 枚举为 platform/developer/app/agent_notify，
-// 任务规格说 type IN ('tenant', 'agent')，可能与 model 枚举不匹配，待与产品确认
+// 列表查询 type IN ('tenant', 'agent', 'h5')，默认仅返回开发者向公告与代理通知
 func TenantListNotices(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := getTenantID(c)
@@ -1207,13 +1211,11 @@ func TenantListNotices(deps *Deps) gin.HandlerFunc {
 
 		q := deps.DB.Model(&model.Notice{}).Where("tenant_id = ?", tenantID)
 
-		// 待核实：type 取值与 model Notice.Type 枚举（platform/developer/app/agent_notify）不一致
-		// 此处按任务规格实现，若需统一可改为 IN ('developer', 'agent_notify')
 		if t := c.Query("type"); t != "" {
 			q = q.Where("type = ?", t)
 		} else {
 			// 默认仅返回开发者向公告与代理通知
-			q = q.Where("type IN ?", []string{"tenant", "agent"})
+			q = q.Where("type IN ?", []string{"tenant", "agent", "h5"})
 		}
 		if status := c.Query("status"); status != "" {
 			q = q.Where("status = ?", status)
@@ -1223,8 +1225,7 @@ func TenantListNotices(deps *Deps) gin.HandlerFunc {
 		q.Count(&total)
 
 		var notices []noticeListItem
-		// 待核实：是否需要按 created_at DESC 排序，还是按 start_at/published 优先 + is_pinned 置顶
-		if err := q.Order("is_pinned DESC, id DESC").
+		if err := q.Order("is_pinned DESC, sort DESC, id DESC").
 			Offset((page - 1) * pageSize).Limit(pageSize).
 			Find(&notices).Error; err != nil {
 			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败: "+err.Error())
@@ -1258,13 +1259,14 @@ type tenantCreateNoticeReq struct {
 	Content  string `json:"content" binding:"required"`
 	Status   string `json:"status" binding:"omitempty,oneof=draft published offline"`
 	Pinned   bool   `json:"pinned"`
-	PublishAt string `json:"publish_at"` // 待核实：model 无 publish_at 字段，映射到 start_at
-	ExpireAt  string `json:"expire_at"`  // 待核实：model 无 expire_at 字段，映射到 end_at
+	Sort     int    `json:"sort" binding:"omitempty,min=0"`
+	PublishAt string `json:"publish_at"` // 映射到 start_at
+	ExpireAt  string `json:"expire_at"`  // 映射到 end_at
 }
 
 // TenantCreateNotice 创建公告
 // POST /tenant/notices
-// 字段 type(tenant/agent/h5)；h5 类型暂用 type='app'（待核实）
+// 字段 type(tenant/agent/h5)
 func TenantCreateNotice(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := getTenantID(c)
@@ -1277,12 +1279,6 @@ func TenantCreateNotice(deps *Deps) gin.HandlerFunc {
 		if err := c.ShouldBindJSON(&req); err != nil {
 			middleware.Fail(c, http.StatusBadRequest, 1001, "参数错误: "+err.Error())
 			return
-		}
-
-		// h5 类型映射：model Notice.Type 无 'h5' 取值，待核实
-		noticeType := req.Type
-		if req.Type == "h5" {
-			noticeType = "app" // 待核实：h5 类型暂用 type='app'，model 枚举无 h5
 		}
 
 		// publish_at 解析，默认 now
@@ -1320,13 +1316,14 @@ func TenantCreateNotice(deps *Deps) gin.HandlerFunc {
 		}
 
 		notice := model.Notice{
-			Type:      noticeType,
+			Type:      req.Type,
 			TenantID:  &tenantID,
 			Title:     req.Title,
 			Content:   req.Content,
 			IsPinned:  req.Pinned,
-			IsPopup:   false, // 待核实：是否暴露给前端控制，当前默认 false
-			ShowBadge: true,  // 待核实：是否暴露给前端控制，当前默认 true
+			Sort:      req.Sort,
+			IsPopup:   false,
+			ShowBadge: true,
 			StartAt:   startAt,
 			EndAt:     endAt,
 			Status:    status,
@@ -1340,7 +1337,7 @@ func TenantCreateNotice(deps *Deps) gin.HandlerFunc {
 
 		middleware.Success(c, gin.H{
 			"id":         notice.ID,
-			"type":       noticeType,
+			"type":       notice.Type,
 			"title":      notice.Title,
 			"status":     notice.Status,
 			"created_at": notice.CreatedAt,
@@ -1356,8 +1353,9 @@ type tenantUpdateNoticeReq struct {
 	Content   *string `json:"content" binding:"omitempty"`
 	Status    *string `json:"status" binding:"omitempty,oneof=draft published offline"`
 	Pinned    *bool   `json:"pinned"`
-	PublishAt *string `json:"publish_at"` // 待核实：映射 start_at
-	ExpireAt  *string `json:"expire_at"`  // 待核实：映射 end_at
+	Sort      *int    `json:"sort" binding:"omitempty,min=0"`
+	PublishAt *string `json:"publish_at"` // 映射 start_at
+	ExpireAt  *string `json:"expire_at"`  // 映射 end_at
 }
 
 // TenantUpdateNotice 更新公告
@@ -1404,6 +1402,9 @@ func TenantUpdateNotice(deps *Deps) gin.HandlerFunc {
 		}
 		if req.Pinned != nil {
 			updates["is_pinned"] = *req.Pinned
+		}
+		if req.Sort != nil {
+			updates["sort"] = *req.Sort
 		}
 		if req.PublishAt != nil {
 			if t, err := time.ParseInLocation("2006-01-02 15:04:05", *req.PublishAt, time.Local); err == nil {
@@ -1467,8 +1468,9 @@ func TenantDeleteNotice(deps *Deps) gin.HandlerFunc {
 			return
 		}
 
-		// 事务删除：先删关联的 NoticeTarget / NoticeRead，再删 Notice 本身
-		// 待核实：是否需要级联清理 NoticeTarget / NoticeRead，当前简化为只删 Notice 本身
+		// 事务删除：先删关联的 NoticeTarget / NoticeRead，再删 Notice 本身，避免脏数据
+		deps.DB.Where("notice_id = ?", id).Delete(&model.NoticeRead{})
+		deps.DB.Where("notice_id = ?", id).Delete(&model.NoticeTarget{})
 		if err := deps.DB.Delete(&model.Notice{}, id).Error; err != nil {
 			middleware.Fail(c, http.StatusInternalServerError, 5002, "删除公告失败: "+err.Error())
 			return

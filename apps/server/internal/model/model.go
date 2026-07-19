@@ -58,6 +58,7 @@ type SysTenant struct {
 	TOTPSecret   string  `gorm:"size:64" json:"-"`
 	LastLoginAt  *time.Time `json:"last_login_at"`
 	LastLoginIP  string  `gorm:"size:45" json:"last_login_ip"`
+	Remark       string  `gorm:"size:255" json:"remark"`
 }
 
 func (SysTenant) TableName() string { return "sys_tenant" }
@@ -66,6 +67,7 @@ func (SysTenant) TableName() string { return "sys_tenant" }
 type SysPackage struct {
 	BaseModel
 	Name                  string  `gorm:"size:64;not null" json:"name"`
+	Description           string  `gorm:"size:255" json:"description"`
 	MonthlyPrice          float64 `gorm:"type:decimal(10,2);not null;default:0" json:"monthly_price"`
 	YearlyPrice           float64 `gorm:"type:decimal(10,2);not null;default:0" json:"yearly_price"`
 	MaxApps               int     `gorm:"not null;default:1" json:"max_apps"`
@@ -221,6 +223,7 @@ type AppCloudVar struct {
 	VarKey    string `gorm:"size:128;not null" json:"var_key"`
 	VarValue  string `gorm:"type:text" json:"var_value"`
 	VarType   string `gorm:"size:32;not null;default:string" json:"var_type"`
+	ReadOnly  bool   `gorm:"not null;default:false" json:"read_only"`
 	Remark    string `gorm:"size:255" json:"remark"`
 	Status    string `gorm:"size:32;not null;default:active" json:"status"`
 }
@@ -233,6 +236,7 @@ type AppVersion struct {
 	TenantID        uint64 `gorm:"index;not null" json:"tenant_id"`
 	AppID           uint64 `gorm:"index;not null" json:"app_id"`
 	Version         string `gorm:"size:32;not null" json:"version"`
+	Channel         string `gorm:"size:32;not null;default:stable" json:"channel"` // stable/beta/dev
 	MinVersion      string `gorm:"size:32;not null" json:"min_version"`
 	DownloadURL     string `gorm:"size:255" json:"download_url"`
 	BackupURL       string `gorm:"size:255" json:"backup_url"`
@@ -253,11 +257,16 @@ type Agent struct {
 	PasswordHash          string  `gorm:"size:255;not null" json:"-"`
 	RealName              string  `gorm:"size:64" json:"real_name"`
 	Phone                 string  `gorm:"size:32" json:"phone"`
+	Email                 string  `gorm:"size:128" json:"email"`
 	Status                string  `gorm:"size:32;index;not null;default:active" json:"status"`
 	Balance               float64 `gorm:"type:decimal(12,2);not null;default:0" json:"balance"`
 	CommissionRate        float64 `gorm:"type:decimal(5,2);not null;default:10.00" json:"commission_rate"`
+	CommissionMode        string  `gorm:"size:32;not null;default:percentage" json:"commission_mode"` // percentage/diff
+	InviterID             *uint64 `gorm:"index" json:"inviter_id"`
+	TOTPSecret            string  `gorm:"size:64" json:"-"` // 2FA 密钥（AES 加密）
 	Subdomain             string  `gorm:"size:64" json:"subdomain"`
 	LastLoginAt           *time.Time `json:"last_login_at"`
+	LastLoginIP           string  `gorm:"size:45" json:"last_login_ip"`
 }
 
 func (Agent) TableName() string { return "agent" }
@@ -269,6 +278,7 @@ type AgentInviteCode struct {
 	Code                  string `gorm:"uniqueIndex;size:32;not null" json:"code"`
 	MaxUses               int    `gorm:"not null;default:1" json:"max_uses"`
 	UsedCount             int    `gorm:"not null;default:0" json:"used_count"`
+	UsedByAgentID         *uint64 `gorm:"index" json:"used_by_agent_id"`
 	ValidDays             int    `gorm:"not null;default:30" json:"valid_days"`
 	ExpiresAt             time.Time `gorm:"index;not null" json:"expires_at"`
 	Status                string `gorm:"size:32;index;not null;default:active" json:"status"` // active/disabled/exhausted/expired
@@ -368,6 +378,7 @@ type Notice struct {
 	EndAt     *time.Time `gorm:"index" json:"end_at"`
 	Status    string     `gorm:"size:32;index;not null;default:draft" json:"status"` // draft/published/offline
 	ViewCount int        `gorm:"not null;default:0" json:"view_count"`
+	Sort      int        `gorm:"not null;default:0" json:"sort"` // 排序权重，越大越靠前
 	CreatedBy uint64     `gorm:"not null" json:"created_by"`
 }
 
@@ -399,10 +410,12 @@ func (NoticeRead) TableName() string { return "notice_read" }
 // SecIPBlacklist IP 黑名单
 type SecIPBlacklist struct {
 	BaseModel
-	IP      string `gorm:"size:45;not null" json:"ip"`
-	Reason  string `gorm:"size:255" json:"reason"`
-	Source  string `gorm:"size:32;not null;default:manual" json:"source"` // manual/auto
-	ExpiresAt *time.Time `gorm:"index" json:"expires_at"`
+	IP            string `gorm:"size:45;not null" json:"ip"`
+	Reason        string `gorm:"size:255" json:"reason"`
+	Source        string `gorm:"size:32;not null;default:manual" json:"source"` // manual/auto
+	CreatedBy     *uint64 `json:"created_by"`
+	CreatedByType string `gorm:"size:32" json:"created_by_type"` // admin/tenant/auto
+	ExpiresAt     *time.Time `gorm:"index" json:"expires_at"`
 }
 
 func (SecIPBlacklist) TableName() string { return "sec_ip_blacklist" }
@@ -429,9 +442,12 @@ type LogOperation struct {
 	BaseModel
 	OperatorType string `gorm:"size:32;not null" json:"operator_type"` // admin/tenant/agent
 	OperatorID   uint64 `gorm:"not null" json:"operator_id"`
+	Username     string `gorm:"size:64" json:"username"` // 操作者用户名冗余
 	OperatorIP   string `gorm:"size:45" json:"operator_ip"`
+	UserAgent    string `gorm:"size:255" json:"user_agent"`
 	Module       string `gorm:"size:64;index" json:"module"`
 	Action       string `gorm:"size:64;not null" json:"action"`
+	Status       string `gorm:"size:32;not null;default:success" json:"status"` // success/fail
 	TargetType   string `gorm:"size:64" json:"target_type"`
 	TargetID     *uint64 `gorm:"index" json:"target_id"`
 	Detail       string `gorm:"type:json" json:"detail"`
@@ -460,3 +476,37 @@ type PlatformSettlement struct {
 }
 
 func (PlatformSettlement) TableName() string { return "platform_settlement" }
+
+// ============== v0.3.1 新增 ==============
+
+// LogLoginFailed 登录失败日志（用于安全中心统计）
+type LogLoginFailed struct {
+	ID        uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	UserType  string    `gorm:"size:32;not null" json:"user_type"` // admin/tenant/agent
+	Username  string    `gorm:"size:64;not null" json:"username"`
+	ClientIP  string    `gorm:"size:45;not null" json:"client_ip"`
+	Reason    string    `gorm:"size:64;not null" json:"reason"` // wrong_password/disabled/locked/unknown
+	UserAgent string    `gorm:"size:255" json:"user_agent"`
+	CreatedAt time.Time `gorm:"index;not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+}
+
+func (LogLoginFailed) TableName() string { return "log_login_failed" }
+
+// RefreshTokenDevice refresh token 设备会话（用于 ListLoginDevices / KickDevice）
+type RefreshTokenDevice struct {
+	ID           uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	UserRole     string     `gorm:"size:32;not null" json:"user_role"` // admin/tenant/agent
+	UserID       uint64     `gorm:"not null" json:"user_id"`
+	RefreshJTI   string     `gorm:"uniqueIndex;size:64;not null" json:"refresh_jti"`
+	DeviceName   string     `gorm:"size:128" json:"device_name"`
+	DeviceType   string     `gorm:"size:32" json:"device_type"` // pc/mobile/tablet
+	ClientIP     string     `gorm:"size:45" json:"client_ip"`
+	UserAgent    string     `gorm:"size:512" json:"user_agent"`
+	LastActiveAt time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP" json:"last_active_at"`
+	ExpiresAt    time.Time  `gorm:"index;not null" json:"expires_at"`
+	Revoked      bool       `gorm:"not null;default:false" json:"revoked"`
+	RevokedAt    *time.Time `json:"revoked_at"`
+	CreatedAt    time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+}
+
+func (RefreshTokenDevice) TableName() string { return "refresh_token_device" }

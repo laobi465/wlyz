@@ -292,7 +292,7 @@ const saveProfile = async () => {
     })
     ElMessage.success('资料已保存')
   } catch {
-    // 铁律 06 待核实：PUT /admin/auth/profile 待 v0.3.0 实现
+    // 错误已由 http 拦截器处理
   } finally {
     profileSaving.value = false
   }
@@ -384,7 +384,7 @@ const loadDevices = async () => {
     const data = await listLoginDevicesApi(role)
     devices.value = data?.list || []
   } catch {
-    // 铁律 06 待核实：GET /admin/auth/devices 待 v0.3.0 实现
+    // 错误已由 http 拦截器处理
     devices.value = []
   } finally {
     devicesLoading.value = false

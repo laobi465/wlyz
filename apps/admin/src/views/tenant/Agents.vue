@@ -1,7 +1,6 @@
 <!--
   代理管理（开发者）- 响应式
-  铁律 06 待核实：后端 /tenant/agents 当前为 501 占位（v0.3.0 交付），调用失败时静默降级为空列表。
-  铁律 04：顶部 4 项聚合数据后端暂不返回，显示 0，不编造，待 v0.3.0 补全。
+  v0.3.1 已交付 /tenant/agents 列表 + PUT /tenant/agents/:id 更新。
 -->
 <template>
   <div class="agents-page">

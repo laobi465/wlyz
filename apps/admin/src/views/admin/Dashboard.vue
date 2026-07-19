@@ -96,17 +96,17 @@
           </li>
           <li class="todo-item" @click="$router.push('/admin/tenants')">
             <span class="todo-label">开发者审核</span>
-            <span class="todo-value">待核实（v0.3.0）</span>
+            <span class="todo-value">去查看</span>
             <el-icon class="todo-arrow"><ArrowRight /></el-icon>
           </li>
           <li class="todo-item" @click="$router.push('/admin/agents')">
             <span class="todo-label">代理审核</span>
-            <span class="todo-value">待核实（v0.3.0）</span>
+            <span class="todo-value">去查看</span>
             <el-icon class="todo-arrow"><ArrowRight /></el-icon>
           </li>
           <li class="todo-item" @click="$router.push('/admin/notices')">
             <span class="todo-label">公告管理</span>
-            <span class="todo-value">待核实（v0.3.0）</span>
+            <span class="todo-value">去查看</span>
             <el-icon class="todo-arrow"><ArrowRight /></el-icon>
           </li>
         </ul>
@@ -277,7 +277,7 @@ const loadDashboard = async () => {
       revenueTrend.value = data.revenue_trend || []
     }
   } catch {
-    // 铁律 06 待核实：后端 /admin/dashboard 当前为 501（v0.3.0 交付），保持 0/空（铁律 04 不编造数据）
+    // 错误已由 http 拦截器处理
   }
 }
 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/config"
+	"github.com/your-org/keyauth-saas/apps/server/internal/handler"
 	"github.com/your-org/keyauth-saas/apps/server/internal/router"
 )
 
@@ -41,6 +42,16 @@ func main() {
 
 	// 4. 注册路由
 	engine := router.Register(container)
+
+	// 4.1 启动登录失败日志异步消费 worker（v0.3.1）
+	deps := &handler.Deps{
+		DB:       container.DB,
+		Redis:    container.Redis,
+		Crypto:   container.Crypto,
+		Config:   container.Config,
+		CfgCache: container.ConfigCache(),
+	}
+	handler.StartLoginFailureWorker(deps)
 
 	// 5. 启动 HTTP 服务
 	srv := &http.Server{

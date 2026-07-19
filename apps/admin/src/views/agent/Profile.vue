@@ -288,13 +288,13 @@ const saveWithdrawAccount = async () => {
   }
   withdrawSaving.value = true
   try {
-    // 铁律 06 待核实：提现账户字段待 v0.3.0 后端扩展
+    // v0.3.1：real_name 直接走 PUT /agent/auth/profile 落库
     await updateProfileApi(role, {
       real_name: withdrawForm.real_name
     } as any)
     ElMessage.success('提现账户已保存')
   } catch {
-    // 铁律 06 待核实
+    // 错误已由 http 拦截器处理
   } finally {
     withdrawSaving.value = false
   }

@@ -233,7 +233,7 @@ func Register(container *config.Container) *gin.Engine {
 		// 佣金与提现
 		agentAuth.GET("/commission", handler.AgentListCommission(deps))
 		agentAuth.POST("/withdraw", handler.AgentWithdraw(deps))
-		agentAuth.POST("/recharge", handler.AgentRecharge(deps)) // 待核实 v0.3.x：当前返回 501
+		agentAuth.POST("/recharge", handler.AgentRecharge(deps))
 
 		// 消息通知
 		agentAuth.GET("/notices", handler.AgentListNotices(deps))

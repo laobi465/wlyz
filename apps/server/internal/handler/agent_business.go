@@ -40,21 +40,26 @@ type agentDashboardRecentOrder struct {
 
 // agentProfile /agent/auth/me 返回结构
 type agentProfile struct {
-	AgentID         uint64    `json:"agent_id"`
-	Username        string    `json:"username"`
-	RealName        string    `json:"real_name"`
-	Phone           string    `json:"phone"`
-	Status          string    `json:"status"`
-	Balance         float64   `json:"balance"`
-	FrozenBalance   float64   `json:"frozen_balance"`
-	CommissionRate  float64   `json:"commission_rate"`
-	CommissionMode  string    `json:"commission_mode"`
-	TotalCommission float64   `json:"total_commission"`
-	TotalWithdraw   float64   `json:"total_withdraw"`
-	TenantID        uint64    `json:"tenant_id"`
-	TenantName      string    `json:"tenant_name"`
-	InviterUsername string    `json:"inviter_username"`
-	CreatedAt       time.Time `json:"created_at"`
+	AgentID         uint64     `json:"agent_id"`
+	Username        string     `json:"username"`
+	RealName        string     `json:"real_name"`
+	Phone           string     `json:"phone"`
+	Email           string     `json:"email"`
+	Status          string     `json:"status"`
+	Balance         float64    `json:"balance"`
+	FrozenBalance   float64    `json:"frozen_balance"`
+	CommissionRate  float64    `json:"commission_rate"`
+	CommissionMode  string     `json:"commission_mode"`
+	TotalCommission float64    `json:"total_commission"`
+	TotalWithdraw   float64    `json:"total_withdraw"`
+	TenantID        uint64     `json:"tenant_id"`
+	TenantName      string     `json:"tenant_name"`
+	InviterID       *uint64    `json:"inviter_id"`
+	InviterUsername string     `json:"inviter_username"`
+	TOTPEnabled     bool       `json:"totp_enabled"`
+	LastLoginAt     *time.Time `json:"last_login_at"`
+	LastLoginIP     string     `json:"last_login_ip"`
+	CreatedAt       time.Time  `json:"created_at"`
 }
 
 // agentCardTypeItem 代理可购买卡类列表项
@@ -160,19 +165,22 @@ func AgentDashboard(deps *Deps) gin.HandlerFunc {
 			Where("agent_id = ? AND status = ?", agentID, "pending").
 			Select("COALESCE(SUM(amount), 0)").Scan(&pendingWithdraw)
 
-		// 今日购卡/消费
-		// 待核实：purchased/spent 业务语义需明确，暂用相同口径（订单总额）
+		// 今日购卡/消费：purchased = 订单总额，spent = 净成本（总额 - 佣金抵扣）
 		var todayPurchased, todaySpent, totalPurchased, totalSpent float64
 		today := time.Now().Format("2006-01-02")
 		deps.DB.Model(&model.AppOrder{}).
 			Where("agent_id = ? AND DATE(created_at) = ?", agentID, today).
 			Select("COALESCE(SUM(total_amount), 0)").Scan(&todayPurchased)
-		todaySpent = todayPurchased // 待核实：spent 与 purchased 暂用相同口径
+		deps.DB.Model(&model.AppOrder{}).
+			Where("agent_id = ? AND DATE(created_at) = ?", agentID, today).
+			Select("COALESCE(SUM(total_amount - commission_amount), 0)").Scan(&todaySpent)
 
 		deps.DB.Model(&model.AppOrder{}).
 			Where("agent_id = ?", agentID).
 			Select("COALESCE(SUM(total_amount), 0)").Scan(&totalPurchased)
-		totalSpent = totalPurchased // 待核实：spent 与 purchased 暂用相同口径
+		deps.DB.Model(&model.AppOrder{}).
+			Where("agent_id = ?", agentID).
+			Select("COALESCE(SUM(total_amount - commission_amount), 0)").Scan(&totalSpent)
 
 		// 3. 最近 10 个订单（联表 app + app_card_type）
 		var recentOrders []agentDashboardRecentOrder
@@ -231,6 +239,14 @@ func AgentMe(deps *Deps) gin.HandlerFunc {
 			Where("id = ?", tenantID).
 			Select("username").Scan(&tenantName)
 
+		// 联表邀请人用户名（如有）
+		inviterUsername := ""
+		if agent.InviterID != nil {
+			deps.DB.Model(&model.Agent{}).
+				Where("id = ?", *agent.InviterID).
+				Select("username").Scan(&inviterUsername)
+		}
+
 		frozenBalance := agentFrozenBalance(deps.DB, agentID)
 		totalCommission := agentTotalCommission(deps.DB, agentID)
 		totalWithdraw := agentTotalWithdrawPaid(deps.DB, agentID)
@@ -240,16 +256,21 @@ func AgentMe(deps *Deps) gin.HandlerFunc {
 			Username:        agent.Username,
 			RealName:        agent.RealName,
 			Phone:           agent.Phone,
+			Email:           agent.Email,
 			Status:          agent.Status,
 			Balance:         agent.Balance,
 			FrozenBalance:   frozenBalance,
 			CommissionRate:  agent.CommissionRate,
-			CommissionMode:  "percentage", // 待核实：不在 agent 表，暂返回 'percentage'，应从 sys_config 或 invite_code 读
+			CommissionMode:  agent.CommissionMode,
 			TotalCommission: totalCommission,
 			TotalWithdraw:   totalWithdraw,
 			TenantID:        agent.TenantID,
 			TenantName:      tenantName,
-			InviterUsername: "", // 待核实：agent 表无 inviter_id 字段，暂返回空
+			InviterID:       agent.InviterID,
+			InviterUsername: inviterUsername,
+			TOTPEnabled:     agent.TOTPSecret != "",
+			LastLoginAt:     agent.LastLoginAt,
+			LastLoginIP:     agent.LastLoginIP,
 			CreatedAt:       agent.CreatedAt,
 		})
 	}
@@ -337,11 +358,11 @@ func AgentListCardTypes(deps *Deps) gin.HandlerFunc {
 				AppCardType: t,
 				AppName:     info.Name,
 			}
-			// 待核实：percentage 模式 commission = price * rate / 100，rate 取 agent.CommissionRate
+			// percentage 模式 commission = price * rate / 100，rate 取 agent.CommissionRate
+			// diff 模式 commission = price - agent_base_price
 			if info.Mode == "percentage" {
 				item.AgentCommission = t.Price * agent.CommissionRate / 100
 			} else {
-				// diff 模式
 				item.AgentCommission = t.Price - t.AgentBasePrice
 			}
 			list = append(list, item)
@@ -539,7 +560,7 @@ func AgentGenerateCards(deps *Deps) gin.HandlerFunc {
 		default: // diff
 			commission = (ct.Price - ct.AgentBasePrice) * float64(req.Quantity)
 		}
-		// 待核实：佣金为负时如何处理（diff 模式 price<agent_base_price 视为配置异常）
+		// diff 模式下 price<agent_base_price 视为开发者配置异常，佣金按 0 计（不向代理倒扣）
 		if commission < 0 {
 			commission = 0
 		}
@@ -772,8 +793,7 @@ func AgentListCommission(deps *Deps) gin.HandlerFunc {
 			if l.RelatedOrderID != nil {
 				item.RelatedOrderNo = orderNoMap[*l.RelatedOrderID]
 			}
-			// 待核实：task 提到联表 agent_withdraw 拿 withdraw_method/withdraw_account
-			// 但 balance_log 已在写入时存了 pay_method/pay_voucher，直接透传即可
+			// balance_log 已在写入时存了 pay_method/pay_voucher，直接透传
 			if l.Type == "withdraw" {
 				item.WithdrawMethod = l.PayMethod
 				item.WithdrawAccount = l.PayVoucher
@@ -841,13 +861,15 @@ func AgentWithdraw(deps *Deps) gin.HandlerFunc {
 			return
 		}
 
-		// 拼装 remark：把 real_name 一并记入流水（agent_withdraw 表无 real_name 字段，待核实）
+		// 拼装 remark：把 real_name 一并记入流水（agent_withdraw 表无 real_name 字段，记入 audit_remark）
 		balanceRemark := strings.TrimSpace(req.Remark)
+		auditRemark := ""
 		if req.RealName != "" {
+			auditRemark = "实名:" + req.RealName
 			if balanceRemark != "" {
-				balanceRemark = "实名:" + req.RealName + "; " + balanceRemark
+				balanceRemark = auditRemark + "; " + balanceRemark
 			} else {
-				balanceRemark = "实名:" + req.RealName
+				balanceRemark = auditRemark
 			}
 		}
 
@@ -861,15 +883,15 @@ func AgentWithdraw(deps *Deps) gin.HandlerFunc {
 			}
 			agent.Balance -= req.Amount
 
-			// 2. 写 agent_withdraw
-			// 待核实：agent_withdraw 表无 real_name 列，目前未持久化 real_name 到独立字段
+			// 2. 写 agent_withdraw（real_name 写入 audit_remark 字段持久化）
 			wd := &model.AgentWithdraw{
-				AgentID:    agentID,
-				TenantID:   tenantID,
-				Amount:     req.Amount,
-				PayMethod:  req.Method,
-				PayAccount: req.Account,
-				Status:     "pending",
+				AgentID:      agentID,
+				TenantID:     tenantID,
+				Amount:       req.Amount,
+				PayMethod:    req.Method,
+				PayAccount:   req.Account,
+				Status:       "pending",
+				AuditRemark:  auditRemark,
 			}
 			if err := tx.Create(wd).Error; err != nil {
 				return fmt.Errorf("创建提现记录失败: %w", err)
@@ -906,15 +928,91 @@ func AgentWithdraw(deps *Deps) gin.HandlerFunc {
 	}
 }
 
-// ============== 9. AgentRecharge 充值申请（暂未实现）==============
+// ============== 9. AgentRecharge 充值申请 ==============
+
+// agentRechargeReq 代理充值申请请求
+type agentRechargeReq struct {
+	Amount     float64 `json:"amount" binding:"required,gt=0"`
+	PayMethod  string  `json:"pay_method" binding:"required,oneof=alipay wechat bank manual"`
+	PayVoucher string  `json:"pay_voucher" binding:"omitempty,max=255"`
+	Remark     string  `json:"remark" binding:"omitempty,max=255"`
+}
 
 // AgentRecharge POST /api/v1/agent/recharge
-// 待核实 v0.3.x：frontend 无独立 recharge 端点，前端复用 /agent/withdraw with remark="[充值申请]"
-// 由开发者审核后调整余额；当前端点暂返回 501
+// 流程：校验金额上限 → 写 agent_balance_log(type=recharge, status=pending) → 等待开发者审核
+// 审核通过后由开发者通过 AdminUpdateAgent 或后续审批接口调整 balance 并将本流水置为 settled
 func AgentRecharge(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		middleware.Fail(c, http.StatusNotImplemented, 1006,
-			"充值申请流程 v0.3.x 交付，前端可临时调用 /agent/withdraw 并在备注中注明 [充值申请]")
+		ctx := c.Request.Context()
+		tenantID := getTenantID(c)
+		agentID := getUserID(c)
+		if agentID == 0 {
+			middleware.Fail(c, http.StatusForbidden, 1003, "无法识别代理身份")
+			return
+		}
+
+		var req agentRechargeReq
+		if err := c.ShouldBindJSON(&req); err != nil {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "参数错误: "+err.Error())
+			return
+		}
+
+		var agent model.Agent
+		if err := deps.DB.Where("id = ? AND tenant_id = ?", agentID, tenantID).First(&agent).Error; err != nil {
+			middleware.Fail(c, http.StatusForbidden, 1003, "代理账号不存在或无权访问")
+			return
+		}
+		if agent.Status != "active" {
+			middleware.Fail(c, http.StatusForbidden, 1005, "代理账号已被禁用")
+			return
+		}
+
+		// 非手工支付方式必须上传付款凭证
+		if req.PayMethod != "manual" && req.PayVoucher == "" {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "请上传付款凭证")
+			return
+		}
+
+		// 校验单笔充值上下限（从 sys_config 读取，铁律 05）
+		minAmount := deps.CfgCache.GetFloat64(ctx, "agent.recharge.min_amount", 1.00)
+		maxAmount := deps.CfgCache.GetFloat64(ctx, "agent.recharge.max_amount", 100000.00)
+		if req.Amount < minAmount {
+			middleware.Fail(c, http.StatusBadRequest, 1001,
+				"充值金额不能少于 "+strconv.FormatFloat(minAmount, 'f', 2, 64))
+			return
+		}
+		if req.Amount > maxAmount {
+			middleware.Fail(c, http.StatusBadRequest, 1001,
+				"单笔充值金额不能超过 "+strconv.FormatFloat(maxAmount, 'f', 2, 64))
+			return
+		}
+
+		// 写入充值流水：status=pending，balance_after 保持当前余额（审核通过后再调整）
+		log := &model.AgentBalanceLog{
+			AgentID:      agentID,
+			TenantID:     tenantID,
+			Type:         "recharge",
+			Amount:       req.Amount,
+			BalanceAfter: agent.Balance,
+			PayMethod:    req.PayMethod,
+			PayVoucher:   req.PayVoucher,
+			Status:       "pending",
+			Remark:       req.Remark,
+		}
+		if err := deps.DB.Create(log).Error; err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "提交充值申请失败: "+err.Error())
+			return
+		}
+
+		middleware.Success(c, gin.H{
+			"id":           log.ID,
+			"agent_id":     agentID,
+			"amount":       req.Amount,
+			"pay_method":   req.PayMethod,
+			"status":       "pending",
+			"created_at":   log.CreatedAt,
+			"message":      "充值申请已提交，等待开发者审核",
+		})
 	}
 }
 
@@ -941,7 +1039,7 @@ func AgentListNotices(deps *Deps) gin.HandlerFunc {
 		}
 
 		now := time.Now()
-		// 待核实：task 描述 type='tenant'，实际可能是 'tenant_notify'（model 注释也含 developer/app）
+		// 代理可见公告：平台公告(type=platform, tenant_id IS NULL) + 开发者向公告(type=tenant, tenant_id=当前) + 代理专属(type=agent_notify)
 		q := deps.DB.Model(&model.Notice{}).
 			Where("status = ?", "published").
 			Where("start_at <= ?", now).

@@ -149,7 +149,7 @@
 - [x] [已完成] 代理佣金 `views/agent/Commission.vue`（4 统计卡 + 类型/状态双筛选 + 提现对话框） - v0.2.5
 - [x] [已完成] 代理余额/提现 `views/agent/Balance.vue`（钱包概览 + 充值申请 + 充值/提现记录） - v0.2.5
 - [x] [已完成] AgentLayout 顶部余额标签改为调用 `/agent/auth/me` 真实获取 + 路由切换自动刷新 - v0.2.5
-- [待核实] 后端 agent 路由现仅占位（501 待实现），待 v0.3.0 完成对端接口 - v0.3.0
+- [x] [已完成] 后端 agent 路由 501 占位已全部升级为真实实现 - v0.3.0（v0.3.1 字段补齐）
 
 #### 三角色 Profile + 双 Dashboard（响应式 H5） ✅ v0.2.6 已完成
 - [x] [已完成] 三角色共享账号设置 API 模块 `api/profile.ts`（currentUser/updateProfile/changePassword/setup2FA/verify2FA/disable2FA/listLoginDevices/kickDevice + 5 个类型） - v0.2.6
@@ -161,8 +161,8 @@
 - [x] [已完成] 超管平台概览 `views/admin/Dashboard.vue`（8 数据卡 + 待办列表 + 收入趋势 + 最近开发者/订单表） - v0.2.6
 - [x] [已完成] 开发者工作台 `views/tenant/Dashboard.vue`（8 数据卡 + 8 快捷入口 + 收入趋势 + 应用 TOP5 + 最近订单） - v0.2.6
 - [x] [已完成] 路由 5 个 PlaceholderView 替换为真实页面（admin/Dashboard + admin/Profile + tenant/Dashboard + tenant/Profile + agent/Profile） - v0.2.6
-- [待核实] 后端 `/admin/dashboard` `/tenant/dashboard` 及 Profile 相关接口当前为 501 占位，待 v0.3.0 实现 - v0.3.0
-- [待核实] 后端 `/{role}/auth/me` 仅返回基本字段，Profile 中 email/phone/real_name/totp_enabled 暂为空，待 v0.3.0 扩展 - v0.3.0
+- [x] [已完成] 后端 `/admin/dashboard` `/tenant/dashboard` 及 Profile 相关接口 501 占位已升级为真实实现 - v0.3.0（v0.3.1 字段补齐）
+- [x] [已完成] 后端 `/{role}/auth/me` ProfileMe/AgentMe 返回完整字段（email/phone/real_name/totp_enabled/last_login_at/last_login_ip） - v0.3.0（v0.3.1 字段补齐）
 
 #### 全部剩余 PlaceholderView 替换为真实页面（响应式 H5 完整覆盖） ✅ v0.2.7 已完成
 - [x] [已完成] Admin 7 页：Tenants/Packages/Agents/Notices/PayConfig/Logs/Security - v0.2.7
@@ -185,10 +185,27 @@
 - [x] [已完成] 邀请码生成（crypto/rand 16 位 + 5 次重试唯一性 + 状态机 active/disabled/exhausted/expired） - v0.3.0
 - [x] [已完成] 云变量 CRUD + 版本管理 CRUD - v0.3.0
 - [x] [已完成] `go build ./...` + `go vet ./...` 全部通过（0 错误 0 警告） - v0.3.0
-- [待核实] `sys_tenant/sys_package/notice/log_operation/sec_ip_blacklist/AppCloudVar/AppVersion/Agent/AgentInviteCode` 部分字段缺失（已在 CHANGELOG 标注，不阻塞编译） - v0.3.x
-- [待核实] `AgentRecharge` 返回 501（待接入支付回调或开发者手工充值流程） - v0.3.x
-- [待核实] agent 表暂无 `totp_secret` 字段，代理 2FA setup 返回 501 - v0.3.x
-- [待核实] `ListLoginDevices` 简化为当前会话信息（待引入完整 refresh token 设备表） - v0.3.x
+- [x] [已完成] `sys_tenant/sys_package/notice/log_operation/sec_ip_blacklist/AppCloudVar/AppVersion/Agent/AgentInviteCode` 字段全部补齐（migration 006） - v0.3.1
+- [x] [已完成] `AgentRecharge` 完整实现（pending 申请 + sys_config 限额校验） - v0.3.1
+- [x] [已完成] agent 表 `totp_secret` 字段已加，代理 2FA setup/verify/disable 全部可用 - v0.3.1
+- [x] [已完成] `ListLoginDevices` 完整实现（refresh_token_device 表 + recordLoginSession + KickDevice） - v0.3.1
+
+#### v0.3.1 字段补全与待核实项归零 ✅ v0.3.1 已完成
+- [x] [已完成] migration 006 ALTER TABLE 补齐所有缺失字段 - v0.3.1
+- [x] [已完成] `log_login_failed` 表 + 异步 channel worker（容量 1024）+ `securityFailedLoginToday`/`securityBlockedIPsToday` 助手 - v0.3.1
+- [x] [已完成] `refresh_token_device` 表 + `recordLoginSession`/`markAllSessionsRevoked` - v0.3.1
+- [x] [已完成] admin_business.go 全部字段使用真实 model（Remark/Description/CommissionMode/InviterUsername/Sort/CreatedBy） - v0.3.1
+- [x] [已完成] tenant_business.go 全部字段使用真实 model（ReadOnly/Channel/used_by_username/Sort/级联删除） - v0.3.1
+- [x] [已完成] agent_business.go AgentMe 真实返回 email/totp_enabled/last_login_ip/inviter_username；Dashboard today_spent 真实计算 - v0.3.1
+- [x] [已完成] profile.go 启用 agent email 更新；移除三处 agent 2FA 501 阻断 - v0.3.1
+- [x] [已完成] 前端 4 个 .ts API + 5 个 .vue 文件清理过时「待核实 v0.3.0」标记 - v0.3.1
+- [x] [已完成] `api/tenant.ts` 补齐 `updateTenantNoticeApi` + `deleteTenantNoticeApi`，Notices.vue 启用删除按钮 - v0.3.1
+- [x] [已完成] `go build` + `go vet` + `pnpm run build`（admin）三重编译验证通过 - v0.3.1
+- [迁移] avatar 字段（三表均无对应列）→ v0.4.x 加列后落库
+- [迁移] 2FA `backup_codes` Redis 持久化 → v0.4.x 加表字段后迁移
+- [迁移] UA 解析库（mileusna/ua 或 ua-parser）→ v0.4.x 引入
+- [迁移] 登录失败日志结构化记录 → v0.4.x 引入 zap/zerolog
+- [迁移] JWT jti 精确单设备踢出 → v0.4.x
 
 #### 三级公告体系
 - [ ] [待开始] 统一公告表 notice 读写 - v0.3.0
@@ -382,7 +399,8 @@
 | v0.2.5 | 2026-07-19 | ✅ 已完成（代理核心页面：购卡/订单/佣金/提现，响应式 H5） |
 | v0.2.6 | 2026-07-19 | ✅ 已完成（三角色 Profile + 双 Dashboard，响应式 H5） |
 | v0.2.7 | 2026-07-19 | ✅ 已完成（全部剩余 16 个 PlaceholderView 替换为真实页面，响应式 H5 完整覆盖） |
-| v0.3.0 | 待定 | [待开始] 二期增值 |
+| v0.3.0 | 2026-07-19 | ✅ 已完成（后端业务 API 全量实现，替换全部 501 占位） |
+| v0.3.1 | 2026-07-19 | ✅ 已完成（v0.3.0 全部「待核实 v0.3.x」归零：字段补全 + AgentRecharge + ListLoginDevices + 登录失败日志） |
 | v0.4.0 | 待定 | [待开始] 三期商业化 |
 
 ---

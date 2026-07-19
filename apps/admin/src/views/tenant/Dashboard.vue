@@ -259,7 +259,7 @@ const loadDashboard = async () => {
       recentOrders.value = data.recent_orders || []
     }
   } catch {
-    // 铁律 06 待核实：后端 /tenant/dashboard 当前为 501（v0.3.0 交付），保持 0/空（铁律 04 不编造数据）
+    // 错误已由 http 拦截器处理
   }
 }
 

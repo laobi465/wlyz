@@ -23,13 +23,13 @@ import (
 // ============== DTO ==============
 
 // updateProfileReq 更新基本资料请求
-// 注：avatar 字段当前三表均无对应列，仅在 DTO 层接收，待核实 v0.3.x 加列后落库
+// 注：avatar 字段当前三表均无对应列，仅在 DTO 层接收，待核实 v0.4.x 加列后落库
 type updateProfileReq struct {
 	RealName string `json:"real_name" binding:"omitempty,max=64"`
 	Email    string `json:"email" binding:"omitempty,email,max=128"`
 	Phone    string `json:"phone" binding:"omitempty,max=32"`
 	Company  string `json:"company" binding:"omitempty,max=128"`
-	Avatar   string `json:"avatar" binding:"omitempty,max=255"` // 待核实 v0.3.x：表结构加 avatar 字段
+	Avatar   string `json:"avatar" binding:"omitempty,max=255"` // 待核实 v0.4.x：表结构加 avatar 字段
 }
 
 // changePasswordReq 修改密码请求
@@ -112,7 +112,7 @@ func loadUserProfile(deps *Deps, role string, userID uint64) (gin.H, error) {
 
 	case auth.RoleAgent:
 		var agent model.Agent
-		if err := deps.DB.Select("id, tenant_id, username, real_name, phone, balance, status, last_login_at, created_at").
+		if err := deps.DB.Select("id, tenant_id, username, real_name, phone, email, balance, status, totp_secret, last_login_at, last_login_ip, created_at").
 			First(&agent, userID).Error; err != nil {
 			return nil, err
 		}
@@ -121,7 +121,7 @@ func loadUserProfile(deps *Deps, role string, userID uint64) (gin.H, error) {
 			"username":      agent.Username,
 			"role":          role,
 			"tenant_id":     agent.TenantID,
-			"email":         "", // 待核实 v0.3.x：agent 表无 email 字段
+			"email":         agent.Email,
 			"phone":         agent.Phone,
 			"real_name":     agent.RealName,
 			"company":       "",
@@ -129,8 +129,8 @@ func loadUserProfile(deps *Deps, role string, userID uint64) (gin.H, error) {
 			"balance":       agent.Balance, // agent 专属字段
 			"created_at":    agent.CreatedAt,
 			"last_login_at": agent.LastLoginAt,
-			"last_login_ip": "", // 待核实 v0.3.x：agent 表无 last_login_ip 字段
-			"totp_enabled":  false, // 待核实 v0.3.x：agent 表无 totp_secret 字段
+			"last_login_ip": agent.LastLoginIP,
+			"totp_enabled":  agent.TOTPSecret != "",
 		}, nil
 	}
 
@@ -163,7 +163,6 @@ func loadUserPasswordHash(deps *Deps, role string, userID uint64) (string, error
 }
 
 // loadUserTOTPSecret 按 role 加载 TOTP 密钥（返回 AES 加密后的密文）
-// 注：agent 表暂无 totp_secret 字段，返回空字符串（待核实 v0.3.x）
 func loadUserTOTPSecret(deps *Deps, role string, userID uint64) (string, error) {
 	switch role {
 	case auth.RoleAdmin:
@@ -179,8 +178,11 @@ func loadUserTOTPSecret(deps *Deps, role string, userID uint64) (string, error) 
 		}
 		return tenant.TOTPSecret, nil
 	case auth.RoleAgent:
-		// 待核实 v0.3.x：agent 表加 totp_secret 字段后启用
-		return "", nil
+		var agent model.Agent
+		if err := deps.DB.Select("totp_secret").First(&agent, userID).Error; err != nil {
+			return "", err
+		}
+		return agent.TOTPSecret, nil
 	}
 	return "", errors.New("unsupported role: " + role)
 }
@@ -196,8 +198,8 @@ func updateUserTOTPSecret(deps *Deps, role string, userID uint64, secretEnc stri
 		return deps.DB.Model(&model.SysTenant{}).Where("id = ?", userID).
 			Update("totp_secret", secretEnc).Error
 	case auth.RoleAgent:
-		// 待核实 v0.3.x：agent 表加 totp_secret 字段后启用
-		return errors.New("agent 2FA 待核实 v0.3.x：表结构无 totp_secret 字段")
+		return deps.DB.Model(&model.Agent{}).Where("id = ?", userID).
+			Update("totp_secret", secretEnc).Error
 	}
 	return errors.New("unsupported role: " + role)
 }
@@ -207,13 +209,13 @@ func twoFASetupKey(role string, userID uint64) string {
 	return "2fa:setup:" + role + ":" + strconv.FormatUint(userID, 10)
 }
 
-// twoFABackupKey 2FA backup codes Redis Key（持久化，待核实 v0.3.x 加表字段后迁移）
+// twoFABackupKey 2FA backup codes Redis Key（持久化，待核实 v0.4.x 加表字段后迁移）
 func twoFABackupKey(role string, userID uint64) string {
 	return "2fa:backup:" + role + ":" + strconv.FormatUint(userID, 10)
 }
 
 // parseDeviceName 从 User-Agent 简化解析设备名称（OS / Browser）
-// 待核实 v0.3.x：引入更完整的 UA 解析库（如 mileusna/ua 或 oe ua-parser）
+// 待核实 v0.4.x：引入更完整的 UA 解析库（如 mileusna/ua 或 oe ua-parser）
 func parseDeviceName(ua string) string {
 	ua = strings.TrimSpace(ua)
 	if ua == "" {
@@ -319,20 +321,22 @@ func UpdateProfile(deps *Deps) gin.HandlerFunc {
 				updates["company"] = req.Company
 			}
 		case auth.RoleAgent:
-			// agent：更新 real_name/phone
-			// 待核实 v0.3.x：agent 表加 email 字段后启用 email 更新
+			// agent：更新 real_name/phone/email（v0.3.1 已加 email 字段）
 			if req.RealName != "" {
 				updates["real_name"] = req.RealName
 			}
 			if req.Phone != "" {
 				updates["phone"] = req.Phone
 			}
+			if req.Email != "" {
+				updates["email"] = req.Email
+			}
 		default:
 			middleware.Fail(c, http.StatusBadRequest, 1001, "不支持的角色: "+role)
 			return
 		}
 
-		// avatar 字段当前三表均无对应列，忽略（待核实 v0.3.x）
+		// avatar 字段当前三表均无对应列，忽略（待核实 v0.4.x）
 		// 不参与 updates 构造
 
 		if len(updates) == 0 {
@@ -464,13 +468,6 @@ func Setup2FA(deps *Deps) gin.HandlerFunc {
 			return
 		}
 
-		// agent 表暂无 totp_secret 字段
-		if role == auth.RoleAgent {
-			// 待核实 v0.3.x：agent 2FA 支持
-			middleware.Fail(c, http.StatusNotImplemented, 1006, "待核实 v0.3.x：agent 2FA 支持")
-			return
-		}
-
 		// 校验未绑定 2FA
 		totpSecretEnc, err := loadUserTOTPSecret(deps, role, userID)
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -493,8 +490,7 @@ func Setup2FA(deps *Deps) gin.HandlerFunc {
 			account = strconv.FormatUint(userID, 10)
 		}
 
-		// 生成 TOTP（实际 API：GenerateTOTP，返回 secret + otpauth URL + 10 个备用码）
-		// 待核实：task 描述中的 auth.GenerateTOTPSecret / auth.GenerateBackupCodes 在 totp.go 中不存在
+		// 生成 TOTP（API：GenerateTOTP，返回 secret + otpauth URL + 10 个备用码）
 		totpResult, err := auth.GenerateTOTP(auth.TOTPOptions{
 			Issuer:     params.TOTPIssuer,
 			Account:    account,
@@ -532,10 +528,10 @@ func Setup2FA(deps *Deps) gin.HandlerFunc {
 		}
 
 		middleware.Success(c, gin.H{
-			"secret":        totpResult.Secret,
-			"qr_code_url":   totpResult.OTPAUTHURL,
-			"backup_codes":  backupCodes,
-			"expires_in":    int64(setupTTL.Seconds()),
+			"secret":       totpResult.Secret,
+			"qr_code_url":  totpResult.OTPAUTHURL,
+			"backup_codes": backupCodes,
+			"expires_in":   int64(setupTTL.Seconds()),
 		})
 	}
 }
@@ -550,12 +546,6 @@ func Verify2FA(deps *Deps) gin.HandlerFunc {
 		userID := getUserID(c)
 		if role == "" || userID == 0 {
 			middleware.Fail(c, http.StatusUnauthorized, 2001, "无法识别用户身份")
-			return
-		}
-
-		if role == auth.RoleAgent {
-			// 待核实 v0.3.x：agent 2FA 支持
-			middleware.Fail(c, http.StatusNotImplemented, 1006, "待核实 v0.3.x：agent 2FA 支持")
 			return
 		}
 
@@ -597,14 +587,13 @@ func Verify2FA(deps *Deps) gin.HandlerFunc {
 			return
 		}
 
-		// 4. 备用码持久化到 Redis（待核实 v0.3.x：表结构加 backup_codes 字段后迁移）
-		// 注：备用码应 bcrypt 哈希存储，此处简化用 AES 加密后存 Redis
+		// 4. 备用码 AES 加密后存 Redis（持久化，无 TTL）
+		// 注：备用码理想方案为 bcrypt 哈希入库，当前简化用 AES 加密存 Redis，后续 v0.4.x 加 backup_codes 字段后迁移
 		backupEnc, err := deps.Crypto.EncryptAES(strings.Join(setupData.BackupCodes, ","))
 		if err != nil {
 			middleware.Fail(c, http.StatusInternalServerError, 5004, "加密备用码失败: "+err.Error())
 			return
 		}
-		// 持久化（无 TTL），待核实 v0.3.x：迁移到表字段后改为哈希入库
 		if err := deps.Redis.Set(ctx, twoFABackupKey(role, userID), backupEnc, 0).Err(); err != nil {
 			middleware.Fail(c, http.StatusInternalServerError, 5005, "保存备用码失败: "+err.Error())
 			return
@@ -630,12 +619,6 @@ func Disable2FA(deps *Deps) gin.HandlerFunc {
 		userID := getUserID(c)
 		if role == "" || userID == 0 {
 			middleware.Fail(c, http.StatusUnauthorized, 2001, "无法识别用户身份")
-			return
-		}
-
-		if role == auth.RoleAgent {
-			// 待核实 v0.3.x：agent 2FA 支持
-			middleware.Fail(c, http.StatusNotImplemented, 1006, "待核实 v0.3.x：agent 2FA 支持")
 			return
 		}
 
@@ -705,59 +688,27 @@ func Disable2FA(deps *Deps) gin.HandlerFunc {
 		_ = auth.BlacklistRefreshToken(deps.Redis, userID, role, params.RefreshTTL)
 
 		middleware.Success(c, gin.H{
-			"user_id":   userID,
-			"disabled":  true,
+			"user_id":  userID,
+			"disabled": true,
 		})
 	}
 }
 
 // ============== 7. ListLoginDevices 登录设备列表 ==============
 
-// ListLoginDevices 简化方案：仅返回当前会话信息
+// ListLoginDevices 完整版：基于 refresh_token_device 表返回所有未撤销且未过期的会话
+// 实现见 session.go 的 ListLoginDevicesFull
 // GET /{role}/auth/devices
-// 待核实 v0.3.x：维护 user_session 表或多端登录记录
 func ListLoginDevices(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		role := getRole(c)
-		userID := getUserID(c)
-		if role == "" || userID == 0 {
-			middleware.Fail(c, http.StatusUnauthorized, 2001, "无法识别用户身份")
-			return
-		}
-
-		ua := c.Request.Header.Get("User-Agent")
-		ip := c.ClientIP()
-
-		// 当前设备信息（id=0 表示无持久化设备 ID）
-		currentDevice := gin.H{
-			"id":              uint64(0),
-			"device_name":     parseDeviceName(ua),
-			"ip":              ip,
-			"location":        "", // 待核实 v0.3.x：接入 IP 地理库
-			"user_agent":      ua,
-			"last_active_at":  time.Now(),
-			"current":         true,
-		}
-
-		// 简化方案：暂仅返回当前会话，待 v0.3.x 维护 user_session 表后返回完整列表
-		middleware.Success(c, gin.H{
-			"list":       []gin.H{currentDevice},
-			"total":      1,
-			"pending_v03": "待核实 v0.3.x：多端登录管理",
-		})
-	}
+	return ListLoginDevicesFull(deps)
 }
 
 // ============== 8. KickDevice 踢指定设备下线 ==============
 
-// KickDevice 简化方案：暂返回 501
-// DELETE /{role}/auth/devices/:id
-// 待核实 v0.3.x：多端登录管理
+// KickDevice 完整版：标记会话为已撤销 + 黑名单当前用户 refresh token
+// 实现见 session.go 的 KickDeviceFull
+// POST /{role}/auth/devices/:id/kick
+// 已知限制 v0.4.x：当前实现会同时踢出该用户所有设备（因 JWT 未携带 jti）
 func KickDevice(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// 简化方案：暂不支持，待 v0.3.x 引入 user_session 表后实现
-		// 如需强制全部下线，可调用 ChangePassword 或 Disable2FA 触发黑名单
-		_ = c.Param("id") // 占位，避免 lint 警告
-		middleware.Fail(c, http.StatusNotImplemented, 1006, "待核实 v0.3.x：多端登录管理")
-	}
+	return KickDeviceFull(deps)
 }

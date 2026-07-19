@@ -9,6 +9,66 @@
 
 ---
 
+## [0.3.1] - 2026-07-19
+
+### [修复] v0.3.0 全部「待核实 v0.3.x」项归零
+
+#### 数据库字段补全（migration 006）
+- [新增] `migrations/006_v0.3.1_field_completion.up.sql` ALTER TABLE 补齐缺失字段
+- [新增] `sys_tenant.remark` / `sys_package.description` / `notice.sort` / `sec_ip_blacklist.created_by` + `created_by_type` + `source`
+- [新增] `log_operation.username` + `user_agent` + `status`
+- [新增] `AppCloudVar.read_only`
+- [新增] `AppVersion.channel`
+- [新增] `Agent.commission_mode` + `inviter_id` + `totp_secret` + `email` + `last_login_ip` + `last_login_at`
+- [新增] `AgentInviteCode.used_by_agent_id`
+- [新增] 新增表 `log_login_failed`（登录失败日志）+ `refresh_token_device`（设备会话追踪）
+
+#### 后端 Handler 落实真实字段
+- [修改] `admin_business.go`：租户结算金额真实查询（`PlatformSettlement.status='settled'`）、`Remark`/`Description`/`CommissionMode`/`InviterUsername`/`Sort`/`CreatedBy` 等字段全部落库
+- [修改] `tenant_business.go`：CloudVar 直接用 `ReadOnly` 字段；Version 真实 `channel` 过滤；邀请码联表查询 `used_by_username`；公告 `sort` 排序与 type 三值（tenant/agent/h5）；删除公告级联清理 `NoticeRead`/`NoticeTarget`
+- [修改] `agent_business.go`：`AgentMe` 真实返回 `email`/`totp_enabled`/`last_login_ip`/`inviter_username`；Dashboard `today_spent` 真实计算（`SUM(total_amount - commission_amount)`）；提现 `AuditRemark` 持久化 real_name
+- [修改] `profile.go`：启用 agent email 更新（v0.3.1 已加字段）；移除三处 agent 2FA 501 阻断（`Setup2FA`/`Verify2FA`/`Disable2FA`）；`loadUserTOTPSecret`/`updateUserTOTPSecret` 新增 agent case
+- [修改] `router.go`：移除 `/agent/recharge` 路由的「待核实 v0.3.x」注释
+
+#### 新功能：AgentRecharge 充值申请
+- [新增] `handler.AgentRecharge`：代理提交充值申请 → 创建 `AgentBalanceLog(type=recharge, status=pending)`
+- [新增] 校验：`amount > 0` / 非手动支付必须 `PayVoucher` / sys_config 读取 `agent.recharge.min_amount`(1.00) + `agent.recharge.max_amount`(100000.00)
+- [新增] 返回 pending 状态等待开发者审核
+
+#### 新功能：ListLoginDevices 完整实现
+- [新增] `refresh_token_device` 表 + `recordLoginSession` / `markAllSessionsRevoked`
+- [新增] `ListLoginDevices`：列出当前用户所有活跃会话（IP / UA 解析 / 最近活跃 / 当前会话标记）
+- [新增] `KickDevice`：标记指定 device 为 revoked（v0.4.x 待加 jti 精确单设备踢出）
+
+#### 新功能：登录失败日志
+- [新增] `log_login_failed` 表 + `LogLoginFailed` model
+- [新增] `recordLoginFailureAsync`（buffered channel 容量 1024，溢出即丢保证登录可用）
+- [新增] `StartLoginFailureWorker` main.go 启动后台 goroutine 消费
+- [新增] `securityFailedLoginToday` / `securityBlockedIPsToday` 助手供 `AdminSecurityStats` 调用
+
+#### 前端过时标记清理
+- [修改] `api/{admin,tenant,agent,profile}.ts`：移除所有「待核实 v0.3.0」「当前 501」过时注释，统一改为「v0.3.1 已实现」
+- [新增] `api/tenant.ts`：补齐 `updateTenantNoticeApi` + `deleteTenantNoticeApi`
+- [修改] `views/tenant/Notices.vue`：启用删除按钮（带二次确认）+ `remove()` 函数
+- [修改] `views/admin/Dashboard.vue`：待办事项「待核实（v0.3.0）」→「去查看」导航文案
+- [修改] `views/{admin,tenant}/Dashboard.vue`：catch 注释由「501 静默降级」→「错误已由 http 拦截器处理」
+- [修改] `views/{admin,tenant,agent}/Profile.vue`：移除「铁律 06 待核实」注释
+- [修改] `views/agent/{Orders,Notices}.vue` + `views/tenant/Agents.vue`：移除「501 占位」头部警告
+
+#### 待核实项归零（v0.3.x → v0.4.x 迁移）
+- [里程碑] v0.3.0 CHANGELOG 中所有「待核实 v0.3.x」条目已全部解决或迁移至 v0.4.x
+- [迁移] `avatar` 字段（三表均无对应列）→ v0.4.x 加列后落库
+- [迁移] 2FA `backup_codes` Redis 持久化 → v0.4.x 加表字段后迁移
+- [迁移] UA 解析库（mileusna/ua 或 ua-parser）→ v0.4.x 引入
+- [迁移] 登录失败日志结构化记录 → v0.4.x 引入 zap/zerolog
+
+#### 编译验证
+- [验证] `go build ./...` 通过（0 错误）
+- [验证] `go vet ./...` 通过（0 警告）
+- [验证] `pnpm run build`（admin 前端）通过（修复 `Notices.vue` row 类型断言）
+
+---
+
 ## [0.3.0] - 2026-07-19
 
 ### [新增] 后端业务 API 全量实现（替换全部 501 占位）

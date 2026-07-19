@@ -1,9 +1,7 @@
 <!--
   我的公告（开发者）- 响应式
   向代理/H5 终端用户发布公告。
-  铁律 06 待核实：后端 /tenant/notices 当前为 501 占位（v0.3.0 交付），调用失败时静默降级。
-  注：tenant.ts 仅 createTenantNoticeApi，无 update/delete API；
-      删除按钮当前 disabled，待 v0.3.0 补全 delete/update API（铁律 06）。
+  v0.3.1 已交付 list / create / update / delete API。
 -->
 <template>
   <div class="notices-page">
@@ -67,8 +65,7 @@
         </el-table-column>
         <el-table-column label="操作" width="100" fixed="right">
           <template #default="{ row }">
-            <!-- 待核实 v0.3.0 补全 delete/update API（铁律 06），暂不可用 -->
-            <el-button type="danger" link size="small" disabled>删除</el-button>
+            <el-button type="danger" link size="small" @click="remove(row as TenantNotice)">删除</el-button>
           </template>
         </el-table-column>
       </ResponsiveTable>
@@ -128,11 +125,11 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import { ElMessage, type FormInstance } from 'element-plus'
+import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import {
-  listTenantNoticesApi, createTenantNoticeApi, type TenantNotice
+  listTenantNoticesApi, createTenantNoticeApi, deleteTenantNoticeApi, type TenantNotice
 } from '@/api/tenant'
 
 const list = ref<TenantNotice[]>([])
@@ -227,9 +224,28 @@ const loadList = async () => {
     list.value = resp.list || []
     total.value = resp.total || 0
   } catch {
-    // 后端 501 占位时静默降级（铁律 06），不编造数据
+    // 错误已由 http 拦截器处理
   } finally {
     loading.value = false
+  }
+}
+
+const remove = async (row: TenantNotice) => {
+  try {
+    await ElMessageBox.confirm(`确定删除公告「${row.title}」吗？`, '删除确认', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消'
+    })
+  } catch {
+    return
+  }
+  try {
+    await deleteTenantNoticeApi(row.id)
+    ElMessage.success('已删除')
+    loadList()
+  } catch {
+    // 错误已由 http 拦截器处理
   }
 }
 

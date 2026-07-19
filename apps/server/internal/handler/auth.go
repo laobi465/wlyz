@@ -144,6 +144,9 @@ func doLogin(
 			// 但仍记录失败次数（防爆破）
 			_, _ = auth.RecordLoginFailure(ctx, deps.Redis, role, req.Username,
 				params.MaxAttempts, params.WindowSeconds, params.LockSeconds)
+			// 同步写入数据库失败日志（异步队列，用于安全中心统计）
+			recordLoginFailureAsync(deps, role, req.Username, c.ClientIP(),
+				c.Request.Header.Get("User-Agent"), "wrong_password")
 			middleware.Fail(c, http.StatusUnauthorized, 1004, "用户名或密码错误")
 			return
 		}
@@ -153,6 +156,8 @@ func doLogin(
 
 	// 3. 校验状态
 	if status != "active" {
+		recordLoginFailureAsync(deps, role, req.Username, c.ClientIP(),
+			c.Request.Header.Get("User-Agent"), "disabled")
 		middleware.Fail(c, http.StatusForbidden, 1005, "账号已被禁用或待审核，请联系管理员")
 		return
 	}
@@ -162,6 +167,9 @@ func doLogin(
 		count, _ := auth.RecordLoginFailure(ctx, deps.Redis, role, req.Username,
 			params.MaxAttempts, params.WindowSeconds, params.LockSeconds)
 		remaining := params.MaxAttempts - count
+		// 同步写入数据库失败日志
+		recordLoginFailureAsync(deps, role, req.Username, c.ClientIP(),
+			c.Request.Header.Get("User-Agent"), "wrong_password")
 		if remaining > 0 {
 			middleware.Fail(c, http.StatusUnauthorized, 1004,
 				"用户名或密码错误，剩余 "+itoa(remaining)+" 次尝试机会")
@@ -213,6 +221,10 @@ func doLogin(
 		// 登录信息更新失败不影响登录
 		_ = err
 	}
+
+	// 7.1 写入会话记录（refresh_token_device 表，供 ListLoginDevices 查询）
+	ua := c.Request.Header.Get("User-Agent")
+	_ = recordLoginSession(deps, role, id, ip, ua, params.RefreshTTL)
 
 	// 8. 清除失败计数
 	_ = auth.ClearLoginFailure(ctx, deps.Redis, role, req.Username)
@@ -286,17 +298,18 @@ func AgentLogin(deps *Deps) gin.HandlerFunc {
 		doLogin(c, deps, auth.RoleAgent,
 			func(db *gorm.DB, username string) (uint64, string, string, string, uint64, error) {
 				var agent model.Agent
-				err := db.Select("id, password_hash, status, tenant_id").
+				err := db.Select("id, password_hash, totp_secret, status, tenant_id").
 					Where("username = ?", username).First(&agent).Error
 				if err != nil {
 					return 0, "", "", "", 0, err
 				}
-				return agent.ID, agent.PasswordHash, "", agent.Status, agent.TenantID, nil
+				return agent.ID, agent.PasswordHash, agent.TOTPSecret, agent.Status, agent.TenantID, nil
 			},
 			func(db *gorm.DB, id uint64, ip string, t time.Time) error {
 				return db.Model(&model.Agent{}).Where("id = ?", id).
 					Updates(map[string]interface{}{
 						"last_login_at": t,
+						"last_login_ip": ip,
 					}).Error
 			},
 		)
@@ -405,6 +418,10 @@ func TenantRegister(deps *Deps) gin.HandlerFunc {
 			return
 		}
 
+		// 10. 写入会话记录（与登录保持一致）
+		_ = recordLoginSession(deps, auth.RoleTenant, tenant.ID, c.ClientIP(),
+			c.Request.Header.Get("User-Agent"), params.RefreshTTL)
+
 		middleware.Success(c, gin.H{
 			"token_pair": tokenPair,
 			"user": userInfo{
@@ -511,6 +528,9 @@ func Logout(deps *Deps) gin.HandlerFunc {
 		// 加入黑名单（剩余 TTL = refresh token 剩余有效期）
 		params := loadAuthParams(deps, claims.Role)
 		_ = auth.BlacklistRefreshToken(deps.Redis, claims.UserID, claims.Role, params.RefreshTTL)
+
+		// 同步标记该用户的所有会话为已撤销（v0.3.1：与黑名单行为保持一致）
+		markAllSessionsRevoked(deps, claims.Role, claims.UserID)
 
 		middleware.Success(c, gin.H{"logged_out": true})
 	}

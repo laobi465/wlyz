@@ -87,6 +87,11 @@ type adminAddIPBlacklistReq struct {
 
 // ============== 公开公告 ==============
 
+// uint64Ptr 工具：将 uint64 转为 *uint64
+func uint64Ptr(v uint64) *uint64 {
+	return &v
+}
+
 // PublicPlatformNotices 公开平台公告（无需鉴权）
 // GET /api/v1/public/notices/platform
 func PublicPlatformNotices(deps *Deps) gin.HandlerFunc {
@@ -189,7 +194,6 @@ func AdminDashboard(deps *Deps) gin.HandlerFunc {
 			})
 		}
 
-		// 待核实：日志统计 v0.3.x 单独表
 		_ = ctx
 
 		middleware.Success(c, gin.H{
@@ -247,6 +251,12 @@ func AdminListTenants(deps *Deps) gin.HandlerFunc {
 			deps.DB.Model(&model.App{}).Where("tenant_id = ?", t.ID).Count(&appCount)
 			deps.DB.Model(&model.AppCard{}).Where("tenant_id = ?", t.ID).Count(&cardCount)
 
+			// 开发者结算余额 = 已结算的 net_amount 累计
+			var settledBalance float64
+			deps.DB.Model(&model.PlatformSettlement{}).
+				Where("tenant_id = ? AND status = ?", t.ID, "settled").
+				Select("COALESCE(SUM(net_amount), 0)").Scan(&settledBalance)
+
 			list = append(list, gin.H{
 				"id":           t.ID,
 				"username":     t.Username,
@@ -258,10 +268,10 @@ func AdminListTenants(deps *Deps) gin.HandlerFunc {
 				"package_name": pkgName,
 				"app_count":    appCount,
 				"card_count":   cardCount,
-				"balance":      0, // 待核实：开发者结算余额 v0.3.x
+				"balance":      settledBalance,
 				"created_at":   t.CreatedAt,
 				"expired_at":   t.ExpiresAt,
-				"remark":       "", // 待核实：sys_tenant 表无 remark 字段 v0.3.x
+				"remark":       t.Remark,
 				"last_login_at": t.LastLoginAt,
 			})
 		}
@@ -331,6 +341,7 @@ func AdminCreateTenant(deps *Deps) gin.HandlerFunc {
 			Status:       "active",
 			PackageID:    req.PackageID,
 			ExpiresAt:    expiresAt,
+			Remark:       req.Remark,
 		}
 		if err := deps.DB.Create(tenant).Error; err != nil {
 			middleware.Fail(c, http.StatusInternalServerError, 5003, "创建失败: "+err.Error())
@@ -392,8 +403,9 @@ func AdminUpdateTenant(deps *Deps) gin.HandlerFunc {
 			newExpire := base.AddDate(0, 0, *req.ExpireDays)
 			updates["expires_at"] = newExpire
 		}
-		// remark 字段 sys_tenant 表无对应列，待核实 v0.3.x
-		_ = req.Remark
+		if req.Remark != nil {
+			updates["remark"] = *req.Remark
+		}
 
 		if len(updates) == 0 {
 			middleware.Fail(c, http.StatusBadRequest, 1001, "未提交任何更新字段")
@@ -432,13 +444,12 @@ func AdminListPackages(deps *Deps) gin.HandlerFunc {
 		}
 
 		// 字段映射：MonthlyPrice→price_monthly, YearlyPrice→price_yearly
-		// 注：sys_package 表无 description 字段，待核实 v0.3.x
 		list := make([]gin.H, 0, len(packages))
 		for _, p := range packages {
 			list = append(list, gin.H{
 				"id":            p.ID,
 				"name":          p.Name,
-				"description":   "", // 待核实：sys_package 表无 description 字段 v0.3.x
+				"description":   p.Description,
 				"max_apps":      p.MaxApps,
 				"max_cards":     p.MaxCards,
 				"max_agents":    p.MaxAgents,
@@ -476,6 +487,7 @@ func AdminCreatePackage(deps *Deps) gin.HandlerFunc {
 
 		pkg := &model.SysPackage{
 			Name:         req.Name,
+			Description:  req.Description,
 			MonthlyPrice: req.PriceMonthly,
 			YearlyPrice:  req.PriceYearly,
 			MaxApps:      req.MaxApps,
@@ -517,6 +529,7 @@ func AdminUpdatePackage(deps *Deps) gin.HandlerFunc {
 
 		updates := map[string]interface{}{
 			"name":          req.Name,
+			"description":   req.Description,
 			"monthly_price": req.PriceMonthly,
 			"yearly_price":  req.PriceYearly,
 			"max_apps":      req.MaxApps,
@@ -571,6 +584,12 @@ func AdminListAgents(deps *Deps) gin.HandlerFunc {
 			var tenantName string
 			deps.DB.Model(&model.SysTenant{}).Where("id = ?", a.TenantID).Select("username").Scan(&tenantName)
 
+			// 联表邀请人用户名（如有）
+			inviterUsername := ""
+			if a.InviterID != nil {
+				deps.DB.Model(&model.Agent{}).Where("id = ?", *a.InviterID).Select("username").Scan(&inviterUsername)
+			}
+
 			// 统计字段
 			frozenBalance := agentFrozenBalance(deps.DB, a.ID)
 			totalCommission := agentTotalCommission(deps.DB, a.ID)
@@ -581,6 +600,7 @@ func AdminListAgents(deps *Deps) gin.HandlerFunc {
 				"username":         a.Username,
 				"real_name":        a.RealName,
 				"phone":            a.Phone,
+				"email":            a.Email,
 				"tenant_id":        a.TenantID,
 				"tenant_name":      tenantName,
 				"balance":          a.Balance,
@@ -588,9 +608,12 @@ func AdminListAgents(deps *Deps) gin.HandlerFunc {
 				"total_commission": totalCommission,
 				"total_withdraw":   totalWithdraw,
 				"status":           a.Status,
-				"commission_mode":  "percentage", // 待核实：agent 表无 commission_mode 字段 v0.3.x
+				"commission_mode":  a.CommissionMode,
 				"commission_rate":  a.CommissionRate,
-				"inviter_username": "", // 待核实：agent 表无 inviter_id 字段 v0.3.x
+				"inviter_id":       a.InviterID,
+				"inviter_username": inviterUsername,
+				"last_login_at":    a.LastLoginAt,
+				"last_login_ip":    a.LastLoginIP,
 				"created_at":       a.CreatedAt,
 			})
 		}
@@ -630,10 +653,12 @@ func AdminUpdateAgent(deps *Deps) gin.HandlerFunc {
 		if req.Status != nil {
 			updates["status"] = *req.Status
 		}
+		if req.CommissionMode != nil {
+			updates["commission_mode"] = *req.CommissionMode
+		}
 		if req.CommissionRate != nil {
 			updates["commission_rate"] = *req.CommissionRate
 		}
-		// commission_mode 字段无对应列，待核实 v0.3.x
 		// balance 调整应写 agent_balance_log，简化方案直接更新
 		if req.Balance != nil {
 			updates["balance"] = *req.Balance
@@ -691,7 +716,6 @@ func AdminListNotices(deps *Deps) gin.HandlerFunc {
 		}
 
 		// 字段映射：IsPinned→pinned, StartAt→publish_at, EndAt→expire_at
-		// 注：notice 表无 sort 字段，待核实 v0.3.x
 		list := make([]gin.H, 0, len(notices))
 		for _, n := range notices {
 			list = append(list, gin.H{
@@ -701,7 +725,7 @@ func AdminListNotices(deps *Deps) gin.HandlerFunc {
 				"content":    n.Content,
 				"status":     n.Status,
 				"pinned":     n.IsPinned,
-				"sort":       0, // 待核实：notice 表无 sort 字段 v0.3.x
+				"sort":       n.Sort,
 				"publish_at": n.StartAt,
 				"expire_at":  n.EndAt,
 				"created_at": n.CreatedAt,
@@ -744,6 +768,7 @@ func AdminCreateNotice(deps *Deps) gin.HandlerFunc {
 			Title:     req.Title,
 			Content:   req.Content,
 			IsPinned:  req.Pinned,
+			Sort:      req.Sort,
 			StartAt:   startAt,
 			EndAt:     req.ExpireAt,
 			Status:    status,
@@ -798,6 +823,9 @@ func AdminUpdateNotice(deps *Deps) gin.HandlerFunc {
 		if req.Pinned != nil {
 			updates["is_pinned"] = *req.Pinned
 		}
+		if req.Sort != nil {
+			updates["sort"] = *req.Sort
+		}
 		if req.PublishAt != nil {
 			updates["start_at"] = *req.PublishAt
 		}
@@ -834,7 +862,7 @@ func AdminDeleteNotice(deps *Deps) gin.HandlerFunc {
 			return
 		}
 
-		// 同时清理 notice_read / notice_target（待核实：是否需要级联清理 v0.3.x）
+		// 级联清理 notice_read / notice_target，避免脏数据
 		deps.DB.Where("notice_id = ?", id).Delete(&model.NoticeRead{})
 		deps.DB.Where("notice_id = ?", id).Delete(&model.NoticeTarget{})
 
@@ -846,7 +874,7 @@ func AdminDeleteNotice(deps *Deps) gin.HandlerFunc {
 
 // AdminListLogs 日志审计列表
 // GET /admin/logs?page=&page_size=&type=&user_id=&start_date=&end_date=&keyword=
-// 数据源：log_operation 表（login/pay/security/system 类型暂返回空，待核实 v0.3.x）
+// 数据源：log_operation 表（login/pay/security/system 类型暂返回空，留待 v0.4.x 接入对应日志表）
 func AdminListLogs(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		page, pageSize := parsePagination(c)
@@ -864,8 +892,7 @@ func AdminListLogs(deps *Deps) gin.HandlerFunc {
 		if kw := c.Query("keyword"); kw != "" {
 			q = q.Where("action LIKE ? OR module LIKE ?", "%"+kw+"%", "%"+kw+"%")
 		}
-		// type 字段：log_operation 仅含 operation 类型，其他类型待核实 v0.3.x
-		// 简化：type='operation' 时返回所有，其他返回空
+		// type 字段：log_operation 仅含 operation 类型，其他类型（login/pay/security/system）暂返回空
 		if t := c.Query("type"); t != "" && t != "operation" {
 			middleware.Success(c, gin.H{
 				"list":      []interface{}{},
@@ -886,20 +913,20 @@ func AdminListLogs(deps *Deps) gin.HandlerFunc {
 		}
 
 		// 字段映射：OperatorType→role, OperatorID→user_id, OperatorIP→ip
-		// 注：log_operation 无 username/user_agent/status 字段，待核实 v0.3.x
+		// v0.3.1：username/user_agent/status 已落库
 		list := make([]gin.H, 0, len(logs))
 		for _, l := range logs {
 			list = append(list, gin.H{
 				"id":         l.ID,
 				"type":       "operation",
 				"user_id":    l.OperatorID,
-				"username":   "", // 待核实：log_operation 无 username 字段 v0.3.x
+				"username":   l.Username,
 				"role":       l.OperatorType,
 				"action":     l.Action,
 				"target":     l.TargetType,
 				"ip":         l.OperatorIP,
-				"user_agent": "", // 待核实 v0.3.x
-				"status":     "success",
+				"user_agent": l.UserAgent,
+				"status":     l.Status,
 				"detail":     l.Detail,
 				"created_at": l.CreatedAt,
 			})
@@ -927,17 +954,17 @@ func AdminSecurityStats(deps *Deps) gin.HandlerFunc {
 			Where("expires_at IS NULL OR expires_at > ?", time.Now()).
 			Count(&ipBlacklistActive)
 
-		// 今日登录失败 / 封禁 IP
-		// 待核实：登录失败统计 v0.3.x（需要从 Redis 查询或单独日志表）
-		// 简化：暂返回 0
-		failedLoginToday := int64(0)
-		failedLoginBlocked := int64(0)
+		// 今日登录失败次数（v0.3.1：从 log_login_failed 表查询）
+		failedLoginToday := securityFailedLoginToday(deps, "")
+		// 今日自动封禁 IP 数（source=auto 且今日创建）
+		failedLoginBlocked := securityBlockedIPsToday(deps)
 
-		// 2FA 已启用用户数
-		var totpEnabledAdmin, totpEnabledTenant int64
+		// 2FA 已启用用户数（v0.3.1：含 agent）
+		var totpEnabledAdmin, totpEnabledTenant, totpEnabledAgent int64
 		deps.DB.Model(&model.SysAdmin{}).Where("totp_secret != ''").Count(&totpEnabledAdmin)
 		deps.DB.Model(&model.SysTenant{}).Where("totp_secret != ''").Count(&totpEnabledTenant)
-		totpEnabledUsers := totpEnabledAdmin + totpEnabledTenant
+		deps.DB.Model(&model.Agent{}).Where("totp_secret != ''").Count(&totpEnabledAgent)
+		totpEnabledUsers := totpEnabledAdmin + totpEnabledTenant + totpEnabledAgent
 
 		// 今日敏感操作数（log_operation 今日总数）
 		startOfToday := time.Date(time.Now().Year(), time.Now().Month(), time.Now().Day(), 0, 0, 0, 0, time.Local)
@@ -959,7 +986,7 @@ func AdminSecurityStats(deps *Deps) gin.HandlerFunc {
 		middleware.Success(c, gin.H{
 			"ip_blacklist_count":     ipBlacklistCount,
 			"ip_blacklist_active":    ipBlacklistActive,
-			"failed_login_today":     failedLoginToday, // 待核实 v0.3.x
+			"failed_login_today":     failedLoginToday,
 			"failed_login_blocked":   failedLoginBlocked,
 			"totp_enabled_users":     totpEnabledUsers,
 			"sensitive_ops_today":    sensitiveOpsToday,
@@ -984,16 +1011,17 @@ func AdminListIPBlacklist(deps *Deps) gin.HandlerFunc {
 		}
 
 		// 字段映射：ExpiresAt→expire_at
-		// 注：sec_ip_blacklist 无 created_by 字段，待核实 v0.3.x
 		result := make([]gin.H, 0, len(list))
 		for _, b := range list {
 			result = append(result, gin.H{
-				"id":         b.ID,
-				"ip":         b.IP,
-				"reason":     b.Reason,
-				"expire_at":  b.ExpiresAt,
-				"created_by": b.Source, // 待核实：sec_ip_blacklist 无 created_by 字段，暂用 source 替代 v0.3.x
-				"created_at": b.CreatedAt,
+				"id":              b.ID,
+				"ip":              b.IP,
+				"reason":          b.Reason,
+				"source":          b.Source,
+				"expire_at":       b.ExpiresAt,
+				"created_by":      b.CreatedBy,
+				"created_by_type": b.CreatedByType,
+				"created_at":      b.CreatedAt,
 			})
 		}
 
@@ -1023,10 +1051,12 @@ func AdminAddIPBlacklist(deps *Deps) gin.HandlerFunc {
 		}
 
 		item := &model.SecIPBlacklist{
-			IP:        req.IP,
-			Reason:    req.Reason,
-			Source:    "manual",
-			ExpiresAt: expiresAt,
+			IP:            req.IP,
+			Reason:        req.Reason,
+			Source:        "manual",
+			CreatedBy:     uint64Ptr(getUserID(c)),
+			CreatedByType: "admin",
+			ExpiresAt:     expiresAt,
 		}
 		if err := deps.DB.Create(item).Error; err != nil {
 			middleware.Fail(c, http.StatusInternalServerError, 5001, "创建失败: "+err.Error())
