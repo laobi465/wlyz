@@ -9,6 +9,45 @@
 
 ---
 
+## [0.3.2] - 2026-07-19
+
+### [功能] 代理充值审核闭环 + 提现审核闭环
+
+#### 后端：开发者财务审核 Handler
+- [新增] `apps/server/internal/handler/tenant_finance.go`（6 个 handler 全事务保护）
+  - `TenantListRechargeRequests` GET `/tenant/recharge_requests` 充值申请列表（联表 agent，默认 pending）
+  - `TenantApproveRecharge` POST `/tenant/recharge_requests/:id/approve` 通过（事务：加余额 + 流水 status=settled，支持 actual_amount 调整）
+  - `TenantRejectRecharge` POST `/tenant/recharge_requests/:id/reject` 驳回（流水 status=rejected）
+  - `TenantListWithdrawals` GET `/tenant/withdrawals` 提现申请列表（联表 agent，默认 pending）
+  - `TenantPayWithdraw` POST `/tenant/withdrawals/:id/pay` 打款（事务：withdraw.status=paid + paid_at + pay_trade_no + 对应 balance_log status=settled）
+  - `TenantRejectWithdraw` POST `/tenant/withdrawals/:id/reject` 驳回（事务：退回余额 + withdraw.status=rejected + balance_log status=rejected）
+- [新增] 路由 `router.go` 注册 6 条新路由
+- [验证] `go build ./...` + `go vet ./...` 双双通过
+
+#### 前端：开发者审核页面 + 代理充值表单修复
+- [新增] `api/tenant.ts`：`TenantRechargeRequest` / `TenantWithdrawal` 类型 + 6 个审核 API 函数
+- [新增] `views/tenant/RechargeReview.vue` 充值审核页（搜索 / 通过对话框 / 驳回对话框 / 响应式 H5）
+- [新增] `views/tenant/WithdrawalReview.vue` 提现审核页（搜索 / 打款对话框 / 驳回对话框 / 响应式 H5）
+- [新增] `router/index.ts` 注册 `/tenant/recharge-review` + `/tenant/withdrawal-review` 两条路由
+- [修复] `api/agent.ts`：补齐 `agentRechargeApi` 函数（v0.3.1 已交付 /agent/recharge 端点）
+- [修复] `views/agent/Balance.vue`：
+  - 移除误用 `agentWithdrawApi` 提交充值的临时方案，改为调用 `agentRechargeApi`
+  - 充值表单增加 `pay_method`（alipay/wechat/bank/manual）+ `pay_voucher` 字段
+  - 非手工支付必须填写付款凭证
+  - 清理「待核实 v0.3.0」过时注释
+- [验证] `pnpm run build` 通过（修复 mobileFields 类型断言 + statusTag 返回类型）
+
+#### 资金链路闭环
+- 代理充值：申请 → 开发者审核通过（可调实际金额）→ 自动加余额 → 流水 settled
+- 代理提现：申请（扣余额）→ 开发者打款（标记 paid + 写流水号）→ 流水 settled
+- 代理提现驳回：退回余额 + 流水 rejected + audit_remark 记录原因
+
+#### 待办（v0.4.x 双层支付 D-18）
+- 套餐 `allow_custom_pay` 字段生效 + 开发者自有易支付下单/回调接口
+- 切换支付方式时通知所有代理
+
+---
+
 ## [0.3.1] - 2026-07-19
 
 ### [修复] v0.3.0 全部「待核实 v0.3.x」项归零

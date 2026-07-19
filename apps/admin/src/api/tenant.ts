@@ -275,3 +275,99 @@ export const updateTenantNoticeApi = (id: number, data: Partial<TenantNotice>) =
 export const deleteTenantNoticeApi = (id: number) => {
   return request.delete(`/tenant/notices/${id}`)
 }
+
+// ============== 财务审核：代理充值 / 提现审核（v0.3.2） ==============
+
+/** 充值申请记录（联表 agent 取 username/phone） */
+export interface TenantRechargeRequest {
+  id: number
+  agent_id: number
+  tenant_id: number
+  type: 'recharge'
+  amount: number
+  balance_after: number
+  pay_method: string
+  pay_voucher: string
+  status: 'pending' | 'settled' | 'rejected'
+  remark: string
+  created_at: string
+  updated_at: string
+  agent_username: string
+  agent_phone: string
+}
+
+/** 提现申请记录（联表 agent 取 username/phone） */
+export interface TenantWithdrawal {
+  id: number
+  agent_id: number
+  tenant_id: number
+  amount: number
+  pay_method: 'alipay' | 'wechat' | 'bank'
+  pay_account: string
+  status: 'pending' | 'approved' | 'rejected' | 'paid' | 'failed'
+  audit_remark: string
+  pay_trade_no: string
+  paid_at: string | null
+  audited_by: number | null
+  created_at: string
+  updated_at: string
+  agent_username: string
+  agent_phone: string
+}
+
+/** 充值申请列表（GET /tenant/recharge_requests）—— v0.3.2 已实现 */
+export const listTenantRechargeRequestsApi = (params: {
+  page?: number
+  page_size?: number
+  status?: string
+  agent_id?: number
+  keyword?: string
+}) => {
+  return request.get<{ list: TenantRechargeRequest[]; total: number }>('/tenant/recharge_requests', params)
+}
+
+/** 充值审核通过（POST /tenant/recharge_requests/:id/approve）—— v0.3.2 已实现 */
+export const approveTenantRechargeApi = (id: number, data: { actual_amount?: number; remark?: string }) => {
+  return request.post<{
+    id: number
+    status: 'settled'
+    actual_amount: number
+    balance_after: number
+  }>(`/tenant/recharge_requests/${id}/approve`, data)
+}
+
+/** 充值审核驳回（POST /tenant/recharge_requests/:id/reject）—— v0.3.2 已实现 */
+export const rejectTenantRechargeApi = (id: number, data: { reason: string }) => {
+  return request.post<{ id: number; status: 'rejected'; reason: string }>(`/tenant/recharge_requests/${id}/reject`, data)
+}
+
+/** 提现申请列表（GET /tenant/withdrawals）—— v0.3.2 已实现 */
+export const listTenantWithdrawalsApi = (params: {
+  page?: number
+  page_size?: number
+  status?: string
+  agent_id?: number
+  keyword?: string
+}) => {
+  return request.get<{ list: TenantWithdrawal[]; total: number }>('/tenant/withdrawals', params)
+}
+
+/** 提现打款（POST /tenant/withdrawals/:id/pay）—— v0.3.2 已实现 */
+export const payTenantWithdrawalApi = (id: number, data: { pay_trade_no?: string; remark?: string }) => {
+  return request.post<{
+    id: number
+    status: 'paid'
+    paid_at: string
+    pay_trade_no: string
+  }>(`/tenant/withdrawals/${id}/pay`, data)
+}
+
+/** 提现审核驳回（POST /tenant/withdrawals/:id/reject）—— v0.3.2 已实现 */
+export const rejectTenantWithdrawalApi = (id: number, data: { reason: string }) => {
+  return request.post<{
+    id: number
+    status: 'rejected'
+    reason: string
+    balance_after: number
+  }>(`/tenant/withdrawals/${id}/reject`, data)
+}

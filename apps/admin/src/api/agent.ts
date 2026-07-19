@@ -188,6 +188,16 @@ export const agentWithdrawApi = (data: {
   return request.post<{ id: number; status: string; amount: number }>('/agent/withdraw', data)
 }
 
+/** 充值申请（v0.3.1 已实现） */
+export const agentRechargeApi = (data: {
+  amount: number
+  pay_method: 'alipay' | 'wechat' | 'bank' | 'manual'
+  pay_voucher?: string
+  remark?: string
+}) => {
+  return request.post<{ id: number; status: string; amount: number; message: string }>('/agent/recharge', data)
+}
+
 // ============== 消息通知 ==============
 
 export interface AgentNotice {

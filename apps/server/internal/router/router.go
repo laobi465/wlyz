@@ -191,6 +191,14 @@ func Register(container *config.Container) *gin.Engine {
 		tenantAuth.PUT("/notices/:id", handler.TenantUpdateNotice(deps))
 		tenantAuth.DELETE("/notices/:id", handler.TenantDeleteNotice(deps))
 
+		// 财务审核（v0.3.2 代理充值/提现审核闭环）
+		tenantAuth.GET("/recharge_requests", handler.TenantListRechargeRequests(deps))
+		tenantAuth.POST("/recharge_requests/:id/approve", handler.TenantApproveRecharge(deps))
+		tenantAuth.POST("/recharge_requests/:id/reject", handler.TenantRejectRecharge(deps))
+		tenantAuth.GET("/withdrawals", handler.TenantListWithdrawals(deps))
+		tenantAuth.POST("/withdrawals/:id/pay", handler.TenantPayWithdraw(deps))
+		tenantAuth.POST("/withdrawals/:id/reject", handler.TenantRejectWithdraw(deps))
+
 		// 账号设置（v0.3.0 三角色统一）
 		tenantAuth.GET("/auth/me", handler.ProfileMe(deps))
 		tenantAuth.PUT("/auth/profile", handler.UpdateProfile(deps))

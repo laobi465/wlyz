@@ -4,8 +4,7 @@
   - 申请充值按钮 → 弹窗（金额 + 备注，提交后等开发者审核）
   - 流水列表：默认过滤 recharge + withdraw 类型
   - 与"佣金记录"页面互补：本页关注钱包出入，佣金页关注收入明细
-  铁律 06 待核实：后端无 /agent/recharge 端点，当前调用 /agent/withdraw 提交充值（type 字段区分），
-                实际接口待 v0.3.0 实现。
+  v0.3.1 已交付 /agent/recharge 端点；v0.3.2 已交付开发者充值/提现审核页面。
 -->
 <template>
   <div class="agent-balance-page">
@@ -107,15 +106,26 @@
     <!-- 申请充值对话框 -->
     <el-dialog v-model="rechargeVisible" title="申请充值" width="500px">
       <el-alert type="warning" :closable="false" show-icon style="margin-bottom: 16px;">
-        充值申请提交后需开发者审核确认，审核通过后人工转账至开发者账户，开发者确认到账后系统自动入账。
+        充值申请提交后需开发者审核确认，审核通过后系统自动入账。
       </el-alert>
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top">
         <el-form-item label="充值金额" prop="amount">
           <el-input-number v-model="form.amount" :min="1" :precision="2" :step="100" />
           <span class="hint">最低 ¥1</span>
         </el-form-item>
+        <el-form-item label="付款方式" prop="pay_method">
+          <el-select v-model="form.pay_method" placeholder="选择付款方式" style="width: 100%">
+            <el-option label="支付宝" value="alipay" />
+            <el-option label="微信" value="wechat" />
+            <el-option label="银行转账" value="bank" />
+            <el-option label="人工（线下）" value="manual" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="form.pay_method !== 'manual'" label="付款凭证" prop="pay_voucher">
+          <el-input v-model="form.pay_voucher" placeholder="例如：支付宝订单号 / 微信转账单号 / 银行回单号" maxlength="255" />
+        </el-form-item>
         <el-form-item label="备注">
-          <el-input v-model="form.remark" type="textarea" :rows="3" placeholder="可选，例如：支付宝转账 ¥500，订单号 20260719001" maxlength="200" />
+          <el-input v-model="form.remark" type="textarea" :rows="3" placeholder="可选" maxlength="200" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -134,7 +144,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import {
   listAgentCommissionApi,
-  agentWithdrawApi,
+  agentRechargeApi,
   agentMeApi,
   type AgentCommission,
   type CommissionType,
@@ -182,11 +192,14 @@ const rechargeLoading = ref(false)
 const formRef = ref<FormInstance>()
 const form = reactive({
   amount: 100,
+  pay_method: 'alipay' as 'alipay' | 'wechat' | 'bank' | 'manual',
+  pay_voucher: '',
   remark: ''
 })
 
 const rules = {
-  amount: [{ required: true, message: '请输入充值金额', trigger: 'blur' }]
+  amount: [{ required: true, message: '请输入充值金额', trigger: 'blur' }],
+  pay_method: [{ required: true, message: '请选择付款方式', trigger: 'change' }]
 }
 
 const typeTag = (t: string): any => ({
@@ -263,7 +276,7 @@ const loadList = async () => {
 }
 
 const openRecharge = () => {
-  Object.assign(form, { amount: 100, remark: '' })
+  Object.assign(form, { amount: 100, pay_method: 'alipay', pay_voucher: '', remark: '' })
   rechargeVisible.value = true
 }
 
@@ -273,13 +286,17 @@ const confirmRecharge = async () => {
     if (!valid) return
     rechargeLoading.value = true
     try {
-      // 铁律 06 待核实：后端暂无 /agent/recharge 端点，临时复用 /agent/withdraw 提交（type 区分）
-      // 待 v0.3.0 实现独立的 recharge 端点
-      await agentWithdrawApi({
+      // 非手工支付必须上传付款凭证
+      if (form.pay_method !== 'manual' && !form.pay_voucher.trim()) {
+        ElMessage.warning('请填写付款凭证')
+        rechargeLoading.value = false
+        return
+      }
+      await agentRechargeApi({
         amount: form.amount,
-        method: 'alipay', // 占位，充值不需要
-        account: 'recharge_application', // 占位标识
-        remark: `[充值申请] ${form.remark}`
+        pay_method: form.pay_method,
+        pay_voucher: form.pay_voucher,
+        remark: form.remark
       })
       ElMessage.success('充值申请已提交，等待开发者审核')
       rechargeVisible.value = false

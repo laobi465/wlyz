@@ -115,7 +115,8 @@
 
 #### 开发者自有易支付
 - [ ] [待开始] 套餐 allow_custom_pay 字段生效 - v0.3.0
-- [ ] [待开始] 开发者支付配置页（D-18） - v0.3.0
+- [x] [已完成] 开发者审核充值（D-19） - v0.3.0（v0.3.2 充值审核闭环）
+- [ ] [待开始] 开发者支付配置页（D-18） - v0.3.0 → v0.4.x 双层支付模式
 - [ ] [待开始] tenant_pay_config 表读写 - v0.3.0
 - [ ] [待开始] 双层支付模式切换逻辑 - v0.3.0
 - [ ] [待开始] 开发者自有支付下单/回调接口 - v0.3.0
@@ -131,13 +132,13 @@
 - [ ] [待开始] 超管后台代理注册管理（S-17） - v0.3.0
 
 #### 代理购买卡密
-- [ ] [待开始] 代理充值申请（P-09） - v0.3.0
-- [ ] [待开始] 开发者审核充值（D-19） - v0.3.0
+- [x] [已完成] 代理充值申请（P-09） - v0.3.0（v0.3.1 AgentRecharge + v0.3.2 审核闭环）
+- [x] [已完成] 开发者审核充值（D-19） - v0.3.0（v0.3.2 充值审核闭环）
 - [ ] [待开始] 代理余额扣款生成卡密 - v0.3.0
 - [ ] [待开始] 代理实时扫码购卡（P-10，备用） - v0.3.0
 - [ ] [待开始] 代理佣金计算（percentage / diff 两种模式） - v0.3.0
-- [ ] [待开始] 代理提现申请（P-05） - v0.3.0
-- [ ] [待开始] 开发者审核提现 + 打款（D-14） - v0.3.0
+- [x] [已完成] 代理提现申请（P-05） - v0.3.0（v0.3.0 AgentWithdraw）
+- [x] [已完成] 开发者审核提现 + 打款（D-14） - v0.3.0（v0.3.2 提现审核闭环：pay + reject）
 - [ ] [待开始] 代理独立门户（P-06，仅展示，收款走开发者） - v0.3.0
 - [ ] [待开始] 代理子域名绑定 - v0.3.0
 
@@ -201,6 +202,18 @@
 - [x] [已完成] 前端 4 个 .ts API + 5 个 .vue 文件清理过时「待核实 v0.3.0」标记 - v0.3.1
 - [x] [已完成] `api/tenant.ts` 补齐 `updateTenantNoticeApi` + `deleteTenantNoticeApi`，Notices.vue 启用删除按钮 - v0.3.1
 - [x] [已完成] `go build` + `go vet` + `pnpm run build`（admin）三重编译验证通过 - v0.3.1
+
+#### v0.3.2 代理充值/提现审核闭环 ✅ v0.3.2 已完成
+- [x] [已完成] `tenant_finance.go` 6 个 handler（List/Approve/Reject × Recharge + List/Pay/Reject × Withdraw） - v0.3.2
+- [x] [已完成] 路由注册 6 条新路由（`/tenant/recharge_requests` + `/tenant/withdrawals`） - v0.3.2
+- [x] [已完成] 前端 `RechargeReview.vue` + `WithdrawalReview.vue` 两个审核页面（响应式 H5） - v0.3.2
+- [x] [已完成] 路由注册 `/tenant/recharge-review` + `/tenant/withdrawal-review` - v0.3.2
+- [x] [已完成] `api/tenant.ts` 补齐 `TenantRechargeRequest` / `TenantWithdrawal` 类型 + 6 个审核 API - v0.3.2
+- [x] [已完成] 修复 `agent/Balance.vue` 误用 withdrawApi 提交充值 → 改用 `agentRechargeApi` + pay_method/pay_voucher 字段 - v0.3.2
+- [x] [已完成] 充值审核通过支持调整实际到账金额（actual_amount） - v0.3.2
+- [x] [已完成] 提现驳回事务：退回余额 + withdraw.status=rejected + balance_log.status=rejected - v0.3.2
+- [x] [已完成] 提现打款事务：withdraw.status=paid + paid_at + pay_trade_no + balance_log.status=settled - v0.3.2
+- [x] [已完成] `go build` + `go vet` + `pnpm run build` 三重编译验证通过 - v0.3.2
 - [迁移] avatar 字段（三表均无对应列）→ v0.4.x 加列后落库
 - [迁移] 2FA `backup_codes` Redis 持久化 → v0.4.x 加表字段后迁移
 - [迁移] UA 解析库（mileusna/ua 或 ua-parser）→ v0.4.x 引入
@@ -401,6 +414,7 @@
 | v0.2.7 | 2026-07-19 | ✅ 已完成（全部剩余 16 个 PlaceholderView 替换为真实页面，响应式 H5 完整覆盖） |
 | v0.3.0 | 2026-07-19 | ✅ 已完成（后端业务 API 全量实现，替换全部 501 占位） |
 | v0.3.1 | 2026-07-19 | ✅ 已完成（v0.3.0 全部「待核实 v0.3.x」归零：字段补全 + AgentRecharge + ListLoginDevices + 登录失败日志） |
+| v0.3.2 | 2026-07-19 | ✅ 已完成（代理充值审核闭环 + 提现审核闭环：tenant_finance.go + 双审核页面） |
 | v0.4.0 | 待定 | [待开始] 三期商业化 |
 
 ---
