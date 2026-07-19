@@ -612,7 +612,7 @@ func AdminTestPayConfig(deps *Deps) gin.HandlerFunc {
 
 // ============== 超管：手动结算 ==============
 
-// AdminSettleOrder 手动标记订单已结算
+// AdminSettleOrder 手动标记订单已结算（v0.3.4 升级：事务保护 + 累加 tenant balance + 写 tenant_balance_log）
 // POST /api/v1/admin/settlements/:id/settle
 func AdminSettleOrder(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -644,22 +644,69 @@ func AdminSettleOrder(deps *Deps) gin.HandlerFunc {
 
 		now := time.Now()
 		batchNo := fmt.Sprintf("STL%s%06d", now.Format("20060102"), id%1000000)
-		if err := deps.DB.Model(&s).Updates(map[string]interface{}{
-			"status":           "settled",
-			"settled_at":       now,
-			"settle_batch_no":  batchNo,
-			"settle_method":    req.Method,
-			"settle_remark":    req.Remark,
-		}).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "结算失败: "+err.Error())
+
+		// 事务：1) 更新 settlement 2) 累加 tenant balance 3) 写 tenant_balance_log
+		var balanceAfter float64
+		txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
+			// 1. 更新结算记录
+			if err := tx.Model(&s).Updates(map[string]interface{}{
+				"status":          "settled",
+				"settled_at":      now,
+				"settle_batch_no": batchNo,
+				"settle_method":   req.Method,
+				"settle_remark":   req.Remark,
+			}).Error; err != nil {
+				return fmt.Errorf("更新结算记录失败: %w", err)
+			}
+
+			// 2. 累加开发者可提现余额（FOR UPDATE 防并发）
+			var tenant model.SysTenant
+			if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&tenant, s.TenantID).Error; err != nil {
+				return fmt.Errorf("查询开发者失败: %w", err)
+			}
+			newBalance := tenant.Balance + s.NetAmount
+			if err := tx.Model(&tenant).Update("balance", newBalance).Error; err != nil {
+				return fmt.Errorf("更新开发者余额失败: %w", err)
+			}
+			balanceAfter = newBalance
+
+			// 3. 写开发者余额流水
+			log := &model.TenantBalanceLog{
+				TenantID:            s.TenantID,
+				Type:                "settle",
+				Amount:              s.NetAmount,
+				BalanceAfter:        newBalance,
+				RelatedOrderID:      &s.OrderID,
+				RelatedSettlementID: &s.ID,
+				PayMethod:           req.Method,
+				SettleBatchNo:       batchNo,
+				Status:              "settled",
+				Remark:              req.Remark,
+			}
+			if err := tx.Create(log).Error; err != nil {
+				return fmt.Errorf("写入开发者流水失败: %w", err)
+			}
+			return nil
+		})
+		if txErr != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "结算失败: "+txErr.Error())
 			return
 		}
 
+		// 异步记录操作日志（v0.3.3 RecordOperation）
+		RecordOperation(deps, c, "settlement", "settle_order", "success", "platform_settlement", &s.ID, map[string]interface{}{
+			"tenant_id":  s.TenantID,
+			"order_id":   s.OrderID,
+			"net_amount": s.NetAmount,
+			"batch_no":   batchNo,
+		})
+
 		middleware.Success(c, gin.H{
-			"id":               s.ID,
-			"status":           "settled",
-			"settle_batch_no":  batchNo,
-			"settled_at":       now,
+			"id":              s.ID,
+			"status":          "settled",
+			"settle_batch_no": batchNo,
+			"settled_at":      now,
+			"balance_after":   balanceAfter,
 		})
 	}
 }

@@ -110,10 +110,19 @@ func Register(container *config.Container) *gin.Engine {
 		adminAuth.POST("/security/ip_blacklist", handler.AdminAddIPBlacklist(deps))
 		adminAuth.DELETE("/security/ip_blacklist/:id", handler.AdminRemoveIPBlacklist(deps))
 
-		// 支付结算管理（v0.2.3）
+		// 支付结算管理（v0.2.3 + v0.3.4 升级）
 		adminAuth.GET("/settlements", handler.AdminListSettlements(deps))
 		adminAuth.POST("/settlements/:id/settle", handler.AdminSettleOrder(deps))
+		adminAuth.POST("/settlements/batch_settle", handler.AdminBatchSettle(deps)) // v0.3.4 批量结算
 		adminAuth.POST("/pay/test", handler.AdminTestPayConfig(deps))
+
+		// 开发者提现审核（v0.3.4 新增）
+		adminAuth.GET("/tenant_withdrawals", handler.AdminListTenantWithdrawals(deps))
+		adminAuth.POST("/tenant_withdrawals/:id/pay", handler.AdminPayTenantWithdraw(deps))
+		adminAuth.POST("/tenant_withdrawals/:id/reject", handler.AdminRejectTenantWithdraw(deps))
+
+		// 对账报表（v0.3.4 新增）
+		adminAuth.GET("/reconciliation", handler.AdminReconciliation(deps))
 
 		// 账号设置（v0.3.0 三角色统一）
 		adminAuth.GET("/auth/me", handler.ProfileMe(deps))
@@ -202,6 +211,13 @@ func Register(container *config.Container) *gin.Engine {
 		tenantAuth.GET("/withdrawals", handler.TenantListWithdrawals(deps))
 		tenantAuth.POST("/withdrawals/:id/pay", handler.TenantPayWithdraw(deps))
 		tenantAuth.POST("/withdrawals/:id/reject", handler.TenantRejectWithdraw(deps))
+
+		// 开发者结算与提现（v0.3.4 新增）
+		tenantAuth.GET("/settlements", handler.TenantListSettlements(deps))           // 自己的结算记录
+		tenantAuth.GET("/balance_overview", handler.TenantBalanceOverview(deps))      // 余额概览
+		tenantAuth.GET("/balance_logs", handler.TenantListBalanceLogs(deps))          // 余额流水
+		tenantAuth.GET("/withdrawals/mine", handler.TenantListOwnWithdrawals(deps))   // 自己的提现申请
+		tenantAuth.POST("/withdraw", handler.TenantWithdraw(deps))                    // 发起提现申请
 
 		// 账号设置（v0.3.0 三角色统一）
 		tenantAuth.GET("/auth/me", handler.ProfileMe(deps))

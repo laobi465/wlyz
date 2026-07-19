@@ -58,6 +58,8 @@ type SysTenant struct {
 	TOTPSecret   string  `gorm:"size:64" json:"-"`
 	LastLoginAt  *time.Time `json:"last_login_at"`
 	LastLoginIP  string  `gorm:"size:45" json:"last_login_ip"`
+	Balance      float64 `gorm:"type:decimal(12,2);not null;default:0" json:"balance"`         // v0.3.4：可提现余额
+	FrozenBalance float64 `gorm:"type:decimal(12,2);not null;default:0" json:"frozen_balance"` // v0.3.4：冻结余额（提现申请中）
 	Remark       string  `gorm:"size:255" json:"remark"`
 }
 
@@ -476,6 +478,43 @@ type PlatformSettlement struct {
 }
 
 func (PlatformSettlement) TableName() string { return "platform_settlement" }
+
+// TenantBalanceLog 开发者余额流水（v0.3.4 新增）
+// type: settle（结算入账，正）/ withdraw（提现扣款，负）/ refund（提现驳回退回，正）/ adjust（人工调整）
+// status: pending / settled / rejected
+type TenantBalanceLog struct {
+	BaseModel
+	TenantID             uint64   `gorm:"index;not null" json:"tenant_id"`
+	Type                 string   `gorm:"size:32;not null" json:"type"`
+	Amount               float64  `gorm:"type:decimal(12,2);not null" json:"amount"`
+	BalanceAfter         float64  `gorm:"type:decimal(12,2);not null" json:"balance_after"`
+	RelatedOrderID       *uint64  `gorm:"index" json:"related_order_id"`
+	RelatedSettlementID  *uint64  `gorm:"index" json:"related_settlement_id"`
+	RelatedWithdrawID    *uint64  `gorm:"index" json:"related_withdraw_id"`
+	PayMethod            string   `gorm:"size:32" json:"pay_method"`
+	SettleBatchNo        string   `gorm:"size:64" json:"settle_batch_no"`
+	Status               string   `gorm:"size:32;index;not null;default:pending" json:"status"`
+	Remark               string   `gorm:"size:255" json:"remark"`
+}
+
+func (TenantBalanceLog) TableName() string { return "tenant_balance_log" }
+
+// TenantWithdraw 开发者提现申请（v0.3.4 新增）
+// status: pending（待审核）/ paid（已打款）/ rejected（已驳回）/ failed（打款失败）
+type TenantWithdraw struct {
+	BaseModel
+	TenantID    uint64     `gorm:"index;not null" json:"tenant_id"`
+	Amount      float64    `gorm:"type:decimal(12,2);not null" json:"amount"`
+	PayMethod   string     `gorm:"size:32;not null" json:"pay_method"` // wechat/alipay/bank
+	PayAccount  string     `gorm:"size:128;not null" json:"pay_account"`
+	Status      string     `gorm:"size:32;index;not null;default:pending" json:"status"`
+	AuditRemark string     `gorm:"size:255" json:"audit_remark"`
+	PayTradeNo  string     `gorm:"size:128" json:"pay_trade_no"`
+	PaidAt      *time.Time `json:"paid_at"`
+	AuditedBy   *uint64    `json:"audited_by"`
+}
+
+func (TenantWithdraw) TableName() string { return "tenant_withdraw" }
 
 // ============== v0.3.1 新增 ==============
 
