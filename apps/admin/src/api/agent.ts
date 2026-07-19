@@ -1,0 +1,190 @@
+// 代理控制台 API
+// 对应后端路由：/api/v1/agent/*
+// 注意（铁律 06 待核实）：后端 agent 业务接口当前为 501 占位（v0.3.0 交付），
+// 调用时会被 http 拦截器以业务错误提示，前端列表/统计保持空状态，不编造假数据（铁律 04）。
+import { request } from './http'
+import type { CardStatus } from './cards'
+
+// ============== 类型定义 ==============
+
+export interface AgentProfile {
+  id: number
+  username: string
+  tenant_id: number
+  tenant_name?: string
+  real_name: string
+  phone: string
+  balance: number
+  frozen_balance: number
+  total_commission: number
+  total_withdraw: number
+  status: 'active' | 'disabled' | 'pending'
+  created_at: string
+  /** 邀请该代理的开发者用户名 */
+  inviter_username?: string
+  /** 佣金模式：按比例 / 按差价 */
+  commission_mode?: 'percentage' | 'diff'
+  /** 佣金比例（百分比，仅 percentage 模式生效） */
+  commission_rate?: number
+}
+
+export interface AgentDashboard {
+  balance: number
+  frozen_balance: number
+  today_purchased: number
+  today_spent: number
+  total_purchased: number
+  total_spent: number
+  total_commission: number
+  total_withdraw: number
+  pending_withdraw: number
+  recent_orders?: AgentOrder[]
+}
+
+export interface AgentCardType {
+  id: number
+  app_id: number
+  app_name: string
+  name: string
+  type: 'duration' | 'count' | 'permanent' | 'trial' | 'feature'
+  duration_seconds: number
+  max_uses: number
+  /** 终端用户售价 */
+  price: number
+  /** 代理结算价（从此价格扣款） */
+  agent_base_price: number
+  /** 代理佣金（按差价模式时 = price - agent_base_price） */
+  agent_commission: number
+  features: string
+  status: 'active' | 'disabled'
+}
+
+export interface AgentCard {
+  id: number
+  app_id: number
+  app_name?: string
+  card_type_id: number
+  card_type_name?: string
+  card_key: string
+  status: CardStatus
+  batch_no: string
+  used_count: number
+  max_uses: number
+  activated_at: string | null
+  expires_at: string | null
+  cost_price: number
+  created_at: string
+}
+
+export type AgentOrderStatus = 'paid' | 'pending' | 'closed' | 'refunded'
+
+export interface AgentOrder {
+  id: number
+  order_no: string
+  app_id: number
+  app_name?: string
+  card_type_id: number
+  card_type_name?: string
+  quantity: number
+  total_amount: number
+  pay_status: AgentOrderStatus
+  pay_channel: string
+  paid_at: string | null
+  created_at: string
+  /** 该订单产生的佣金 */
+  commission_amount: number
+}
+
+export type CommissionType = 'purchase' | 'withdraw' | 'adjust' | 'recharge'
+export type CommissionStatus = 'pending' | 'approved' | 'rejected' | 'paid'
+
+export interface AgentCommission {
+  id: number
+  type: CommissionType
+  amount: number
+  balance_after: number
+  status: CommissionStatus
+  related_order_no: string
+  remark: string
+  created_at: string
+  /** 提现申请时填写的收款方式 */
+  withdraw_method?: string
+  /** 提现申请时填写的收款账号 */
+  withdraw_account?: string
+}
+
+// ============== API 方法 ==============
+
+/** 代理工作台 */
+export const agentDashboardApi = () => {
+  return request.get<AgentDashboard>('/agent/dashboard')
+}
+
+/** 当前代理信息（含余额、佣金统计） */
+export const agentMeApi = () => {
+  return request.get<AgentProfile>('/agent/auth/me')
+}
+
+/** 代理可购买的卡类列表（受开发者授权范围限制） */
+export const listAgentCardTypesApi = (params: { app_id?: number; page?: number; page_size?: number }) => {
+  return request.get<{ list: AgentCardType[]; total: number }>('/agent/card_types', params)
+}
+
+/** 代理卡密列表 */
+export const listAgentCardsApi = (params: {
+  app_id?: number
+  card_type_id?: number
+  status?: CardStatus
+  batch_no?: string
+  page?: number
+  page_size?: number
+}) => {
+  return request.get<{ list: AgentCard[]; total: number }>('/agent/cards', params)
+}
+
+/** 代理购卡（扣余额生成卡密） */
+export const agentGenerateCardsApi = (data: {
+  card_type_id: number
+  quantity: number
+  prefix?: string
+  group_tag?: string
+}) => {
+  return request.post<{
+    batch_no: string
+    quantity: number
+    card_keys: string[]
+    card_ids: number[]
+    cost_total: number
+    balance_after: number
+  }>('/agent/cards/generate', data)
+}
+
+/** 代理订单列表 */
+export const listAgentOrdersApi = (params: {
+  status?: AgentOrderStatus
+  page?: number
+  page_size?: number
+}) => {
+  return request.get<{ list: AgentOrder[]; total: number }>('/agent/orders', params)
+}
+
+/** 佣金/流水明细列表 */
+export const listAgentCommissionApi = (params: {
+  type?: CommissionType
+  status?: CommissionStatus
+  page?: number
+  page_size?: number
+}) => {
+  return request.get<{ list: AgentCommission[]; total: number }>('/agent/commission', params)
+}
+
+/** 提现申请 */
+export const agentWithdrawApi = (data: {
+  amount: number
+  method: 'alipay' | 'wechat' | 'bank'
+  account: string
+  real_name?: string
+  remark?: string
+}) => {
+  return request.post<{ id: number; status: string; amount: number }>('/agent/withdraw', data)
+}

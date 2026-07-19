@@ -106,12 +106,12 @@ const routes: RouteRecordRaw[] = [
     redirect: '/agent/dashboard',
     meta: { role: 'agent', requiresAuth: true },
     children: [
-      { path: 'dashboard',   name: 'AgentDashboard',  component: PlaceholderView, meta: { title: '概览',     icon: 'Odometer' } },
+      { path: 'dashboard',   name: 'AgentDashboard',  component: lazy(() => import('@/views/agent/Dashboard.vue')), meta: { title: '概览',     icon: 'Odometer' } },
       { path: 'register',    name: 'AgentRegister',   component: lazy(() => import('@/views/agent/Register.vue')), meta: { title: '注册代理', icon: 'Plus', public: true } },
-      { path: 'cards',       name: 'AgentCards',      component: PlaceholderView, meta: { title: '购卡',     icon: 'Key' } },
-      { path: 'orders',      name: 'AgentOrders',     component: PlaceholderView, meta: { title: '我的订单',  icon: 'List' } },
-      { path: 'balance',     name: 'AgentBalance',    component: PlaceholderView, meta: { title: '余额/提现', icon: 'Wallet' } },
-      { path: 'commission',  name: 'AgentCommission', component: PlaceholderView, meta: { title: '佣金记录',  icon: 'GoldMedal' } },
+      { path: 'cards',       name: 'AgentCards',      component: lazy(() => import('@/views/agent/Cards.vue')), meta: { title: '购卡',     icon: 'Key' } },
+      { path: 'orders',      name: 'AgentOrders',     component: lazy(() => import('@/views/agent/Orders.vue')), meta: { title: '我的订单',  icon: 'List' } },
+      { path: 'balance',     name: 'AgentBalance',    component: lazy(() => import('@/views/agent/Balance.vue')), meta: { title: '余额/提现', icon: 'Wallet' } },
+      { path: 'commission',  name: 'AgentCommission', component: lazy(() => import('@/views/agent/Commission.vue')), meta: { title: '佣金记录',  icon: 'GoldMedal' } },
       { path: 'notices',     name: 'AgentNotices',    component: PlaceholderView, meta: { title: '消息通知',  icon: 'Bell' } },
       { path: 'profile',     name: 'AgentProfile',    component: PlaceholderView, meta: { title: '账号设置',  icon: 'Setting' } }
     ]

@@ -16,13 +16,29 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import BasicLayout from './BasicLayout.vue'
+import { agentMeApi } from '@/api/agent'
 
 const balance = ref(0)
+const route = useRoute()
 
-onMounted(() => {
-  // TODO: 待对接 /agent/auth/me 接口获取余额
-  // 当前使用占位（铁律 04：不编造数据）
+const loadBalance = async () => {
+  try {
+    const data = await agentMeApi()
+    if (data && typeof data.balance === 'number') {
+      balance.value = data.balance
+    }
+  } catch {
+    // 铁律 06 待核实：后端 /agent/auth/me 当前可能正常返回（复用 CurrentUser handler）
+  }
+}
+
+// 路由切换到关键页面后刷新余额（购卡/提现后实时反映）
+watch(() => route.path, () => {
+  loadBalance()
 })
+
+onMounted(loadBalance)
 </script>
