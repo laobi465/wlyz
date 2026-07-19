@@ -164,6 +164,14 @@
 - [待核实] 后端 `/admin/dashboard` `/tenant/dashboard` 及 Profile 相关接口当前为 501 占位，待 v0.3.0 实现 - v0.3.0
 - [待核实] 后端 `/{role}/auth/me` 仅返回基本字段，Profile 中 email/phone/real_name/totp_enabled 暂为空，待 v0.3.0 扩展 - v0.3.0
 
+#### 全部剩余 PlaceholderView 替换为真实页面（响应式 H5 完整覆盖） ✅ v0.2.7 已完成
+- [x] [已完成] Admin 7 页：Tenants/Packages/Agents/Notices/PayConfig/Logs/Security - v0.2.7
+- [x] [已完成] Tenant 8 页：Devices/Orders/CloudVars/Versions/Agents/InviteCodes/PayConfig/Notices - v0.2.7
+- [x] [已完成] Agent 1 页：Notices（含 agent.ts 扩展 listAgentNoticesApi/readAgentNoticeApi） - v0.2.7
+- [x] [已完成] 路由 16 个 PlaceholderView 全部替换为懒加载真实组件 + 移除 PlaceholderView 导入 - v0.2.7
+- [里程碑] PlaceholderView 占位阶段彻底结束，前端三角色所有路由全部由真实响应式 H5 页面承载 - v0.2.7
+- [待核实] 后端 admin/tenant/agent 业务接口（dashboard/profile/CRUD 等）当前为 501，待 v0.3.0 实现 - v0.3.0
+
 #### 三级公告体系
 - [ ] [待开始] 统一公告表 notice 读写 - v0.3.0
 - [ ] [待开始] notice_target 精准投递 - v0.3.0
@@ -355,6 +363,7 @@
 | v0.2.4 | 2026-07-19 | ✅ 已完成（前端响应式 H5 全栈：三角色 + 官网 + H5） |
 | v0.2.5 | 2026-07-19 | ✅ 已完成（代理核心页面：购卡/订单/佣金/提现，响应式 H5） |
 | v0.2.6 | 2026-07-19 | ✅ 已完成（三角色 Profile + 双 Dashboard，响应式 H5） |
+| v0.2.7 | 2026-07-19 | ✅ 已完成（全部剩余 16 个 PlaceholderView 替换为真实页面，响应式 H5 完整覆盖） |
 | v0.3.0 | 待定 | [待开始] 二期增值 |
 | v0.4.0 | 待定 | [待开始] 三期商业化 |
 
@@ -384,6 +393,6 @@
 
 ---
 
-**文档版本**：0.2.6  
+**文档版本**：0.2.7  
 **最后更新**：2026-07-19  
 **维护者**：KeyAuth SaaS Team

@@ -11,9 +11,6 @@ import TenantLayout from '@/layouts/TenantLayout.vue'
 import AgentLayout from '@/layouts/AgentLayout.vue'
 import H5Layout from '@/layouts/H5Layout.vue'
 
-// 占位组件
-import PlaceholderView from '@/components/PlaceholderView.vue'
-
 // 懒加载辅助
 const lazy = (loader: () => Promise<any>) => loader
 
@@ -63,15 +60,15 @@ const routes: RouteRecordRaw[] = [
     meta: { role: 'admin', requiresAuth: true },
     children: [
       { path: 'dashboard',   name: 'AdminDashboard',  component: lazy(() => import('@/views/admin/Dashboard.vue')), meta: { title: '概览',     icon: 'Odometer' } },
-      { path: 'tenants',     name: 'AdminTenants',    component: PlaceholderView, meta: { title: '开发者管理', icon: 'User' } },
-      { path: 'packages',    name: 'AdminPackages',   component: PlaceholderView, meta: { title: '套餐管理',  icon: 'Box' } },
-      { path: 'agents',      name: 'AdminAgents',     component: PlaceholderView, meta: { title: '代理管理',  icon: 'UserFilled' } },
-      { path: 'notices',     name: 'AdminNotices',    component: PlaceholderView, meta: { title: '平台公告',  icon: 'Bell' } },
-      { path: 'pay-config',  name: 'AdminPayConfig',  component: PlaceholderView, meta: { title: '支付配置',  icon: 'Money' } },
+      { path: 'tenants',     name: 'AdminTenants',    component: lazy(() => import('@/views/admin/Tenants.vue')),    meta: { title: '开发者管理', icon: 'User' } },
+      { path: 'packages',    name: 'AdminPackages',   component: lazy(() => import('@/views/admin/Packages.vue')),   meta: { title: '套餐管理',  icon: 'Box' } },
+      { path: 'agents',      name: 'AdminAgents',     component: lazy(() => import('@/views/admin/Agents.vue')),     meta: { title: '代理管理',  icon: 'UserFilled' } },
+      { path: 'notices',     name: 'AdminNotices',    component: lazy(() => import('@/views/admin/Notices.vue')),    meta: { title: '平台公告',  icon: 'Bell' } },
+      { path: 'pay-config',  name: 'AdminPayConfig',  component: lazy(() => import('@/views/admin/PayConfig.vue')),  meta: { title: '支付配置',  icon: 'Money' } },
       { path: 'settlements', name: 'AdminSettlements',component: lazy(() => import('@/views/admin/Settlements.vue')), meta: { title: '结算管理', icon: 'Wallet' } },
       { path: 'sys-config',  name: 'AdminSysConfig',  component: lazy(() => import('@/views/admin/SysConfig.vue')), meta: { title: '系统配置', icon: 'Setting' } },
-      { path: 'logs',        name: 'AdminLogs',       component: PlaceholderView, meta: { title: '日志审计',  icon: 'Document' } },
-      { path: 'security',    name: 'AdminSecurity',   component: PlaceholderView, meta: { title: '安全防护',  icon: 'Lock' } },
+      { path: 'logs',        name: 'AdminLogs',       component: lazy(() => import('@/views/admin/Logs.vue')),       meta: { title: '日志审计',  icon: 'Document' } },
+      { path: 'security',    name: 'AdminSecurity',   component: lazy(() => import('@/views/admin/Security.vue')),   meta: { title: '安全防护',  icon: 'Lock' } },
       { path: 'profile',     name: 'AdminProfile',    component: lazy(() => import('@/views/admin/Profile.vue')), meta: { title: '账号设置',  icon: 'Setting' } }
     ]
   },
@@ -87,14 +84,14 @@ const routes: RouteRecordRaw[] = [
       { path: 'apps',          name: 'TenantApps',        component: lazy(() => import('@/views/tenant/Apps.vue')), meta: { title: '应用管理', icon: 'Cellphone' } },
       { path: 'card-types',    name: 'TenantCardTypes',   component: lazy(() => import('@/views/tenant/CardTypes.vue')), meta: { title: '卡类管理', icon: 'Tickets' } },
       { path: 'cards',         name: 'TenantCards',       component: lazy(() => import('@/views/tenant/Cards.vue')), meta: { title: '卡密管理', icon: 'Key' } },
-      { path: 'devices',       name: 'TenantDevices',     component: PlaceholderView, meta: { title: '设备管理',  icon: 'Monitor' } },
-      { path: 'orders',        name: 'TenantOrders',      component: PlaceholderView, meta: { title: '订单管理',  icon: 'List' } },
-      { path: 'cloud-vars',    name: 'TenantCloudVars',   component: PlaceholderView, meta: { title: '云变量',    icon: 'Coin' } },
-      { path: 'versions',      name: 'TenantVersions',    component: PlaceholderView, meta: { title: '版本管理',  icon: 'Upload' } },
-      { path: 'agents',        name: 'TenantAgents',      component: PlaceholderView, meta: { title: '代理管理',  icon: 'UserFilled' } },
-      { path: 'invite-codes',  name: 'TenantInviteCodes', component: PlaceholderView, meta: { title: '邀请码',    icon: 'Promotion' } },
-      { path: 'pay-config',    name: 'TenantPayConfig',   component: PlaceholderView, meta: { title: '支付配置',  icon: 'Money' } },
-      { path: 'notices',       name: 'TenantNotices',     component: PlaceholderView, meta: { title: '我的公告',  icon: 'Bell' } },
+      { path: 'devices',       name: 'TenantDevices',     component: lazy(() => import('@/views/tenant/Devices.vue')),     meta: { title: '设备管理',  icon: 'Monitor' } },
+      { path: 'orders',        name: 'TenantOrders',      component: lazy(() => import('@/views/tenant/Orders.vue')),      meta: { title: '订单管理',  icon: 'List' } },
+      { path: 'cloud-vars',    name: 'TenantCloudVars',   component: lazy(() => import('@/views/tenant/CloudVars.vue')),   meta: { title: '云变量',    icon: 'Coin' } },
+      { path: 'versions',      name: 'TenantVersions',    component: lazy(() => import('@/views/tenant/Versions.vue')),    meta: { title: '版本管理',  icon: 'Upload' } },
+      { path: 'agents',        name: 'TenantAgents',      component: lazy(() => import('@/views/tenant/Agents.vue')),      meta: { title: '代理管理',  icon: 'UserFilled' } },
+      { path: 'invite-codes',  name: 'TenantInviteCodes', component: lazy(() => import('@/views/tenant/InviteCodes.vue')), meta: { title: '邀请码',    icon: 'Promotion' } },
+      { path: 'pay-config',    name: 'TenantPayConfig',   component: lazy(() => import('@/views/tenant/PayConfig.vue')),   meta: { title: '支付配置',  icon: 'Money' } },
+      { path: 'notices',       name: 'TenantNotices',     component: lazy(() => import('@/views/tenant/Notices.vue')),     meta: { title: '我的公告',  icon: 'Bell' } },
       { path: 'profile',       name: 'TenantProfile',     component: lazy(() => import('@/views/tenant/Profile.vue')), meta: { title: '账号设置',  icon: 'Setting' } }
     ]
   },
@@ -112,7 +109,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'orders',      name: 'AgentOrders',     component: lazy(() => import('@/views/agent/Orders.vue')), meta: { title: '我的订单',  icon: 'List' } },
       { path: 'balance',     name: 'AgentBalance',    component: lazy(() => import('@/views/agent/Balance.vue')), meta: { title: '余额/提现', icon: 'Wallet' } },
       { path: 'commission',  name: 'AgentCommission', component: lazy(() => import('@/views/agent/Commission.vue')), meta: { title: '佣金记录',  icon: 'GoldMedal' } },
-      { path: 'notices',     name: 'AgentNotices',    component: PlaceholderView, meta: { title: '消息通知',  icon: 'Bell' } },
+      { path: 'notices',     name: 'AgentNotices',    component: lazy(() => import('@/views/agent/Notices.vue')), meta: { title: '消息通知',  icon: 'Bell' } },
       { path: 'profile',     name: 'AgentProfile',    component: lazy(() => import('@/views/agent/Profile.vue')), meta: { title: '账号设置',  icon: 'Setting' } }
     ]
   },

@@ -188,3 +188,27 @@ export const agentWithdrawApi = (data: {
 }) => {
   return request.post<{ id: number; status: string; amount: number }>('/agent/withdraw', data)
 }
+
+// ============== 消息通知 ==============
+
+export interface AgentNotice {
+  id: number
+  type: 'platform' | 'tenant' | 'agent'
+  title: string
+  content: string
+  pinned: boolean
+  publish_at: string
+  expire_at: string | null
+  read: boolean
+  created_at: string
+}
+
+/** 代理消息通知列表（GET /agent/notices）—— 待核实 v0.3.0 */
+export const listAgentNoticesApi = (params: { page?: number; page_size?: number; type?: string; unread_only?: boolean }) => {
+  return request.get<{ list: AgentNotice[]; total: number }>('/agent/notices', params)
+}
+
+/** 标记通知为已读（POST /agent/notices/:id/read）—— 待核实 v0.3.0 */
+export const readAgentNoticeApi = (id: number) => {
+  return request.post(`/agent/notices/${id}/read`, {})
+}
