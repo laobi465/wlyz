@@ -438,3 +438,25 @@ type LogOperation struct {
 }
 
 func (LogOperation) TableName() string { return "log_operation" }
+
+// ============== 平台结算 ==============
+
+// PlatformSettlement 平台抽成结算记录
+// 每笔走平台总支付的订单在支付成功后写入一条记录，用于后续开发者结算
+type PlatformSettlement struct {
+	BaseModel
+	TenantID          uint64     `gorm:"index:idx_tenant_status;not null" json:"tenant_id"`
+	OrderID           uint64     `gorm:"uniqueIndex:uk_order;not null" json:"order_id"`
+	OrderNo           string     `gorm:"size:64;not null" json:"order_no"`
+	GrossAmount       float64    `gorm:"type:decimal(10,2);not null" json:"gross_amount"`            // 订单总额
+	CommissionRate    float64    `gorm:"type:decimal(5,2);not null" json:"commission_rate"`          // 抽成比例 %
+	CommissionAmount  float64    `gorm:"type:decimal(10,2);not null" json:"commission_amount"`       // 平台抽成
+	NetAmount         float64    `gorm:"type:decimal(10,2);not null" json:"net_amount"`              // 开发者应得
+	Status            string     `gorm:"size:32;index:idx_tenant_status;not null;default:pending" json:"status"` // pending/settled/rejected
+	SettledAt         *time.Time `json:"settled_at"`
+	SettleBatchNo     string     `gorm:"size:64" json:"settle_batch_no"`
+	SettleMethod      string     `gorm:"size:32" json:"settle_method"` // manual/alipay/wechat/bank
+	SettleRemark      string     `gorm:"size:255" json:"settle_remark"`
+}
+
+func (PlatformSettlement) TableName() string { return "platform_settlement" }

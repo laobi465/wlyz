@@ -8,6 +8,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
+	"crypto/md5"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha512"
@@ -18,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"golang.org/x/crypto/bcrypt"
@@ -204,6 +206,51 @@ func SHA512Hex(data string) string {
 func SHA512Checksum8(data string) string {
 	h := sha512.Sum512([]byte(data))
 	return hex.EncodeToString(h[:])[:8]
+}
+
+// ============== MD5 / 彩虹易支付签名 ==============
+
+// MD5Hex 返回 MD5 十六进制（32 位小写）
+// 用于彩虹易支付协议签名
+func MD5Hex(data string) string {
+	h := md5.Sum([]byte(data))
+	return hex.EncodeToString(h[:])
+}
+
+// SignEpayParams 彩虹易支付签名
+// 规则：
+//  1. 参与签名的参数（排除 sign、sign_type、空值）
+//  2. 按 key ASCII 升序排序
+//  3. 拼接为 key1=value1&key2=value2&...
+//  4. 末尾直接追加商户密钥（不加 key=）
+//  5. MD5 取 32 位小写 hex
+func SignEpayParams(params map[string]string, secret string) string {
+	keys := make([]string, 0, len(params))
+	for k, v := range params {
+		if k == "sign" || k == "sign_type" || v == "" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var b strings.Builder
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteByte('&')
+		}
+		b.WriteString(k)
+		b.WriteByte('=')
+		b.WriteString(params[k])
+	}
+	b.WriteString(secret) // 末尾追加商户密钥（不加 key=）
+	return MD5Hex(b.String())
+}
+
+// VerifyEpaySign 校验彩虹易支付签名
+func VerifyEpaySign(params map[string]string, secret, sign string) bool {
+	expected := SignEpayParams(params, secret)
+	return hmac.Equal([]byte(expected), []byte(sign))
 }
 
 // ============== 卡密生成器 ==============

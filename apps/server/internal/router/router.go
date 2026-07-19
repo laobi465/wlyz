@@ -80,6 +80,11 @@ func Register(container *config.Container) *gin.Engine {
 		adminAuth.PUT("/config/:key", handler.AdminUpdateConfig(deps))
 		adminAuth.GET("/notices", handler.AdminListNotices(deps))
 		adminAuth.POST("/notices", handler.AdminCreateNotice(deps))
+
+		// 支付结算管理（v0.2.3）
+		adminAuth.GET("/settlements", handler.AdminListSettlements(deps))
+		adminAuth.POST("/settlements/:id/settle", handler.AdminSettleOrder(deps))
+		adminAuth.POST("/pay/test", handler.AdminTestPayConfig(deps))
 	}
 
 	// ----- 开发者控制台 API（JWT 鉴权 + 多租户隔离） -----
@@ -151,10 +156,19 @@ func Register(container *config.Container) *gin.Engine {
 	// ----- 支付回调（无鉴权，靠签名校验） -----
 	payGroup := v1.Group("/pay")
 	{
+		// 终端用户下单（无鉴权，任何人可下单）
+		payGroup.POST("/order", handler.CreatePayOrder(deps))
+		// 终端用户查询订单
+		payGroup.GET("/order/:order_no", handler.GetPayOrder(deps))
+		// 易支付异步回调
 		payGroup.POST("/notify/epay", handler.EpayNotify(deps))
+		// 易支付同步跳转（用户浏览器 302）
 		payGroup.GET("/return/epay", handler.EpayReturn(deps))
+		// 开发者自有易支付回调（v0.3.0）
 		payGroup.POST("/notify/tenant/:tenant_id", handler.EpayTenantNotify(deps))
 	}
+
+	// ----- 超管：支付结算管理路由已注册在上方 adminAuth 组 -----
 
 	return r
 }

@@ -183,26 +183,4 @@ func AgentWithdraw(deps *Deps) gin.HandlerFunc {
 }
 
 // ============== 支付回调 ==============
-
-// EpayNotify 平台总支付回调
-func EpayNotify(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// TODO(v0.2.0): 验签 + 处理订单 + 自动发卡
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.2.0 交付")
-	}
-}
-
-// EpayReturn 平台总支付同步跳转
-func EpayReturn(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Redirect(302, "/pay/result")
-	}
-}
-
-// EpayTenantNotify 开发者自有易支付回调（按租户路由）
-func EpayTenantNotify(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// TODO(v0.3.0): 按租户隔离回调路由
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.3.0 交付")
-	}
-}
+// EpayNotify / EpayReturn / EpayTenantNotify 已迁移至 pay.go（v0.2.3）

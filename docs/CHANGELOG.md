@@ -9,6 +9,78 @@
 
 ---
 
+## [0.2.3] - 2026-07-19
+
+### [新增] 平台总支付（彩虹易支付）下单/回调/自动发卡/抽成结算（P0 核心闭环）
+
+#### 彩虹易支付工具包 `pkg/epay/epay.go`（新建）
+- [新增] `Config`：易支付配置（GatewayURL/PID/Secret/SignType）
+- [新增] `OrderParams`：下单参数（OutTradeNo/Name/Money/PayType/NotifyURL/ReturnURL/ClientIP）
+- [新增] `BuildSubmitURL`：构造 GET 跳转 URL（submit.php，前端直接 location.href）
+- [新增] `NotifyParams` + `ParseNotify`：解析异步/同步回调参数
+- [新增] `VerifyNotify`：校验回调签名
+- [新增] `IsSuccess`：判断回调是否支付成功（TRADE_SUCCESS）
+
+#### 加密工具扩展 `pkg/crypto/crypto.go`
+- [新增] `MD5Hex`：MD5 十六进制（32 位小写）
+- [新增] `SignEpayParams`：彩虹易支付签名（参数排序 + 拼接 + 追加密钥 + MD5）
+- [新增] `VerifyEpaySign`：校验彩虹易支付签名（常量时间比较防时序攻击）
+
+#### 支付 Handler `internal/handler/pay.go`（新建）
+- [新增] `CreatePayOrder`：终端用户下单（校验应用/卡类/开发者状态 → 创建 AppOrder pending → 构造易支付跳转 URL → 返回 pay_url）
+- [新增] `GetPayOrder`：查询订单状态（含超时自动关单逻辑）
+- [新增] `EpayNotify`：异步回调（合并 GET+POST 参数 → 验签 → Redis SETNX 防重入 → 校验金额 → 事务内自动发卡 + 写抽成记录 → 返回 "success"）
+- [新增] `EpayReturn`：同步跳转（302 重定向到前端结果页 `/pay/result?order_no=xxx`）
+- [新增] `EpayTenantNotify`：开发者自有易支付回调占位（v0.3.0 实现）
+- [新增] `AdminListSettlements`：超管查询结算记录列表（分页 + 按 tenant_id/status 筛选）
+- [新增] `AdminSettleOrder`：超管手动标记订单已结算（生成结算批次号 STL+日期+ID）
+- [新增] `AdminTestPayConfig`：测试平台易支付配置（校验配置完整性 + 解密是否成功）
+
+#### 平台抽成结算记录表 `platform_settlement`（新增）
+- [新增] 字段：tenant_id / order_id / order_no / gross_amount / commission_rate / commission_amount / net_amount / status / settled_at / settle_batch_no / settle_method / settle_remark
+- [新增] 索引：uk_order（订单 ID 唯一）/ idx_tenant_status（租户+状态联合索引）/ idx_order_no
+
+#### 数据库迁移
+- [新增] `migrations/005_pay_settlement.up.sql`：
+  - 创建 `platform_settlement` 表
+  - 修正 `pay.platform.notify_path` 默认值（`/api/v1/pay/platform/notify` → `/api/v1/pay/notify/epay`）以对齐实际路由
+  - 修正 `pay.platform.return_path` 默认值（`/pay/return` → `/api/v1/pay/return/epay`）
+  - 新增 6 项配置：sign_type / return_front_url / order_name_prefix / callback_retry_max / settlement.min_amount / settlement.auto_enabled
+- [新增] `migrations/005_pay_settlement.down.sql`：回滚脚本
+
+#### 路由（新增端点）
+- [新增] `POST /api/v1/pay/order` 终端用户下单
+- [新增] `GET /api/v1/pay/order/:order_no` 查询订单状态
+- [新增] `GET /api/v1/admin/settlements` 结算记录列表
+- [新增] `POST /api/v1/admin/settlements/:id/settle` 手动结算
+- [新增] `POST /api/v1/admin/pay/test` 测试支付配置
+
+#### 安全特性
+- [安全] 异步回调强制验签（MD5 + 常量时间比较防时序攻击）
+- [安全] 回调金额校验（防止伪造回调）
+- [安全] Redis SETNX 防重入（同一订单号 60 秒内只处理一次，处理失败释放锁以便重试）
+- [安全] 订单状态机校验（仅 pending → paid，已 paid 直接返回成功实现幂等）
+- [安全] 商户密钥 AES-256-GCM 加密入库，回调时解密
+- [安全] 下单时校验开发者账号状态（active）+ 套餐过期时间
+- [安全] 自动发卡事务原子性（订单更新 + 卡密生成 + 抽成记录同时成功或同时失败）
+
+#### 业务特性
+- [新增] 抽成计算：优先取套餐 `platform_commission_rate`，为 0 时回退到 `pay.platform.commission_default`（默认 5%）
+- [新增] 自动发卡：支付成功后系统自动生成 N 张卡密（CreatorType=auto，OrderID 关联订单）
+- [新增] 订单超时关闭：查询订单时若 pending 状态超过 `pay.order_expire_seconds`（默认 1800 秒）自动关闭
+- [新增] 同步跳转：支付完成后浏览器 302 跳转到前端 `/pay/result?order_no=xxx`
+- [新增] 支持三种支付方式：alipay / wxpay / qqpay
+- [新增] 订单号用雪花算法生成（ORD 前缀）
+- [新增] 批次号格式：P+YYYYMMDD+6位订单ID余数（区别于开发者手动生成的 B 前缀）
+
+#### 待核实项（铁律 06）
+- [待核实] `resolveNotifyURL` 优先用请求头 Host，待核实生产环境是否应单独配置 `notify_base_url`
+- [待核实] 自动发卡时 `CreatedBy` 字段填 `order.TenantID`，待核实是否应改为 0（系统）或新增 system_user_id
+- [待核实] 订单超时关闭仅在查询时触发，待核实是否应增加定时任务主动扫描
+- [待核实] 彩虹易支付部分实现支持 `mapi.php`（API 模式，无页面跳转），当前仅实现 `submit.php`（GET 跳转）
+
+---
+
 ## [0.2.2] - 2026-07-19
 
 ### [新增] 应用管理 + 卡密管理 + 客户端验证 API（P0 核心闭环）
