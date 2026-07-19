@@ -9,6 +9,102 @@
 
 ---
 
+## [0.2.2] - 2026-07-19
+
+### [新增] 应用管理 + 卡密管理 + 客户端验证 API（P0 核心闭环）
+
+#### 应用密钥生成器 `pkg/crypto/crypto.go`
+- [新增] `GenerateAppKey`：生成 AppKey（ak_ 前缀 + 32 位 hex）
+- [新增] `GenerateAppSecret`：生成 AppSecret（as_ 前缀 + 64 位 hex）
+- [新增] `GenerateSignSecret`：生成 HMAC 签名密钥（ss_ 前缀 + 64 位 hex）
+- [新增] `GenerateHWID`：设备指纹生成（SHA-512(CPU+主板+MAC+磁盘)）
+
+#### 应用管理 Handler `internal/handler/app.go`
+- [新增] `TenantCreateApp`：创建应用（含套餐配额校验 + 密钥生成 + AES 加密入库）
+- [新增] `TenantListApps`：应用列表（分页 + 关键词搜索）
+- [新增] `TenantGetApp`：应用详情
+- [新增] `TenantUpdateApp`：更新应用
+- [新增] `TenantResetAppKey`：重置 AppSecret/SignSecret（支持密钥轮换，旧 SignSecret 保留 7 天）
+- [新增] `TenantDeleteApp`：软删除应用（状态置 disabled）
+
+#### 卡类管理 Handler `internal/handler/card.go`
+- [新增] `TenantCreateCardType`：创建卡类（5 种类型：duration/count/permanent/trial/feature）
+- [新增] `TenantListCardTypes`：卡类列表
+- [新增] `TenantUpdateCardType`：更新卡类
+
+#### 卡密管理 Handler `internal/handler/card.go`
+- [新增] `TenantGenerateCards`：批量生成卡密（事务 + 套餐配额校验 + 批次号）
+- [新增] `TenantListCards`：卡密列表（多条件筛选 + 分页）
+- [新增] `TenantGetCard`：卡密详情
+- [新增] `TenantBanCard`：封禁卡密（含状态机校验）
+- [新增] `TenantUnbanCard`：解封卡密（根据激活状态恢复到 unused/active/expired）
+- [新增] `TenantDeleteCard`：删除卡密（仅 unused 状态可删）
+
+#### 心跳保活服务 `internal/heartbeat/heartbeat.go`
+- [新增] `Record`：记录心跳（Redis Sorted Set + Hash 双写）
+- [新增] `IsOnline`：检查设备在线状态
+- [新增] `Remove`：移除设备心跳（解绑/封禁时调用）
+- [新增] `CountOnline`：统计应用在线设备数
+- [新增] `ListOnline`：列出在线设备 ID
+- [新增] `GetLastHeartbeatAt`：获取最后心跳时间
+
+#### 客户端验证 API `internal/handler/client.go`（全部实现）
+- [新增] `ClientLogin`：登录（卡密校验 + 设备自动绑定 + 激活卡密 + 心跳初始化）
+- [新增] `ClientVerify`：验证（不增加使用次数，校验设备绑定 + 离线宽限期）
+- [新增] `ClientHeartbeat`：心跳（更新 DB + Redis Sorted Set）
+- [新增] `ClientBind`：手动绑定设备（多机场景）
+- [新增] `ClientUnbind`：解绑设备（扣时 + 移除在线状态）
+- [新增] `ClientLogout`：退出登录（仅记录日志）
+- [新增] `ClientGetVar`：获取云变量（需校验卡密有效性）
+- [新增] `ClientNotice`：获取应用公告
+- [新增] `ClientVersion`：检查版本更新
+
+#### 路由（新增端点）
+- [新增] `GET /api/v1/tenant/apps/:id` 应用详情
+- [新增] `DELETE /api/v1/tenant/apps/:id` 软删除应用
+- [新增] `POST /api/v1/tenant/apps/:id/reset_key` 重置应用密钥
+- [新增] `GET/POST /api/v1/tenant/card_types` 卡类列表/创建
+- [新增] `PUT /api/v1/tenant/card_types/:id` 更新卡类
+- [新增] `GET /api/v1/tenant/cards/:id` 卡密详情
+- [新增] `POST /api/v1/tenant/cards/:id/ban` 封禁卡密
+- [新增] `POST /api/v1/tenant/cards/:id/unban` 解封卡密
+- [新增] `DELETE /api/v1/tenant/cards/:id` 删除卡密
+
+#### 数据库迁移
+- [新增] `migrations/004_app_card_config.up.sql`：11 项应用/卡密/验证日志配置
+  - 应用默认参数：max_devices/heartbeat_interval/heartbeat_timeout/offline_grace/unbind_deduct_seconds
+  - 卡密生成：max_batch/charset/segment_length/segment_count
+  - 验证日志：async_enabled/sample_rate
+- [新增] `migrations/004_app_card_config.down.sql`：回滚脚本
+
+#### 安全特性
+- [安全] 创建应用时校验开发者账号状态 + 套餐过期时间
+- [安全] 创建应用/卡密时校验套餐配额（MaxApps/MaxCards）
+- [安全] AppSecret/SignSecret 使用 AES-256-GCM 加密入库
+- [安全] 重置 SignSecret 时旧密钥迁移到 SignSecretPrev 保留 7 天
+- [安全] 卡密按 SHA-512 hash 查询（防穷举）
+- [安全] 删除应用为软删除（保留审计轨迹）
+- [安全] 删除卡密仅 unused 状态可删（防止误删已激活卡密）
+- [安全] 卡密封禁/解封有严格状态机（unused/active 可封禁，仅 banned 可解封）
+- [安全] 解绑设备扣时（防滥用）
+- [安全] 客户端 verify 校验离线宽限期（防断网绕过）
+
+#### 业务特性
+- [新增] 卡密 5 种类型支持：duration/count/permanent/trial/feature
+- [新增] 一机一卡密绑定（MaxDevices=1）+ 多机绑定（MaxDevices>1）
+- [新增] 设备指纹：SHA-512(CPU+主板+MAC+磁盘)
+- [新增] 离线宽限期判定（应用级配置）
+- [新增] 解绑扣时机制（应用级配置）
+- [新增] 卡密批次号管理（B + 日期 + 用户 ID）
+- [新增] 卡密明文仅生成时返回一次
+
+#### 待核实项（铁律 06）
+- [待核实] `loadCardByCardKey` 优先按 hash 查询，但 SDK 默认传明文，建议确认客户端是否预计算 hash
+- [待核实] `ClientVersion` 版本号比较为字符串比较，建议改用 semver 库
+- [待核实] `writeVerifyLog` 当前同步写入，v0.3.0 应改为异步队列
+
+---
+
 ## [0.2.1] - 2026-07-19
 
 ### [新增] 认证模块（P0 核心闭环）

@@ -257,6 +257,47 @@ func RandomHex(n int) (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
+// ============== 应用密钥生成器 ==============
+
+// GenerateAppKey 生成 AppKey（ak_ 前缀 + 32 位随机十六进制）
+// 用于客户端 SDK 标识应用身份（非机密，可暴露在客户端代码中）
+func GenerateAppKey() (string, error) {
+	h, err := RandomHex(16) // 16 字节 = 32 位 hex
+	if err != nil {
+		return "", err
+	}
+	return "ak_" + h, nil
+}
+
+// GenerateAppSecret 生成 AppSecret（as_ 前缀 + 64 位随机十六进制）
+// 用于服务端到服务端通信（机密，仅开发者后台可见，AES 加密入库）
+func GenerateAppSecret() (string, error) {
+	h, err := RandomHex(32) // 32 字节 = 64 位 hex
+	if err != nil {
+		return "", err
+	}
+	return "as_" + h, nil
+}
+
+// GenerateSignSecret 生成 HMAC 签名密钥（ss_ 前缀 + 64 位随机十六进制）
+// 用于客户端 SDK 签名请求（机密，AES 加密入库）
+// 注：客户端必须持有此密钥才能签名，无法真正保密，但可提高逆向成本
+func GenerateSignSecret() (string, error) {
+	h, err := RandomHex(32)
+	if err != nil {
+		return "", err
+	}
+	return "ss_" + h, nil
+}
+
+// GenerateHWID 生成设备指纹
+// 规则：SHA-512(CPU信息 + 主板序列号 + MAC地址 + 磁盘序列号)
+// 输入为原始硬件信息拼接字符串，输出 128 位十六进制哈希
+func GenerateHWID(cpuInfo, motherboardSN, macAddress, diskSN string) string {
+	raw := cpuInfo + "|" + motherboardSN + "|" + macAddress + "|" + diskSN
+	return SHA512Hex(raw)
+}
+
 // ============== RSA 密钥文件加载 ==============
 
 func loadPrivateKey(path string) (*rsa.PrivateKey, error) {

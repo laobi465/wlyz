@@ -124,44 +124,11 @@ func TenantDashboard(deps *Deps) gin.HandlerFunc {
 	}
 }
 
-// TenantListApps 应用列表（D-02）
-func TenantListApps(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// TODO(v0.2.0): 按 tenant_id 查询
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.2.0 交付")
-	}
-}
-
-// TenantCreateApp 创建应用
-func TenantCreateApp(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// TODO(v0.2.0): 生成 AppKey/AppSecret/SignSecret
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.2.0 交付")
-	}
-}
-
-// TenantUpdateApp 更新应用
-func TenantUpdateApp(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.2.0 交付")
-	}
-}
-
-// TenantListCards 卡密列表（D-03）
-func TenantListCards(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.2.0 交付")
-	}
-}
-
-// TenantGenerateCards 批量生成卡密
-// 调用 pkg/crypto.GenerateCardKey + 批量 INSERT
-func TenantGenerateCards(deps *Deps) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// TODO(v0.2.0): 实现批量生成（参考卡密生成器）
-		middleware.Fail(c, 501, 1006, "接口待实现：v0.2.0 交付")
-	}
-}
+// TenantListApps 应用列表（D-02）—— 已迁移至 app.go
+// TenantCreateApp 创建应用 —— 已迁移至 app.go
+// TenantUpdateApp 更新应用 —— 已迁移至 app.go
+// TenantListCards 卡密列表（D-03）—— 已迁移至 card.go
+// TenantGenerateCards 批量生成卡密 —— 已迁移至 card.go
 
 // TenantListAgents 代理列表（D-08）
 func TenantListAgents(deps *Deps) gin.HandlerFunc {

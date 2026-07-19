@@ -88,11 +88,29 @@ func Register(container *config.Container) *gin.Engine {
 	tenantAuth.Use(middleware.TenantScope(container.DB))
 	{
 		tenantAuth.GET("/dashboard", handler.TenantDashboard(deps))
+
+		// 应用管理
 		tenantAuth.GET("/apps", handler.TenantListApps(deps))
 		tenantAuth.POST("/apps", handler.TenantCreateApp(deps))
+		tenantAuth.GET("/apps/:id", handler.TenantGetApp(deps))
 		tenantAuth.PUT("/apps/:id", handler.TenantUpdateApp(deps))
+		tenantAuth.DELETE("/apps/:id", handler.TenantDeleteApp(deps))
+		tenantAuth.POST("/apps/:id/reset_key", handler.TenantResetAppKey(deps))
+
+		// 卡类管理
+		tenantAuth.GET("/card_types", handler.TenantListCardTypes(deps))
+		tenantAuth.POST("/card_types", handler.TenantCreateCardType(deps))
+		tenantAuth.PUT("/card_types/:id", handler.TenantUpdateCardType(deps))
+
+		// 卡密管理
 		tenantAuth.GET("/cards", handler.TenantListCards(deps))
+		tenantAuth.GET("/cards/:id", handler.TenantGetCard(deps))
 		tenantAuth.POST("/cards/generate", handler.TenantGenerateCards(deps))
+		tenantAuth.POST("/cards/:id/ban", handler.TenantBanCard(deps))
+		tenantAuth.POST("/cards/:id/unban", handler.TenantUnbanCard(deps))
+		tenantAuth.DELETE("/cards/:id", handler.TenantDeleteCard(deps))
+
+		// 代理管理
 		tenantAuth.GET("/agents", handler.TenantListAgents(deps))
 		tenantAuth.POST("/agents/invite_codes", handler.TenantGenInviteCode(deps))
 	}
