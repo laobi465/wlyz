@@ -9,21 +9,52 @@ NProgress.configure({ showSpinner: false })
 import AdminLayout from '@/layouts/AdminLayout.vue'
 import TenantLayout from '@/layouts/TenantLayout.vue'
 import AgentLayout from '@/layouts/AgentLayout.vue'
+import H5Layout from '@/layouts/H5Layout.vue'
 
-// 占位组件：所有子路由初始使用此组件
-// 实际开发时把对应路由的 component 替换为真实页面文件即可
+// 占位组件
 import PlaceholderView from '@/components/PlaceholderView.vue'
 
-// 懒加载辅助：真实登录页 + 404 + 代理注册页（独立特殊页面）
+// 懒加载辅助
 const lazy = (loader: () => Promise<any>) => loader
 
 const routes: RouteRecordRaw[] = [
+  // 官网首页
+  {
+    path: '/',
+    name: 'Landing',
+    component: lazy(() => import('@/views/landing/index.vue')),
+    meta: { title: '首页', public: true }
+  },
+
+  // 登录
   {
     path: '/login',
     name: 'Login',
     component: lazy(() => import('@/views/login/index.vue')),
     meta: { title: '登录', public: true }
   },
+
+  // 开发者注册
+  {
+    path: '/register/tenant',
+    name: 'TenantRegister',
+    component: lazy(() => import('@/views/register/TenantRegister.vue')),
+    meta: { title: '开发者注册', public: true }
+  },
+
+  // ---------- 终端用户 H5 ----------
+  {
+    path: '/h5',
+    component: H5Layout,
+    meta: { public: true },
+    children: [
+      { path: '', name: 'H5Home', component: lazy(() => import('@/views/h5/Home.vue')), meta: { title: '购卡', public: true } },
+      { path: 'pay/:orderNo', name: 'H5PayResult', component: lazy(() => import('@/views/h5/PayResult.vue')), meta: { title: '支付结果', public: true } },
+      { path: 'query', name: 'H5Query', component: lazy(() => import('@/views/h5/Query.vue')), meta: { title: '卡密查询', public: true } },
+      { path: 'card/:cardKey', name: 'H5CardDetail', component: lazy(() => import('@/views/h5/CardDetail.vue')), meta: { title: '卡密详情', public: true } }
+    ]
+  },
+
   // ---------- 平台管理员后台 ----------
   {
     path: '/admin',
@@ -37,11 +68,14 @@ const routes: RouteRecordRaw[] = [
       { path: 'agents',      name: 'AdminAgents',     component: PlaceholderView, meta: { title: '代理管理',  icon: 'UserFilled' } },
       { path: 'notices',     name: 'AdminNotices',    component: PlaceholderView, meta: { title: '平台公告',  icon: 'Bell' } },
       { path: 'pay-config',  name: 'AdminPayConfig',  component: PlaceholderView, meta: { title: '支付配置',  icon: 'Money' } },
-      { path: 'sys-config',  name: 'AdminSysConfig',  component: PlaceholderView, meta: { title: '系统配置',  icon: 'Setting' } },
+      { path: 'settlements', name: 'AdminSettlements',component: lazy(() => import('@/views/admin/Settlements.vue')), meta: { title: '结算管理', icon: 'Wallet' } },
+      { path: 'sys-config',  name: 'AdminSysConfig',  component: lazy(() => import('@/views/admin/SysConfig.vue')), meta: { title: '系统配置', icon: 'Setting' } },
       { path: 'logs',        name: 'AdminLogs',       component: PlaceholderView, meta: { title: '日志审计',  icon: 'Document' } },
-      { path: 'security',    name: 'AdminSecurity',   component: PlaceholderView, meta: { title: '安全防护',  icon: 'Lock' } }
+      { path: 'security',    name: 'AdminSecurity',   component: PlaceholderView, meta: { title: '安全防护',  icon: 'Lock' } },
+      { path: 'profile',     name: 'AdminProfile',    component: PlaceholderView, meta: { title: '账号设置',  icon: 'Setting' } }
     ]
   },
+
   // ---------- 开发者后台 ----------
   {
     path: '/tenant',
@@ -50,9 +84,9 @@ const routes: RouteRecordRaw[] = [
     meta: { role: 'tenant', requiresAuth: true },
     children: [
       { path: 'dashboard',     name: 'TenantDashboard',   component: PlaceholderView, meta: { title: '概览',     icon: 'Odometer' } },
-      { path: 'apps',          name: 'TenantApps',        component: PlaceholderView, meta: { title: '应用管理',  icon: 'Cellphone' } },
-      { path: 'card-types',    name: 'TenantCardTypes',   component: PlaceholderView, meta: { title: '卡类管理',  icon: 'Tickets' } },
-      { path: 'cards',         name: 'TenantCards',       component: PlaceholderView, meta: { title: '卡密管理',  icon: 'Key' } },
+      { path: 'apps',          name: 'TenantApps',        component: lazy(() => import('@/views/tenant/Apps.vue')), meta: { title: '应用管理', icon: 'Cellphone' } },
+      { path: 'card-types',    name: 'TenantCardTypes',   component: lazy(() => import('@/views/tenant/CardTypes.vue')), meta: { title: '卡类管理', icon: 'Tickets' } },
+      { path: 'cards',         name: 'TenantCards',       component: lazy(() => import('@/views/tenant/Cards.vue')), meta: { title: '卡密管理', icon: 'Key' } },
       { path: 'devices',       name: 'TenantDevices',     component: PlaceholderView, meta: { title: '设备管理',  icon: 'Monitor' } },
       { path: 'orders',        name: 'TenantOrders',      component: PlaceholderView, meta: { title: '订单管理',  icon: 'List' } },
       { path: 'cloud-vars',    name: 'TenantCloudVars',   component: PlaceholderView, meta: { title: '云变量',    icon: 'Coin' } },
@@ -64,6 +98,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'profile',       name: 'TenantProfile',     component: PlaceholderView, meta: { title: '账号设置',  icon: 'Setting' } }
     ]
   },
+
   // ---------- 代理后台 ----------
   {
     path: '/agent',
@@ -81,6 +116,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'profile',     name: 'AgentProfile',    component: PlaceholderView, meta: { title: '账号设置',  icon: 'Setting' } }
     ]
   },
+
   // 404
   {
     path: '/:pathMatch(.*)*',

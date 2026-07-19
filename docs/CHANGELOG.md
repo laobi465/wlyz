@@ -9,6 +9,70 @@
 
 ---
 
+## [0.2.4] - 2026-07-19
+
+### [新增] 前端响应式 H5 全栈（admin/tenant/agent/官网/终端用户 H5）
+
+#### 全局基础设施
+- [新增] `styles/variables.scss` 响应式断点 + mixin（mobile/tablet/desktop）+ 明亮配色变量
+- [新增] `styles/index.scss` 响应式工具类（hidden-mobile/visible-mobile-only/card-list）+ 移动端表格紧凑模式 + 移动端对话框/抽屉适配
+- [修复] `layouts/AdminLayout.vue` 移除违反铁律 03 的暗黑侧边栏（#001529 → #fff），改为薄包装 BasicLayout
+- [修复] `layouts/AgentLayout.vue` 移除暗黑侧边栏（#1f2937 → #fff），改为薄包装 BasicLayout
+- [重构] `layouts/TenantLayout.vue` 简化为薄包装 BasicLayout
+- [新增] `layouts/BasicLayout.vue` 通用响应式布局（桌面固定侧边栏 + 平板可折叠 + 移动端抽屉式 + 公告横幅插槽 + 顶部右侧插槽）
+
+#### API 模块化
+- [新增] `api/auth.ts` 三角色统一登录 + 注册 + refresh + logout + currentUser
+- [新增] `api/apps.ts` 应用 CRUD + 重置密钥（支持 all/app_key/app_secret/sign_secret 4 种范围）
+- [新增] `api/cards.ts` 卡类 CRUD + 卡密列表/生成/封禁/解禁/删除
+- [新增] `api/pay.ts` 终端用户下单 + 订单查询 + 超管结算列表/手动结算 + 支付配置测试
+- [重构] `api/http.ts` 请求拦截器注入 Bearer token + 响应拦截器自动 refresh token（含并发去重 + 401 重试 + refresh 失败登出）
+
+#### 状态管理
+- [重构] `stores/auth.ts` JWT 双 token（access 2h + refresh 7d）+ 自动续期定时器（提前 5 分钟）+ 持久化 + Cookie 同步 + 登出调用后端黑名单
+- [保留] `stores/sysConfig.ts` 平台配置（从 sys_config 加载，铁律 05）
+
+#### 通用组件
+- [新增] `components/PageHeader.vue` 响应式页面标题（桌面一行，移动两行）
+- [新增] `components/EmptyState.vue` 空状态
+- [新增] `components/ResponsiveTable.vue` 桌面端表格 + 移动端自动切换卡片列表 + 分页响应式
+
+#### 登录与注册
+- [重构] `views/login/index.vue` 三角色 Tab 切换 + 真实接口对接 + 2FA TOTP 二阶段验证 + 响应式
+- [新增] `views/register/TenantRegister.vue` 开发者注册页（账号/密码/邮箱/手机/公司/邀请码）+ 响应式
+
+#### 官网首页（Landing）
+- [新增] `views/landing/index.vue` 完整官网首页：顶部导航滚动效果 + Hero 区 + 9 个核心功能 + 6 个适用场景 + 3 个套餐预览 + 5 个 FAQ + CTA + 底部，全部响应式
+
+#### 终端用户 H5（移动端优先）
+- [新增] `layouts/H5Layout.vue` H5 专属布局（顶部 Logo + 底部 Tabbar 购卡/查卡，桌面访问也以移动样式呈现）
+- [新增] `views/h5/Home.vue` 购卡首页：AppKey 输入 + 卡类列表 + 数量 + 支付方式 + 跳转易支付
+- [新增] `views/h5/PayResult.vue` 支付结果页：状态图标 + 轮询订单 + 卡密列表 + 复制
+- [新增] `views/h5/Query.vue` 卡密查询页：输入 AppKey + 卡密 + 显示详情
+- [新增] `views/h5/CardDetail.vue` 卡密详情页
+
+#### 超管后台
+- [新增] `views/admin/Settlements.vue` 结算管理：列表 + 筛选 + 手动结算对话框
+- [新增] `views/admin/SysConfig.vue` 系统配置：分组标签页 + 敏感配置隐藏 + 编辑对话框（铁律 05 可视化入口）
+
+#### 开发者控制台
+- [新增] `views/tenant/Apps.vue` 应用管理：列表 + 新建/编辑 + 详情 + 重置密钥 + 删除（4 种范围）
+- [新增] `views/tenant/CardTypes.vue` 卡类管理：列表 + 新建/编辑（5 种类型：时长/次数/永久/试用/功能）
+- [新增] `views/tenant/Cards.vue` 卡密管理：列表 + 批量生成（最多 1000 张/次）+ 封禁/解禁/删除 + 生成结果展示
+
+#### 路由
+- [新增] `/` 官网首页路由
+- [新增] `/register/tenant` 开发者注册路由
+- [新增] `/h5`、`/h5/pay/:orderNo`、`/h5/query`、`/h5/card/:cardKey` 终端用户 H5 路由组
+- [新增] `/admin/settlements`、`/admin/sys-config` 超管新页面路由
+- [新增] `/tenant/apps`、`/tenant/card-types`、`/tenant/cards` 开发者新页面路由
+
+#### 编译验证
+- [验证] `npx vue-tsc --noEmit` 通过（0 错误）
+- [验证] `npx vite build` 通过，输出 26 个 JS chunk + 6 个 CSS chunk
+
+---
+
 ## [0.2.3] - 2026-07-19
 
 ### [新增] 平台总支付（彩虹易支付）下单/回调/自动发卡/抽成结算（P0 核心闭环）

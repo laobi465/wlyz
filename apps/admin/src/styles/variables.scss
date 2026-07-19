@@ -1,27 +1,32 @@
 // 全局 SCSS 变量
 // 颜色规范：现代简约风格，禁止暗黑/毛玻璃/夸张渐变（铁律 03）
 
-// 主色调：科技蓝
+// 主色调：科技蓝（低饱和度专业色）
 $color-primary: #1677ff;
+$color-primary-light: #e6f0ff;
 $color-success: #52c41a;
 $color-warning: #faad14;
 $color-danger: #ff4d4f;
 $color-info: #909399;
 
-// 文字色
+// 文字色（深灰为主，不使用纯黑）
 $color-text-primary: #303133;
 $color-text-regular: #606266;
 $color-text-secondary: #909399;
 $color-text-placeholder: #c0c4cc;
 
-// 背景色
+// 背景色（明亮，禁暗黑）
 $color-bg-page: #f5f7fa;
 $color-bg-card: #ffffff;
 $color-bg-hover: #f5f7fa;
+$color-bg-sidebar: #ffffff;        // 侧边栏统一明亮背景（铁律 03：禁暗黑）
+$color-bg-sidebar-active: #e6f0ff; // 侧边栏选中项背景
+$color-bg-header: #ffffff;
 
-// 边框色
+// 边框色（极浅灰）
 $color-border: #dcdfe6;
 $color-border-light: #e4e7ed;
+$color-border-lighter: #ebeef5;
 
 // 平台公告横幅色（铁律 05：颜色从 sys_config 读取，此处仅为 fallback）
 $color-notice-banner-bg: #fff7e6;
@@ -39,7 +44,7 @@ $radius-sm: 4px;
 $radius-md: 8px;
 $radius-lg: 12px;
 
-// 阴影
+// 阴影（轻微，禁夸张）
 $shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08);
 $shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.12);
 
@@ -47,3 +52,19 @@ $shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.12);
 $layout-header-height: 56px;
 $layout-sidebar-width: 220px;
 $layout-sidebar-collapsed-width: 64px;
+
+// 响应式断点
+$bp-mobile: 768px;   // 手机
+$bp-tablet: 1024px;  // 平板
+$bp-desktop: 1280px; // 桌面
+
+// 响应式 mixin
+@mixin mobile {
+  @media (max-width: #{$bp-mobile - 1px}) { @content; }
+}
+@mixin tablet {
+  @media (max-width: #{$bp-tablet - 1px}) { @content; }
+}
+@mixin desktop {
+  @media (min-width: #{$bp-desktop}) { @content; }
+}

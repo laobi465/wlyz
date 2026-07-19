@@ -4,11 +4,21 @@
   box-sizing: border-box;
 }
 
+html, body, #app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
 body {
   background: $color-bg-page;
   color: $color-text-primary;
   font-size: 14px;
   line-height: 1.5;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 a {
@@ -17,37 +27,66 @@ a {
   &:hover { opacity: 0.8; }
 }
 
-// 通用卡片
+// ============== 通用卡片 ==============
 .app-card {
   background: $color-bg-card;
   border-radius: $radius-md;
   box-shadow: $shadow-card;
   padding: $spacing-lg;
+  margin-bottom: $spacing-md;
+
+  @include mobile {
+    padding: $spacing-md;
+    border-radius: $radius-md;
+    box-shadow: none;
+    border: 1px solid $color-border-lighter;
+  }
 }
 
-// 页面标题
+// ============== 页面标题 ==============
 .page-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: $spacing-lg;
+  flex-wrap: wrap;
+  gap: $spacing-sm;
 
   h2 {
     margin: 0;
     font-size: 18px;
     font-weight: 600;
+    color: $color-text-primary;
+  }
+
+  .page-header-actions {
+    display: flex;
+    gap: $spacing-sm;
+    flex-wrap: wrap;
+  }
+
+  @include mobile {
+    margin-bottom: $spacing-md;
+    h2 { font-size: 16px; }
   }
 }
 
-// 表格搜索栏
+// ============== 表格搜索栏 ==============
 .search-bar {
   display: flex;
   flex-wrap: wrap;
   gap: $spacing-sm;
   margin-bottom: $spacing-md;
+  align-items: center;
+
+  @include mobile {
+    flex-direction: column;
+    align-items: stretch;
+    .el-input, .el-select { width: 100% !important; }
+  }
 }
 
-// 平台公告横幅（铁律 05：实际颜色从 sys_config 读取，此处为默认 fallback）
+// ============== 平台公告横幅 ==============
 .platform-notice-banner {
   background: $color-notice-banner-bg;
   color: $color-notice-banner-text;
@@ -68,7 +107,52 @@ a {
   }
 }
 
-// 滚动条美化
+// ============== 响应式工具类 ==============
+.hidden-mobile {
+  @include mobile { display: none !important; }
+}
+.hidden-desktop {
+  @media (min-width: $bp-mobile) { display: none !important; }
+}
+.visible-mobile-only {
+  display: none;
+  @include mobile { display: block !important; }
+}
+
+// ============== 表格响应式 ==============
+.el-table {
+  @include mobile {
+    // 移动端表格紧凑模式
+    .el-table__cell {
+      padding: 8px 4px;
+    }
+  }
+}
+
+// 移动端卡片列表模式（待组件使用）
+.card-list {
+  display: none;
+  @include mobile {
+    display: block;
+    .card-item {
+      background: #fff;
+      border: 1px solid $color-border-lighter;
+      border-radius: $radius-md;
+      padding: $spacing-md;
+      margin-bottom: $spacing-sm;
+      .card-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 4px 0;
+        font-size: 13px;
+        .label { color: $color-text-secondary; }
+        .value { color: $color-text-primary; font-weight: 500; }
+      }
+    }
+  }
+}
+
+// ============== 滚动条美化 ==============
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -79,4 +163,28 @@ a {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: $color-text-secondary;
+}
+
+// ============== 表单响应式 ==============
+.el-form {
+  @include mobile {
+    .el-form-item__label {
+      font-size: 13px;
+    }
+  }
+}
+
+// ============== 对话框响应式 ==============
+.el-dialog {
+  @include mobile {
+    width: 92% !important;
+    margin: 4vh auto !important;
+  }
+}
+
+// ============== 抽屉响应式（移动端侧边栏用） ==============
+.el-drawer {
+  .el-drawer__body {
+    padding: 0;
+  }
 }
