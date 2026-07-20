@@ -151,7 +151,7 @@ import {
 } from '@/api/agent'
 
 const profile = ref<AgentProfile>({
-  id: 0,
+  agent_id: 0,
   username: '',
   tenant_id: 0,
   real_name: '',

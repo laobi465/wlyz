@@ -14,9 +14,9 @@
     <div class="form-card">
       <p class="section-label">头像 URL</p>
       <div class="avatar-row">
-        <el-avatar v-if="form.avatar" :src="form.avatar" :size="56" />
+        <el-avatar v-if="form.avatar_url" :src="form.avatar_url" :size="56" />
         <el-avatar v-else :size="56">{{ avatarPlaceholder }}</el-avatar>
-        <el-input v-model="form.avatar" placeholder="请输入头像 URL" clearable />
+        <el-input v-model="form.avatar_url" placeholder="请输入头像 URL" clearable />
       </div>
 
       <p class="section-label">昵称</p>
@@ -48,7 +48,7 @@ const endUserStore = useEndUserStore()
 
 const form = reactive({
   nickname: '',
-  avatar: '',
+  avatar_url: '',
   email: '',
   phone: ''
 })
@@ -63,7 +63,7 @@ const loadProfile = async () => {
   try {
     const info = await endUserMeApi()
     form.nickname = info.nickname || ''
-    form.avatar = info.avatar || ''
+    form.avatar_url = info.avatar_url || ''
     form.email = info.email || ''
     form.phone = info.phone || ''
     endUserStore.setUser(info)
@@ -86,7 +86,7 @@ const save = async () => {
   try {
     const info = await endUserUpdateProfileApi({
       nickname: form.nickname,
-      avatar: form.avatar,
+      avatar_url: form.avatar_url,
       email: form.email,
       phone: form.phone
     })
@@ -117,7 +117,7 @@ onMounted(() => {
   const u = endUserStore.user
   if (u) {
     form.nickname = u.nickname || ''
-    form.avatar = u.avatar || ''
+    form.avatar_url = u.avatar_url || ''
     form.email = u.email || ''
     form.phone = u.phone || ''
   }

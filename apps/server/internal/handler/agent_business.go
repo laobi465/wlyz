@@ -222,7 +222,8 @@ func AgentDashboard(deps *Deps) gin.HandlerFunc {
 // AgentMe GET /api/v1/agent/auth/me
 // 返回完整 AgentProfile，覆盖 auth.go 中只返回基础信息的 CurrentUser
 // 注：路由注册时需将 /agent/auth/me 由 handler.CurrentUser 改为 handler.AgentMe
-//     本文件不修改 router.go，需开发者同步调整路由注册
+//
+//	本文件不修改 router.go，需开发者同步调整路由注册
 func AgentMe(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := getTenantID(c)
@@ -574,17 +575,25 @@ func AgentGenerateCards(deps *Deps) gin.HandlerFunc {
 		batchNo := fmt.Sprintf("AB%s%06d", time.Now().Format("20060102"), agentID%1000000)
 
 		// 7. 事务：扣余额 → 生成卡密 → 写 deduct 流水 → 加回佣金 → 写 commission 流水
-	var (
-		cardKeys         []string
-		cardIDs          []uint64
-		balanceAfter     float64
-		crossCommissions []multilevel.CrossCommissionResult // v0.4.0：跨级佣金明细
-	)
+		var (
+			cardKeys         []string
+			cardIDs          []uint64
+			balanceAfter     float64
+			crossCommissions []multilevel.CrossCommissionResult // v0.4.0：跨级佣金明细
+		)
 		txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
-			// 7.1 扣代理余额（用 SQL 表达式避免并发覆盖）
-			if err := tx.Model(&model.Agent{}).Where("id = ?", agentID).
-				UpdateColumn("balance", gorm.Expr("balance - ?", costTotal)).Error; err != nil {
-				return fmt.Errorf("扣减代理余额失败: %w", err)
+			// 7.1 扣代理余额（P0 高危 8：原子扣款 + WHERE 余额守门，防 TOCTOU 并发突破负余额）
+			//   - 旧实现：先在事务外 `agent.Balance < costTotal` 校验，再 SQL 扣款，并发可双双通过校验后扣至负数
+			//   - 新实现：将余额守门下沉到 SQL WHERE，单条 UPDATE 原子完成"校验+扣款"
+			//   - RowsAffected==0 表示余额不足或代理不存在，事务回滚
+			deductRes := tx.Model(&model.Agent{}).
+				Where("id = ? AND balance >= ?", agentID, costTotal).
+				UpdateColumn("balance", gorm.Expr("balance - ?", costTotal))
+			if deductRes.Error != nil {
+				return fmt.Errorf("扣减代理余额失败: %w", deductRes.Error)
+			}
+			if deductRes.RowsAffected == 0 {
+				return fmt.Errorf("余额不足，当前余额不足以支付 %.2f", costTotal)
 			}
 			agent.Balance -= costTotal
 
@@ -636,67 +645,67 @@ func AgentGenerateCards(deps *Deps) gin.HandlerFunc {
 			}
 
 			// 7.4 实时结算佣金（加回 balance）
-		if commission > 0 {
-			if err := tx.Model(&model.Agent{}).Where("id = ?", agentID).
-				UpdateColumn("balance", gorm.Expr("balance + ?", commission)).Error; err != nil {
-				return fmt.Errorf("结算佣金失败: %w", err)
-			}
-			agent.Balance += commission
+			if commission > 0 {
+				if err := tx.Model(&model.Agent{}).Where("id = ?", agentID).
+					UpdateColumn("balance", gorm.Expr("balance + ?", commission)).Error; err != nil {
+					return fmt.Errorf("结算佣金失败: %w", err)
+				}
+				agent.Balance += commission
 
-			// 写佣金流水（type='commission'）
-			commissionLog := &model.AgentBalanceLog{
-				AgentID:        agentID,
-				TenantID:       tenantID,
-				Type:           "commission",
-				Amount:         commission,
-				BalanceAfter:   agent.Balance,
-				RelatedCardIDs: string(cardIDsJSON),
-				Status:         "settled",
-				Remark:         "代理购卡佣金",
-			}
-			if err := tx.Create(commissionLog).Error; err != nil {
-				return fmt.Errorf("写入佣金流水失败: %w", err)
+				// 写佣金流水（type='commission'）
+				commissionLog := &model.AgentBalanceLog{
+					AgentID:        agentID,
+					TenantID:       tenantID,
+					Type:           "commission",
+					Amount:         commission,
+					BalanceAfter:   agent.Balance,
+					RelatedCardIDs: string(cardIDsJSON),
+					Status:         "settled",
+					Remark:         "代理购卡佣金",
+				}
+				if err := tx.Create(commissionLog).Error; err != nil {
+					return fmt.Errorf("写入佣金流水失败: %w", err)
+				}
+
+				// 7.5 v0.4.0 多级代理跨级佣金分发
+				//   沿 parent_id 链向上传递（level 2 → 父级 level 1；level 3 → 父级 level 2 + 祖父级 level 1）
+				//   父级非 active 自动跳过；比例从 sys_config 读取
+				crossResults, crossErr := multilevel.DistributeCrossCommission(
+					c.Request.Context(), tx, deps.CfgCache, &agent, commission, string(cardIDsJSON),
+				)
+				if crossErr != nil {
+					return fmt.Errorf("跨级佣金分发失败: %w", crossErr)
+				}
+				crossCommissions = crossResults
 			}
 
-			// 7.5 v0.4.0 多级代理跨级佣金分发
-			//   沿 parent_id 链向上传递（level 2 → 父级 level 1；level 3 → 父级 level 2 + 祖父级 level 1）
-			//   父级非 active 自动跳过；比例从 sys_config 读取
-			crossResults, crossErr := multilevel.DistributeCrossCommission(
-				c.Request.Context(), tx, deps.CfgCache, &agent, commission, string(cardIDsJSON),
-			)
-			if crossErr != nil {
-				return fmt.Errorf("跨级佣金分发失败: %w", crossErr)
-			}
-			crossCommissions = crossResults
+			balanceAfter = agent.Balance
+			return nil
+		})
+		if txErr != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5003, "代理购卡失败: "+txErr.Error())
+			return
 		}
 
-		balanceAfter = agent.Balance
-		return nil
-	})
-	if txErr != nil {
-		middleware.Fail(c, http.StatusInternalServerError, 5003, "代理购卡失败: "+txErr.Error())
-		return
-	}
+		resp := gin.H{
+			"batch_no":      batchNo,
+			"quantity":      req.Quantity,
+			"card_keys":     cardKeys,
+			"card_ids":      cardIDs,
+			"cost_total":    costTotal,
+			"commission":    commission,
+			"balance_after": balanceAfter,
+			"warn":          "卡密明文仅本次返回一次，请立即保存或导出",
+		}
+		// v0.4.0：跨级佣金明细（仅当有上级代理被结算时返回）
+		if len(crossCommissions) > 0 {
+			resp["cross_commissions"] = crossCommissions
+		}
 
-	resp := gin.H{
-		"batch_no":      batchNo,
-		"quantity":      req.Quantity,
-		"card_keys":     cardKeys,
-		"card_ids":      cardIDs,
-		"cost_total":    costTotal,
-		"commission":    commission,
-		"balance_after": balanceAfter,
-		"warn":          "卡密明文仅本次返回一次，请立即保存或导出",
-	}
-	// v0.4.0：跨级佣金明细（仅当有上级代理被结算时返回）
-	if len(crossCommissions) > 0 {
-		resp["cross_commissions"] = crossCommissions
-	}
+		// v0.4.x Prometheus 业务埋点：卡密生成（按代理购卡路径）
+		metrics.IncCardsGenerated(tenantID, ct.AppID, req.Quantity)
 
-	// v0.4.x Prometheus 业务埋点：卡密生成（按代理购卡路径）
-	metrics.IncCardsGenerated(tenantID, ct.AppID, req.Quantity)
-
-	middleware.Success(c, resp)
+		middleware.Success(c, resp)
 	}
 }
 
@@ -902,22 +911,27 @@ func AgentWithdraw(deps *Deps) gin.HandlerFunc {
 		// 事务：扣余额 → 写 agent_withdraw → 写 balance_log
 		var withdrawID uint64
 		txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
-			// 1. 扣余额（进入冻结）
-			if err := tx.Model(&model.Agent{}).Where("id = ?", agentID).
-				UpdateColumn("balance", gorm.Expr("balance - ?", req.Amount)).Error; err != nil {
-				return fmt.Errorf("扣减余额失败: %w", err)
+			// 1. 扣余额（进入冻结）（P0 高危 8：原子扣款 + WHERE 余额守门，防 TOCTOU 并发突破负余额）
+			deductRes := tx.Model(&model.Agent{}).
+				Where("id = ? AND balance >= ?", agentID, req.Amount).
+				UpdateColumn("balance", gorm.Expr("balance - ?", req.Amount))
+			if deductRes.Error != nil {
+				return fmt.Errorf("扣减余额失败: %w", deductRes.Error)
+			}
+			if deductRes.RowsAffected == 0 {
+				return fmt.Errorf("余额不足，无法提现 %.2f", req.Amount)
 			}
 			agent.Balance -= req.Amount
 
 			// 2. 写 agent_withdraw（real_name 写入 audit_remark 字段持久化）
 			wd := &model.AgentWithdraw{
-				AgentID:      agentID,
-				TenantID:     tenantID,
-				Amount:       req.Amount,
-				PayMethod:    req.Method,
-				PayAccount:   req.Account,
-				Status:       "pending",
-				AuditRemark:  auditRemark,
+				AgentID:     agentID,
+				TenantID:    tenantID,
+				Amount:      req.Amount,
+				PayMethod:   req.Method,
+				PayAccount:  req.Account,
+				Status:      "pending",
+				AuditRemark: auditRemark,
 			}
 			if err := tx.Create(wd).Error; err != nil {
 				return fmt.Errorf("创建提现记录失败: %w", err)
@@ -1031,13 +1045,13 @@ func AgentRecharge(deps *Deps) gin.HandlerFunc {
 		}
 
 		middleware.Success(c, gin.H{
-			"id":           log.ID,
-			"agent_id":     agentID,
-			"amount":       req.Amount,
-			"pay_method":   req.PayMethod,
-			"status":       "pending",
-			"created_at":   log.CreatedAt,
-			"message":      "充值申请已提交，等待开发者审核",
+			"id":         log.ID,
+			"agent_id":   agentID,
+			"amount":     req.Amount,
+			"pay_method": req.PayMethod,
+			"status":     "pending",
+			"created_at": log.CreatedAt,
+			"message":    "充值申请已提交，等待开发者审核",
 		})
 	}
 }
@@ -1254,8 +1268,8 @@ func AgentGenInviteCode(deps *Deps) gin.HandlerFunc {
 					Status:                "active",
 					DefaultCommissionRate: rate,
 					CreatedBy:             agentID,
-					CreatorType:           "agent",      // v0.4.0：代理创建
-					CreatorAgentID:        agentID,      // v0.4.0：创建者代理 ID
+					CreatorType:           "agent", // v0.4.0：代理创建
+					CreatorAgentID:        agentID, // v0.4.0：创建者代理 ID
 				}
 				if err := tx.Create(ic).Error; err != nil {
 					return fmt.Errorf("创建邀请码失败: %w", err)
@@ -1463,10 +1477,10 @@ func AgentSubdomainStatus(deps *Deps) gin.HandlerFunc {
 		pattern := deps.CfgCache.GetString(ctx, "agent.subdomain.pattern", `^[a-z0-9-]{3,32}$`)
 
 		middleware.Success(c, gin.H{
-			"enabled":           enabled,
-			"pattern":           pattern,
-			"subdomain":         agent.Subdomain,
-			"subdomain_status":  agent.SubdomainStatus,
+			"enabled":          enabled,
+			"pattern":          pattern,
+			"subdomain":        agent.Subdomain,
+			"subdomain_status": agent.SubdomainStatus,
 		})
 	}
 }
@@ -1596,7 +1610,7 @@ func AgentUnbindSubdomain(deps *Deps) gin.HandlerFunc {
 		}
 
 		RecordOperation(deps, c, "agent_subdomain", "unbind", "success", "agent", &agentID, map[string]interface{}{
-			"subdomain":  agent.Subdomain,
+			"subdomain":   agent.Subdomain,
 			"prev_status": prevStatus,
 		})
 

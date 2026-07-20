@@ -9,7 +9,7 @@
     <!-- 用户信息卡 -->
     <div class="user-card">
       <div class="avatar">
-        <el-avatar v-if="user?.avatar" :src="user.avatar" :size="64" />
+        <el-avatar v-if="user?.avatar_url" :src="user.avatar_url" :size="64" />
         <el-avatar v-else :size="64">{{ avatarPlaceholder }}</el-avatar>
       </div>
       <div class="user-meta">
@@ -151,7 +151,8 @@ const loadStats = async () => {
       stats.value.cardCount = cardsResp.value.total ?? 0
     }
     if (sessionsResp.status === 'fulfilled') {
-      stats.value.sessionCount = sessionsResp.value.total ?? (sessionsResp.value.list?.length ?? 0)
+      // P0 高危 13：后端 EndUserListSessionsResp 仅返回 items（无 total），直接取长度
+      stats.value.sessionCount = sessionsResp.value.items?.length ?? 0
     }
   } catch {
     // 静默失败：统计只是辅助信息
@@ -193,7 +194,8 @@ const logout = async () => {
   loggingOut.value = true
   try {
     try {
-      await endUserLogoutApi()
+      // P0 高危 11：后端 H5EndUserLogout 要求 refresh_token 参数（用于撤销）
+      await endUserLogoutApi(endUserStore.refreshToken)
     } catch {
       // 静默失败：本地仍要清空
     }

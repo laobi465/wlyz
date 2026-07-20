@@ -2,6 +2,9 @@
 package router
 
 import (
+	"context"
+	"strings"
+
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/your-org/keyauth-saas/apps/server/internal/analysis"
@@ -25,7 +28,24 @@ func Register(container *config.Container) *gin.Engine {
 	r.Use(gin.Recovery())
 	r.Use(gin.Logger())
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"*"}, // 生产环境应限制为已知域名
+		// P0 高危 4：AllowOrigins=["*"] + AllowCredentials=true 违反 Fetch 规范，
+		//   浏览器会拒绝所有带凭据的跨域请求。改为 AllowOriginFunc 动态回显 Origin，
+		//   响应头为具体 Origin（非 *），与 AllowCredentials=true 兼容。
+		//   可选：通过 sys_config 配置 security.cors.allowed_origins（逗号分隔）收紧白名单，
+		//         留空则保持宽松（任意 Origin 可用），适合开发/灰度阶段。
+		AllowOriginFunc: func(origin string) bool {
+			allowed := container.ConfigCache().GetString(context.Background(),
+				"security.cors.allowed_origins", "")
+			if allowed == "" {
+				return true // 未配置白名单：保持宽松（向后兼容）
+			}
+			for _, o := range strings.Split(allowed, ",") {
+				if strings.TrimSpace(o) == origin {
+					return true
+				}
+			}
+			return false
+		},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "X-App-Key", "X-Timestamp", "X-Nonce", "X-Signature"},
 		ExposeHeaders:    []string{"Content-Length"},

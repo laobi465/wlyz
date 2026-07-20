@@ -14,7 +14,7 @@
       <div class="header-right">
         <template v-if="endUserStore.isLoggedIn">
           <div class="user-entry" @click="router.push('/h5/profile')">
-            <el-avatar v-if="endUserStore.user?.avatar" :src="endUserStore.user.avatar" :size="28" />
+            <el-avatar v-if="endUserStore.user?.avatar_url" :src="endUserStore.user.avatar_url" :size="28" />
             <el-avatar v-else :size="28">{{ avatarPlaceholder }}</el-avatar>
           </div>
         </template>

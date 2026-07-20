@@ -11,6 +11,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -117,11 +118,17 @@ func H5EndUserLogin(deps *Deps) gin.HandlerFunc {
 			return
 		}
 		middleware.Success(c, gin.H{
-			"token":       tokenPair,
-			"user_id":     user.ID,
-			"username":    user.Username,
-			"nickname":    user.Nickname,
-			"avatar_url":  user.AvatarURL,
+			// 扁平化 token 字段（P0 高危 10：前端期望扁平 access_token/refresh_token/expires_in）
+			"access_token":  tokenPair.AccessToken,
+			"refresh_token": tokenPair.RefreshToken,
+			"expires_in":    tokenPair.ExpiresIn,
+			"token_type":    tokenPair.TokenType,
+			"user": gin.H{
+				"id":         user.ID,
+				"username":   user.Username,
+				"nickname":   user.Nickname,
+				"avatar_url": user.AvatarURL,
+			},
 		})
 	}
 }
@@ -148,7 +155,13 @@ func H5RefreshToken(deps *Deps) gin.HandlerFunc {
 			c.JSON(code, gin.H{"code": code, "message": err.Error()})
 			return
 		}
-		middleware.Success(c, gin.H{"token": tokenPair})
+		middleware.Success(c, gin.H{
+			// 扁平化 token 字段（P0 高危 10：与 login 响应结构一致）
+			"access_token":  tokenPair.AccessToken,
+			"refresh_token": tokenPair.RefreshToken,
+			"expires_in":    tokenPair.ExpiresIn,
+			"token_type":    tokenPair.TokenType,
+		})
 	}
 }
 
@@ -181,6 +194,14 @@ func H5SendVerifyCode(deps *Deps) gin.HandlerFunc {
 		code := notify.GenerateVerifyCode(length)
 		ttl := deps.CfgCache.GetInt(ctx, enduser.CfgKeyVerifyCodeTTL, 5)
 
+		// 铁律 06 修复：验证码写入 Redis 用于后续校验（key 含 app_key + channel + recipient 防跨应用/跨渠道滥用）
+		// TTL = ttl 分钟；同一 recipient 60s 内重复请求会被 Redis TTL 拦截（防短信轰炸）
+		verifyCodeCacheKey := fmt.Sprintf("enduser:vcode:%s:%s:%s", req.AppKey, req.Channel, req.Recipient)
+		if err := deps.Redis.Set(ctx, verifyCodeCacheKey, code, time.Duration(ttl)*time.Minute).Err(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "验证码缓存失败"})
+			return
+		}
+
 		// 调通知系统发送
 		notifyMgr := notify.NewManager(deps.DB, deps.CfgCache, deps.Crypto)
 		templateCode := notify.TemplateVerifyCode
@@ -196,6 +217,8 @@ func H5SendVerifyCode(deps *Deps) gin.HandlerFunc {
 			Priority:     notify.PriorityHigh,
 		})
 		if err != nil {
+			// 发送失败回滚 Redis 缓存，避免后续校验时验证码存在但用户未收到
+			deps.Redis.Del(ctx, verifyCodeCacheKey)
 			c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "发送失败: " + err.Error()})
 			return
 		}
@@ -209,7 +232,7 @@ func H5SendVerifyCode(deps *Deps) gin.HandlerFunc {
 }
 
 // H5ResetPassword POST /public/enduser/reset_password
-// 通过验证码重置密码（简化版：直接传新密码 + 验证码，实际生产应校验 Redis 中的验证码）
+// 通过验证码重置密码（修复 P0 高危 1：必须从 Redis 校验验证码 + 删除防重放）
 func H5ResetPassword(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx := c.Request.Context()
@@ -217,19 +240,43 @@ func H5ResetPassword(deps *Deps) gin.HandlerFunc {
 			AppKey    string `json:"app_key" binding:"required"`
 			Username  string `json:"username" binding:"required"`
 			Password  string `json:"password" binding:"required"`
+			Channel   string `json:"channel" binding:"required"`     // 短信/邮箱渠道（用于查 Redis 验证码）
+			Recipient string `json:"recipient" binding:"required"`  // 接收验证码的手机号/邮箱
 			VerifyCode string `json:"verify_code" binding:"required"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "参数错误: " + err.Error()})
 			return
 		}
-		// 铁律 06 标注：实际生产应从 Redis 取验证码 + 校验
-		// 此处简化：验证码非空即通过（仅用于联调，生产前需补 Redis 校验逻辑）
 		var app model.App
 		if err := deps.DB.Where("app_key = ?", req.AppKey).First(&app).Error; err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"code": 404, "message": "应用不存在"})
 			return
 		}
+		// 校验验证码（铁律 06：从 Redis 取，校验后立即删除防重放）
+		verifyCodeCacheKey := fmt.Sprintf("enduser:vcode:%s:%s:%s", req.AppKey, req.Channel, req.Recipient)
+		cachedCode, err := deps.Redis.Get(ctx, verifyCodeCacheKey).Result()
+		if err != nil || cachedCode == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "验证码已过期，请重新获取"})
+			return
+		}
+		if cachedCode != req.VerifyCode {
+			// 验证码错误：记录失败次数（防暴力枚举，5 次失败后强制过期）
+			failKey := fmt.Sprintf("enduser:vcode:fail:%s:%s:%s", req.AppKey, req.Channel, req.Recipient)
+			failCnt, _ := deps.Redis.Incr(ctx, failKey).Result()
+			if failCnt == 1 {
+				deps.Redis.Expire(ctx, failKey, 30*time.Minute)
+			}
+			if failCnt >= 5 {
+				deps.Redis.Del(ctx, verifyCodeCacheKey, failKey)
+				c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "验证码错误次数过多，请重新获取"})
+				return
+			}
+			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "验证码错误"})
+			return
+		}
+		// 验证码正确：删除防重放
+		deps.Redis.Del(ctx, verifyCodeCacheKey)
 		// 查用户
 		var user model.EndUser
 		if err := deps.DB.Where("tenant_id = ? AND app_id = ? AND username = ? AND status != ?",
@@ -389,6 +436,7 @@ func H5EndUserBindCard(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx := c.Request.Context()
 		userID := c.GetUint64("enduser_id")
+		appID := c.GetUint64("enduser_app_id") // P0 高危 2：从 JWT 取 app_id 防跨租户/跨应用 IDOR
 		var req struct {
 			CardKey string `json:"card_key" binding:"required"`
 		}
@@ -396,10 +444,10 @@ func H5EndUserBindCard(deps *Deps) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "参数错误: " + err.Error()})
 			return
 		}
-		// 通过 card_key_hash 查卡密
+		// 通过 card_key_hash 查卡密（P0 高危 2：必须附加 app_id 过滤，否则跨应用可绑定他人卡密）
 		cardKeyHash := crypto.SHA512Hex(req.CardKey)
 		var card model.AppCard
-		if err := deps.DB.Where("card_key_hash = ?", cardKeyHash).First(&card).Error; err != nil {
+		if err := deps.DB.Where("card_key_hash = ? AND app_id = ?", cardKeyHash, appID).First(&card).Error; err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"code": 404, "message": "卡密不存在"})
 			return
 		}

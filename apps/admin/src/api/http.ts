@@ -120,10 +120,11 @@ http.interceptors.response.use(
         try {
           const resp = await endUserRefreshApi(endUserStore.refreshToken)
           // 持久化新的 token（保留原 user 信息和 appKey）
+          // P0 高危 10：后端返回 expires_in（相对秒数），store 内部存绝对时间戳（ms）
           endUserStore.setLogin({
             access_token: resp.access_token,
             refresh_token: resp.refresh_token,
-            expires_at: resp.expires_at,
+            expires_at: Date.now() + resp.expires_in * 1000,
             user: (endUserStore.user ?? null) as any
           })
           originalRequest.headers.Authorization = `Bearer ${resp.access_token}`

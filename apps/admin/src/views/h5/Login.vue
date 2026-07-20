@@ -76,7 +76,8 @@ const submit = async () => {
     endUserStore.setLogin({
       access_token: resp.access_token,
       refresh_token: resp.refresh_token,
-      expires_at: resp.expires_at,
+      // P0 高危 10：后端返回 expires_in（相对秒数），store 内部存绝对时间戳（ms）
+      expires_at: Date.now() + resp.expires_in * 1000,
       user: resp.user
     })
     ElMessage.success('登录成功')

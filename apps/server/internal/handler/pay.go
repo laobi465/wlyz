@@ -1072,17 +1072,24 @@ func processAgentRegisterPaid(deps *Deps, notify *epay.NotifyParams) error {
 			return fmt.Errorf("回填订单失败: %w", err)
 		}
 
-		// 7.5 邀请码状态机闭环：used_count++，达 max_uses 时置 exhausted
-		newUsedCount := ic.UsedCount + 1
-		updates := map[string]interface{}{
-			"used_count":      newUsedCount,
-			"used_by_agent_id": agent.ID,
+		// 7.5 邀请码状态机闭环：原子自增 used_count + 达 max_uses 时置 exhausted
+		// P0 高危 7：使用 SQL 原子操作 + WHERE 守门，防并发 TOCTOU 突破 max_uses
+		incrRes := tx.Model(&ic).
+			Where("id = ? AND used_count < max_uses", ic.ID).
+			Updates(map[string]interface{}{
+				"used_count":       gorm.Expr("used_count + 1"),
+				"used_by_agent_id": agent.ID,
+			})
+		if incrRes.Error != nil {
+			return fmt.Errorf("更新邀请码使用次数失败: %w", incrRes.Error)
 		}
-		if newUsedCount >= ic.MaxUses {
-			updates["status"] = "exhausted"
+		if incrRes.RowsAffected == 0 {
+			return fmt.Errorf("邀请码使用次数已用尽")
 		}
-		if err := tx.Model(&ic).Updates(updates).Error; err != nil {
-			return fmt.Errorf("更新邀请码状态失败: %w", err)
+		// 达 max_uses 时置 exhausted（基于自增后的真实值，二次 UPDATE 避免表达式歧义）
+		if err := tx.Model(&ic).Where("id = ? AND used_count >= max_uses", ic.ID).
+			Update("status", "exhausted").Error; err != nil {
+			return fmt.Errorf("更新邀请码状态为 exhausted 失败: %w", err)
 		}
 
 		return nil

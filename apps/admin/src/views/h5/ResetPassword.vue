@@ -15,6 +15,9 @@
       <p class="section-label">应用 AppKey</p>
       <el-input v-model="form.appKey" placeholder="请输入开发者提供的 AppKey" clearable />
 
+      <p class="section-label">账号</p>
+      <el-input v-model="form.username" placeholder="请输入要重置密码的账号" clearable />
+
       <p class="section-label">联系方式</p>
       <el-radio-group v-model="contactType" class="contact-type">
         <el-radio value="email" label="email">邮箱</el-radio>
@@ -63,6 +66,7 @@ const contactType = ref<'email' | 'phone'>('email')
 
 const form = reactive({
   appKey: '',
+  username: '',
   email: '',
   phone: '',
   verifyCode: '',
@@ -120,10 +124,12 @@ const sendCode = async () => {
 
   sending.value = true
   try {
+    // P0 高危 11/12：后端 H5SendVerifyCode 接收 channel（sms/email）+ recipient
     await endUserSendVerifyCodeApi({
       app_key: form.appKey,
-      target,
-      type: 'reset_password'
+      channel: contactType.value === 'email' ? 'email' : 'sms',
+      recipient: target,
+      purpose: 'reset_password'
     })
     ElMessage.success('验证码已发送，请注意查收')
     counting.value = 60
@@ -144,6 +150,10 @@ const sendCode = async () => {
 const submit = async () => {
   if (!form.appKey) {
     ElMessage.warning('请填写 AppKey')
+    return
+  }
+  if (!form.username) {
+    ElMessage.warning('请输入账号')
     return
   }
   const target = validateContact()
@@ -167,11 +177,14 @@ const submit = async () => {
 
   submitting.value = true
   try {
+    // P0 高危 12：后端 H5ResetPassword 接收 username + password + channel + recipient + verify_code
     await endUserResetPasswordApi({
       app_key: form.appKey,
-      target,
-      verify_code: form.verifyCode,
-      new_password: form.newPassword
+      username: form.username,
+      password: form.newPassword,
+      channel: contactType.value === 'email' ? 'email' : 'sms',
+      recipient: target,
+      verify_code: form.verifyCode
     })
     ElMessage.success('密码已重置，请使用新密码登录')
     router.replace('/h5/login')

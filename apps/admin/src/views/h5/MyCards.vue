@@ -98,7 +98,8 @@ const loadFirst = async () => {
   page.value = 1
   try {
     const resp = await endUserListMyCardsApi(page.value, pageSize)
-    cards.value = resp.list || []
+    // P0 高危 13：后端 EndUserListCardsResp 返回 items（非 list）
+    cards.value = resp.items || []
     total.value = resp.total || 0
   } catch {
     // 错误已由 http 拦截器处理
@@ -113,7 +114,7 @@ const loadMore = async () => {
   page.value++
   try {
     const resp = await endUserListMyCardsApi(page.value, pageSize)
-    cards.value.push(...(resp.list || []))
+    cards.value.push(...(resp.items || []))
     total.value = resp.total || 0
   } catch {
     page.value--

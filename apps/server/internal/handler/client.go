@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -281,9 +282,11 @@ func ClientLogin(deps *Deps) gin.HandlerFunc {
 			}
 
 			// 4.2 激活卡密（首次登录时设置 activated_at 和 expires_at）
+			// P0 高危 5：used_count 改为 SQL 原子自增 + WHERE 守门，杜绝并发 TOCTOU 突破 max_uses
+			// P0 高危 6：期限卡（DurationSeconds>0）/永久卡（DurationSeconds=-1）仅在首次激活时自增，
+			//           后续登录不再 +1，否则 DB 默认 max_uses=1 会导致期限卡只能登录一次
 			updates := map[string]interface{}{
-				"status":       "active",
-				"used_count":   card.UsedCount + 1,
+				"status":         "active",
 				"last_verify_at": now,
 			}
 			if card.ActivatedAt == nil {
@@ -298,6 +301,19 @@ func ClientLogin(deps *Deps) gin.HandlerFunc {
 			}
 			if err := tx.Model(&model.AppCard{}).Where("id = ?", card.ID).Updates(updates).Error; err != nil {
 				return fmt.Errorf("激活卡密失败: %w", err)
+			}
+			// 原子自增 used_count（次数卡每次登录都+1；期限卡/永久卡仅首次激活时+1）
+			isTimeBased := card.DurationSeconds != 0 // >0 期限卡 / -1 永久卡
+			if !isTimeBased || card.ActivatedAt == nil {
+				incrRes := tx.Model(&model.AppCard{}).
+					Where("id = ? AND (max_uses = 0 OR used_count < max_uses)", card.ID).
+					Update("used_count", gorm.Expr("used_count + 1"))
+				if incrRes.Error != nil {
+					return fmt.Errorf("更新使用次数失败: %w", incrRes.Error)
+				}
+				if incrRes.RowsAffected == 0 {
+					return fmt.Errorf("卡密使用次数已用尽")
+				}
 			}
 
 			return nil
@@ -843,12 +859,26 @@ func writeVerifyLogCtx(deps *Deps, c *gin.Context, app *model.App, hwid, cardKey
 		ip = c.ClientIP()
 		ua = c.Request.UserAgent()
 	}
+	// P0 高危 3：log_verify.Extra 落库前必须脱敏，避免卡密明文泄露
+	//   - card_key_masked: 仅保留前 4 + 后 4，中间用 * 替代，长度<8 时全部用 * 替代
+	//   - card_key_hash  : SHA-512 完整哈希，用于事后对账/取证（不可逆推）
+	//   - hwid/message   : 保留原文（非敏感）
 	extra := map[string]interface{}{
-		"card_key": cardKey,
-		"hwid":     hwid,
-		"message":  message,
+		"card_key_masked": maskCardKey(cardKey),
+		"card_key_hash":   crypto.SHA512Hex(cardKey),
+		"hwid":            hwid,
+		"message":         message,
 	}
 	enqueueVerifyLog(deps, app.TenantID, app.ID, nil, nil, action, result, ip, ua, extra)
+}
+
+// maskCardKey 卡密脱敏：长度>=8 时保留前 4 + 后 4，中间用 4 个 *；否则全部用 * 替代
+// 用于日志/审计落库场景，确保原始卡密不落明文
+func maskCardKey(key string) string {
+	if len(key) < 8 {
+		return strings.Repeat("*", len(key))
+	}
+	return key[:4] + "****" + key[len(key)-4:]
 }
 
 // 标记未使用导入

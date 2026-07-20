@@ -124,10 +124,12 @@ const sendCode = async () => {
 
   sending.value = true
   try {
+    // P0 高危 11：后端 H5SendVerifyCode 接收 channel（sms/email）+ recipient
     await endUserSendVerifyCodeApi({
       app_key: form.appKey,
-      target,
-      type: 'register'
+      channel: contactType.value === 'email' ? 'email' : 'sms',
+      recipient: target,
+      purpose: 'register'
     })
     ElMessage.success('验证码已发送，请注意查收')
     counting.value = 60

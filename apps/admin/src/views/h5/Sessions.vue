@@ -70,7 +70,8 @@ const load = async () => {
   loading.value = true
   try {
     const resp = await endUserListSessionsApi()
-    sessions.value = resp.list || []
+    // P0 高危 13：后端 EndUserListSessionsResp 返回 items（非 list）
+    sessions.value = resp.items || []
   } catch {
     // 错误已由 http 拦截器处理
   } finally {

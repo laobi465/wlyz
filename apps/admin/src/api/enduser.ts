@@ -46,7 +46,7 @@ export interface EndUserInfo {
   app_id: number
   username: string
   nickname: string
-  avatar: string
+  avatar_url: string
   email: string
   phone: string
   status: string
@@ -55,10 +55,14 @@ export interface EndUserInfo {
   created_at: string
 }
 
+// P0 高危 10/11：与后端扁平化响应结构对齐
+//   - 后端 H5EndUserLogin/H5RefreshToken 返回 access_token/refresh_token/expires_in/token_type
+//   - expires_in 是相对秒数（access token 有效期），前端如需绝对时间戳需自行 Date.now()+expires_in*1000
 export interface EndUserLoginResp {
   access_token: string
   refresh_token: string
-  expires_at: number
+  expires_in: number
+  token_type: string
   user: EndUserInfo
 }
 
@@ -81,19 +85,26 @@ export interface EndUserSession {
   is_current: boolean
 }
 
-export type EndUserVerifyTarget = 'email' | 'phone'
+// P0 高危 11/12：与后端 H5SendVerifyCode/H5ResetPassword 字段对齐
+//   - 后端使用 channel（sms/email）+ recipient（手机号/邮箱），不再使用 target/type
+//   - reset_password 后端要求 username + password + channel + recipient + verify_code
+export type EndUserVerifyChannel = 'sms' | 'email'
+export type EndUserVerifyPurpose = 'register' | 'reset_password'
 
 export interface EndUserSendVerifyCodeReq {
   app_key: string
-  target: string
-  type: 'register' | 'reset_password'
+  channel: EndUserVerifyChannel
+  recipient: string
+  purpose?: EndUserVerifyPurpose
 }
 
 export interface EndUserResetPasswordReq {
   app_key: string
-  target: string
+  username: string
+  password: string
+  channel: EndUserVerifyChannel
+  recipient: string
   verify_code: string
-  new_password: string
 }
 
 export interface EndUserChangePasswordReq {
@@ -101,23 +112,24 @@ export interface EndUserChangePasswordReq {
   new_password: string
 }
 
+// P0 高危 11：后端 H5EndUserUpdateProfile 接收 nickname/avatar_url/email/phone
 export interface EndUserUpdateProfileReq {
   nickname?: string
-  avatar?: string
+  avatar_url?: string
   email?: string
   phone?: string
 }
 
+// P0 高危 13：后端 H5EndUserListMyCards 返回 items（非 list）
 export interface EndUserListCardsResp {
-  list: EndUserCard[]
+  items: EndUserCard[]
   total: number
   page: number
-  page_size: number
 }
 
+// P0 高危 13：后端 H5EndUserListSessions 返回 items（非 list），无 total
 export interface EndUserListSessionsResp {
-  list: EndUserSession[]
-  total: number
+  items: EndUserSession[]
 }
 
 // ============== 公开端点 ==============
@@ -131,21 +143,24 @@ export const endUserLoginApi = (data: EndUserLoginReq) => {
 }
 
 export const endUserRefreshApi = (refreshToken: string) => {
-  return request.post<{ access_token: string; refresh_token: string; expires_at: number }>(
+  // P0 高危 10：与 login 响应结构一致，扁平 access_token/refresh_token/expires_in/token_type
+  return request.post<{ access_token: string; refresh_token: string; expires_in: number; token_type: string }>(
     '/public/enduser/refresh',
     { refresh_token: refreshToken }
   )
 }
 
 export const endUserSendVerifyCodeApi = (data: EndUserSendVerifyCodeReq) => {
-  return request.post<{ message: string; target: string; expires_in?: number }>(
+  // P0 高危 11：后端返回 sent/ttl/channel/purpose
+  return request.post<{ sent: boolean; ttl: number; channel: string; purpose?: string }>(
     '/public/enduser/verify_code',
     data
   )
 }
 
 export const endUserResetPasswordApi = (data: EndUserResetPasswordReq) => {
-  return request.post<{ message: string }>('/public/enduser/reset_password', data)
+  // P0 高危 12：后端返回 reset:true
+  return request.post<{ reset: boolean }>('/public/enduser/reset_password', data)
 }
 
 // ============== 鉴权端点 ==============
@@ -159,11 +174,13 @@ export const endUserUpdateProfileApi = (data: EndUserUpdateProfileReq) => {
 }
 
 export const endUserChangePasswordApi = (data: EndUserChangePasswordReq) => {
-  return request.post<{ message: string }>('/h5/me/password', data)
+  // 后端返回 changed:true
+  return request.post<{ changed: boolean }>('/h5/me/password', data)
 }
 
-export const endUserLogoutApi = () => {
-  return request.post<{ message: string }>('/h5/logout', {})
+export const endUserLogoutApi = (refreshToken: string) => {
+  // P0 高危 11：后端 H5EndUserLogout 要求 refresh_token 参数（用于撤销）
+  return request.post<{ logged_out: boolean }>('/h5/logout', { refresh_token: refreshToken })
 }
 
 export const endUserListSessionsApi = () => {
@@ -171,7 +188,8 @@ export const endUserListSessionsApi = () => {
 }
 
 export const endUserKickSessionApi = (jti: string) => {
-  return request.post<{ message: string }>(`/h5/sessions/${jti}/kick`, {})
+  // 后端返回 kicked:jti
+  return request.post<{ kicked: string }>(`/h5/sessions/${jti}/kick`, {})
 }
 
 export const endUserBindCardApi = (cardKey: string) => {
@@ -179,7 +197,8 @@ export const endUserBindCardApi = (cardKey: string) => {
 }
 
 export const endUserUnbindCardApi = (cardId: number) => {
-  return request.post<{ message: string }>('/h5/cards/unbind', { card_id: cardId })
+  // 后端返回 unbound:cardId
+  return request.post<{ unbound: number }>('/h5/cards/unbind', { card_id: cardId })
 }
 
 export const endUserListMyCardsApi = (page: number, pageSize: number) => {
