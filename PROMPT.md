@@ -12,7 +12,7 @@
 
 **v0.3.6 已发布**：6 个测试包（crypto/snowflake/epay/quota/heartbeat/middleware）+ 跨语言签名对齐测试全部通过。运行 `cd apps/server && go test ./...` 验证。
 
-**v0.4.0 进行中**：UA 解析迁移 + JWT jti 精准单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 slog + 全语言 SDK 扩展 已完成（5 项迁移全绿；`pkg/ua` + `internal/auth` + `internal/logger` + `internal/handler/profile_2fa_test.go` + 5 个新 SDK 共 50+ 个新测试，11 个测试包全 PASS）。
+**v0.4.0 进行中**：UA 解析迁移 + JWT jti 精准单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 slog + 全语言 SDK 扩展 + 多级代理体系 已完成（6 项迁移全绿；`pkg/ua` + `internal/auth` + `internal/logger` + `internal/handler/profile_2fa_test.go` + 5 个新 SDK + `internal/multilevel`（27 个测试）共 80+ 个新测试，11 个测试包全 PASS）。
 
 ## 二、必读文档（按顺序）
 
@@ -80,6 +80,7 @@ v0.4.0 已新增完成（进行中）：
 - ✅ 2FA backup_codes DB 持久化（migration 008 三表 sys_admin/sys_tenant/agent 加 `backup_codes VARCHAR(512)` 字段 + model struct 同步；profile.go 新增 `loadUserBackupCodes`/`updateUserBackupCodes`/`consumeBackupCode` 三函数；Verify2FA 改为 DB 落库 + Disable2FA 清空字段；兼容 v0.3.x 老用户：DB 字段为空时 `loadUserBackupCodes` 自动回退 Redis 读取，首次 `consumeBackupCode` 消费成功后回写 DB + 清理 Redis 老数据；`internal/handler/profile_2fa_test.go` 13 个测试全 PASS）
 - ✅ 登录失败日志结构化（新建 `internal/logger` 包基于 Go 1.21+ 标准库 `log/slog`，零第三方依赖，取代 zap/zerolog；`Options{Level, Format, Output}` + `Init/Debug/Info/Warn/Error` + 4 个 Ctx 版本；`AppConfig` 加 LogLevel/LogFormat/LogOutput；`cmd/main.go` 启动时调用 `logger.Init`；`session.go` + `log_worker.go` 3 处 `_ = err` 静默丢弃替换为 `logger.Error("xxx write failed", "err", err, ...业务字段...)` 结构化日志，移除 3 处「待核实 v0.4.x：引入结构化日志记录此错误」标注；`internal/logger/logger_test.go` 6 个测试全 PASS；10 个测试包全绿）
 - ✅ 全语言 SDK 扩展（v0.4.0 第五项迁移）：新增 5 个 SDK（`sdks/go/` keyauth-go 用 `crypto/sha512.New512_256` 原生字节级对齐 + 强类型 struct 返回 + 零第三方依赖；`sdks/java/` keyauth-java 用 JDK 11+ HttpClient + `HmacSHA512/256`（JDK 17+，回退 HmacSHA256）+ Jackson + Maven 工程；`sdks/csharp/` keyauth-csharp 用 .NET 6+ HttpClient + 反射探测 BouncyCastle 启用 SHA-512/256 否则回退 HMACSHA256 + System.Text.Json；`sdks/cpp/` keyauth-cpp 用 C++17 + libcurl + OpenSSL 1.1+ `EVP_sha512_256` 原生对齐（OpenSSL < 1.1 回退 `EVP_sha256`）+ nlohmann/json + CMake FetchContent；`sdks/epl/` keyauth-epl 易语言纯中文 API + 精易模块 v9.0+ 依赖 + HMAC-SHA256（易语言生态无 SHA-512/256，仅在后端回退场景匹配））；`pkg/crypto/sign_alignment_test.go` 从 3 语言扩展到 7 语言自动化（Python/Node/PHP/Go 解释器模式 + C++ g++ 编译 + Java JDK 11+ 单文件源码模式 + C# dotnet 临时项目 + 易语言 Windows-only 永久 `t.Skip`）+ 新增 `TestSignAlignment_NewLanguages` 5 个 SDK 目录结构元数据校验（CI 友好，无运行时依赖）；JDK 17+ 才断言签名匹配，否则 `t.Logf` 暴露 mismatch 而非 `t.Skip` 掩盖；11 个测试包全绿，`go vet ./...` + `go build ./...` 通过）
+- ✅ 多级代理体系（v0.4.0 第六项迁移）：migration 009 新增 `agent.parent_id` + `level` + `agent_invite_code.creator_type` + `creator_agent_id` 字段 + 4 项 sys_config（`agent.commission.cross_level_2_rate`=50.00 / `cross_level_3_rate`=20.00 / `max_level`=3 / `agent.invite_code.agent_can_create`=1）；新建 `internal/multilevel` 包含 5 个核心函数：`DistributeCrossCommission` 沿 parent_id 链向上最多 2 层分润（level 2→父级 cross_level_2_rate%，level 3→父级 cross_level_2_rate% + 祖父级 cross_level_3_rate%；父级非 active 跳过；事务内 gorm.Expr 更新余额 + 写 `AgentBalanceLog{Type:"cross_commission"}`）+ `CanCreateSubordinate` 校验（agent_can_create + level<max_level + status=active）+ `ComputeSubordinateLevel` 计算下级层级（tenant 邀请码→(0,1)；agent 邀请码→(creator.ID, creator.Level+1)）+ `BuildAgentTree` 递归树（含 tenant_id 隔离）+ `ListSubordinates` 单层列表；`processAgentRegisterPaid` 创建 Agent 前调用 `ComputeSubordinateLevel` 写入 parent_id/level；`AgentGenerateCards` 在事务内佣金结算后调用 `DistributeCrossCommission`，响应新增 `cross_commissions` 字段；三端代理树查询 API（`/admin/agents/:id/tree` + `/tenant/agents/:id/tree` + `/agent/tree`）+ 5 个代理邀请码管理路由（POST/GET /agent/invite_codes + POST /agent/invite_codes/:id/disable + GET /agent/subordinates）；`internal/multilevel/multilevel_test.go` 27 个测试全 PASS（DistributeCrossCommission 7 + CanCreateSubordinate 6 + ComputeSubordinateLevel 5 + BuildAgentTree 4 + ListSubordinates 3 + 边界 2）；测试修复了一个真实算法 bug（基于 `current.Level` 误判比例 → 改为基于 `agent.Level` + depth 判断）；11 个测试包全绿无回归，`go vet ./...` + `go build ./...` 通过）
 
 v0.3.5 已完成（基线）：
 - ✅ 后端 Go 项目结构（main / config / model / middleware / handler / router / quota / migration / heartbeat）
@@ -97,10 +98,10 @@ v0.3.5 已完成（基线）：
 
 **v0.3.6 已完成（2026-07-20）**：剩余 P1 收尾 + 单元测试 + 客户端 SDK 签名对齐测试，全部完成。
 
-**v0.4.0 进行中（2026-07-20）**：UA 解析迁移 + JWT jti 精准单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 slog + 全语言 SDK 扩展 5 项迁移全绿（11 个测试包全 PASS），后续推进多级代理 / 在线更新 / 数据备份恢复 / 监控告警 / 通知系统 / 终端用户体系 / API 开放平台。
+**v0.4.0 进行中（2026-07-20）**：UA 解析迁移 + JWT jti 精准单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 slog + 全语言 SDK 扩展 + 多级代理体系 6 项迁移全绿（11 个测试包全 PASS；新增 multilevel 包 27 个测试用例），后续推进灰度发布 / 在线更新 / 数据备份恢复 / 监控告警 / 通知系统 / 终端用户体系 / API 开放平台。
 
 **v0.4.0（三期商业化，待开始）**：
-- 多级代理 + 在线更新 + 数据备份恢复 + 监控告警 + 通知系统 + 终端用户体系 + API 开放平台
+- 灰度发布 + 在线更新 + 数据备份恢复 + 监控告警 + 通知系统 + 终端用户体系 + API 开放平台
 
 详细任务见 `docs/TODO.md`。
 

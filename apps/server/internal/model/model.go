@@ -267,6 +267,8 @@ type Agent struct {
 	CommissionRate        float64 `gorm:"type:decimal(5,2);not null;default:10.00" json:"commission_rate"`
 	CommissionMode        string  `gorm:"size:32;not null;default:percentage" json:"commission_mode"` // percentage/diff
 	InviterID             *uint64 `gorm:"index" json:"inviter_id"`
+	ParentID              uint64  `gorm:"index;not null;default:0" json:"parent_id"`  // v0.4.0：上级代理 ID（0=一级代理）
+	Level                 int     `gorm:"not null;default:1" json:"level"`           // v0.4.0：代理层级（1/2/3，最大 3）
 	TOTPSecret            string  `gorm:"size:64" json:"-"` // 2FA 密钥（AES 加密）
 	BackupCodes           string  `gorm:"size:512" json:"-"` // v0.4.0：2FA 备用码（AES 加密的逗号分隔字符串）
 	Subdomain             string  `gorm:"size:64" json:"subdomain"`
@@ -290,6 +292,8 @@ type AgentInviteCode struct {
 	AllowedApps           string `gorm:"type:json" json:"allowed_apps"`
 	DefaultCommissionRate float64 `gorm:"type:decimal(5,2);not null;default:10.00" json:"default_commission_rate"`
 	CreatedBy             uint64 `gorm:"not null" json:"created_by"`
+	CreatorType           string `gorm:"size:16;not null;default:tenant" json:"creator_type"`           // v0.4.0：tenant/agent（创建者类型）
+	CreatorAgentID        uint64 `gorm:"not null;default:0" json:"creator_agent_id"`                   // v0.4.0：creator_type=agent 时填，否则 0
 }
 
 func (AgentInviteCode) TableName() string { return "agent_invite_code" }

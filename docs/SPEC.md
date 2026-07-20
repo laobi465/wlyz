@@ -1056,6 +1056,68 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 - **铁律 05**：SDK 内部无可调业务参数，路径前缀为常量
 - **铁律 06**：签名算法回退分支已标注「待核实」；PHP SDK 通过 `php -l` 语法校验；运行时集成测试待 v0.4.x
 
+### 7.4.1 多级代理体系规范（v0.4.0）
+
+#### 数据模型
+
+- `agent.parent_id BIGINT NOT NULL DEFAULT 0`：上级代理 ID（0 = 一级代理，由开发者邀请码注册）
+- `agent.level TINYINT NOT NULL DEFAULT 1`：代理层级（1/2/3，上限由 `agent.commission.max_level` 控制）
+- `agent_invite_code.creator_type VARCHAR(16) NOT NULL DEFAULT 'tenant'`：邀请码创建者类型（`tenant`=开发者 → 注册为一级 / `agent`=代理 → 注册为 creator.level+1）
+- `agent_invite_code.creator_agent_id BIGINT NOT NULL DEFAULT 0`：creator_type='agent' 时填创建者代理 ID
+
+#### 配置项（sys_config，可后台调整）
+
+| Key | 默认值 | 含义 |
+|---|---|---|
+| `agent.commission.cross_level_2_rate` | `50.00` | 二级代理产生佣金时，父级（一级）分润比例（百分比） |
+| `agent.commission.cross_level_3_rate` | `20.00` | 三级代理产生佣金时，祖父级（一级）分润比例（百分比） |
+| `agent.commission.max_level` | `3` | 最大代理层级（1/2/3） |
+| `agent.invite_code.agent_can_create` | `1` | 是否允许代理创建下级邀请码（0/1） |
+
+#### 跨级佣金算法（`multilevel.DistributeCrossCommission`）
+
+调用时机：`AgentGenerateCards` 计算出当前代理佣金 `commission` 后，在事务内调用。
+
+```
+若 agent.Level == 1 或 ParentID == 0 → 无跨级佣金（返回 nil）
+向上遍历 parent_id 链，最多 2 层（depth=0/1）：
+  depth=0 (parent=直接父级):
+    - agent.Level=2 → rate = cross_level_2_rate
+    - agent.Level=3 → rate = cross_level_2_rate  （父级 level=2 获此比例）
+  depth=1 (parent=祖父级):
+    - agent.Level=3 → rate = cross_level_3_rate  （祖父级 level=1 获此比例）
+  parent.status != 'active' → break（停止向上）
+  parent 已被删除 → break（停止向上）
+  事务内：
+    1. UPDATE agent SET balance = balance + (commission * rate / 100) WHERE id = parent.id
+    2. 重新读取 parent.Balance 作为 BalanceAfter
+    3. INSERT agent_balance_log (type='cross_commission', amount, balance_after, related_card_ids, status='settled')
+  current = parent （继续向上）
+```
+
+#### 三端代理树查询 API
+
+| 路由 | 角色 | 行为 |
+|---|---|---|
+| `GET /api/v1/admin/agents/:id/tree` | 平台超管 | 跨租户查询任意代理下级树（maxDepth = max_level - 1） |
+| `GET /api/v1/tenant/agents/:id/tree` | 开发者 | 校验 agent 归属当前 tenant_id，构建下级树 |
+| `GET /api/v1/agent/tree` | 代理 | 查询自己为根的下级树（maxDepth = max_level - 1） |
+| `GET /api/v1/agent/subordinates` | 代理 | 查询直接下级（单层，parent_id = agentID AND tenant_id 匹配） |
+
+#### 代理邀请码管理 API（agent 端）
+
+| 路由 | 行为 |
+|---|---|
+| `POST /api/v1/agent/invite_codes` | 创建下级邀请码（`CanCreateSubordinate` 校验 + `quota.CheckMaxAgents` 配额校验 + `CreatorType='agent'` + `CreatorAgentID=agentID`） |
+| `GET /api/v1/invite_codes` | 列出自己的下级邀请码（`creator_type='agent' AND creator_agent_id=agentID`） |
+| `POST /api/v1/agent/invite_codes/:id/disable` | 禁用自己的邀请码（归属校验） |
+
+#### 兼容性
+
+- v0.3.x 老代理升级后 `parent_id=0` + `level=1`，行为等同一级代理（无跨级佣金）
+- v0.3.x 老邀请码升级后 `creator_type='tenant'` + `creator_agent_id=0`，新代理仍注册为一级
+- 跨级佣金流水类型 `cross_commission` 与既有 `commission` / `recharge` / `withdraw` 类型独立，互不干扰
+
 ### 7.5 测试规范（v0.3.6）
 
 #### 测试栈
@@ -1066,7 +1128,7 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 | 内存 Redis | `github.com/alicebob/miniredis/v2` | v2.38.0 |
 | SQLite 内存库 | `gorm.io/driver/sqlite` + `github.com/mattn/go-sqlite3` | v1.6.0 + v1.14.22 |
 
-#### 测试覆盖（10 个包，0 失败）
+#### 测试覆盖（11 个包，0 失败）
 
 | 包 | 测试文件 | 覆盖范围 |
 |---|---|---|
@@ -1081,6 +1143,7 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 | `internal/auth` | `jwt_test.go` | v0.4.0 JTI 精准单点踢出：GenerateTokenPair 写入 JTI / BlacklistRefreshTokenByJTI 隔离性 / 同一用户不同设备互不影响 / IsRefreshTokenBlacklisted 兼容旧 token 回退 user 维度 / TTL 过期 / JTI 黑名单端到端闭环（登录两设备 → 踢一设备 → 另一设备不受影响 → 改密强制全部重登）/ ExtractBearer 5 子用例（18 个测试） |
 | `internal/logger` | `logger_test.go` | v0.4.0 slog 结构化日志：parseLevel 4 级别 + 大小写 + 默认值 / JSON 格式 level/msg/字段断言 / level 过滤（warn 时不输出 debug/info）/ text 格式 msg 含空格自动加引号 / L() 非 nil / 空 Options 不 panic（6 个测试） |
 | `internal/handler` | `profile_2fa_test.go` | v0.4.0 2FA 备用码 DB 持久化：loadUserBackupCodes DB 读取 + Redis 回退 + 用户不存在 + tenant/agent role 分支 + 不支持角色 / updateUserBackupCodes 清空 / consumeBackupCode 消费成功 + 消费最后一个 + 输入不匹配 + 空输入 + 无备用码 + 从 Redis 回退消费 / twoFABackupKey + twoFASetupKey 格式（13 个测试） |
+| `internal/multilevel` | `multilevel_test.go` | v0.4.0 多级代理：DistributeCrossCommission（level 1/2/3 + 父级禁用跳过 + 零/负佣金 + nil agent + 自定义比例，7 个）/ CanCreateSubordinate（level vs max_level 矩阵 + agent_can_create flag + 禁用 + nil，6 个）/ ComputeSubordinateLevel（tenant 邀请码 → 1 / agent 邀请码 → 2 / level 3 超限 / 创建者不存在 / nil，5 个）/ BuildAgentTree（三级树 + maxDepth=0 + 不存在 + 租户隔离，4 个）/ ListSubordinates（单层 + 无子级 + 租户隔离，3 个）/ 边界（parent 链断裂，2 个）（27 个测试） |
 
 #### 测试原则
 
@@ -1097,6 +1160,7 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 11. **2FA 备用码 DB 持久化测试（v0.4.0）**：`internal/handler/profile_2fa_test.go` 用 SQLite 内存库 + miniredis + 真实 AES-256 crypto.Manager 测试 `loadUserBackupCodes` / `updateUserBackupCodes` / `consumeBackupCode`；关键场景：DB 读取 + Redis 回退（v0.3.x 老用户兼容）+ 消费成功后 DB 回写 + Redis 自动清理 + 输入不匹配不修改 DB + 消费最后一个时 DB 写入空字符串 + 3 角色（admin/tenant/agent）分支覆盖
 12. **结构化日志测试（v0.4.0）**：`internal/logger/logger_test.go` 用 `bytes.Buffer` 临时替换全局 logger 输出验证 JSON / text 格式；`atomic.Value` 保证并发安全切换；level 过滤测试验证 `level=warn` 时 debug/info 不输出；`TestInit_DefaultFallback` 验证空 Options 不 panic（保证 Init 容错性）
 13. **全语言 SDK 签名对齐测试（v0.4.0）**：`pkg/crypto/sign_alignment_test.go` 从 3 语言扩展到 7 语言（新增 Go / Java / C++ / C# + 易语言 Windows-only Skip）；解释器模式（Python/Node/PHP/Go）+ 编译型模式（C++ 用 g++ 编译到 t.TempDir() + 运行）+ Java 单文件源码模式（JDK 11+）+ C# dotnet 临时项目模式；运行时缺失自动 `t.Skip` 不强制依赖；`javaSupportsSHA512_256` 检测 JDK 版本，仅 JDK 17+ 强断言签名匹配（JDK < 17 回退 HmacSHA256 时仅 t.Logf 提示，不掩盖差异）；`TestSignAlignment_NewLanguages` 校验 5 个新 SDK 的目录结构完整性（不依赖运行时，CI 友好）
+14. **多级代理测试（v0.4.0）**：`internal/multilevel/multilevel_test.go` 用 SQLite in-memory（4 表 AutoMigrate：agent/agent_invite_code/agent_balance_log/sys_config）+ miniredis + 真实 `ConfigCache`（预置 sys_config 4 项 + overrides 覆盖）；关键场景：DistributeCrossCommission 沿 parent_id 链向上分润（level 1 无父级 / level 2 父级 50% / level 3 父级 + 祖父级 / 父级禁用跳过 / 零/负佣金 / nil agent / 自定义比例）；CanCreateSubordinate（level vs max_level 矩阵 + agent_can_create flag + 禁用 + nil）；ComputeSubordinateLevel（tenant 邀请码 → 1 / agent 邀请码 → 2 / level 3 创建者超限 / 创建者不存在 / nil）；BuildAgentTree（三级树 + maxDepth=0 + 不存在 + 租户隔离）；ListSubordinates（单层 + 无子级 + 租户隔离）；边界场景（parent 链断裂：parent_id 指向已删除代理时停止向上）；测试修复了一个真实算法 bug（基于 `current.Level` 误判比例 → 改为基于 `agent.Level` + depth 判断）
 
 #### 运行命令
 

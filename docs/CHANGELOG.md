@@ -11,6 +11,95 @@
 
 ## [0.4.0] - 2026-07-20（v0.4.x 迁移项推进）
 
+### [新增] 多级代理体系（v0.4.x 第六项：跨级佣金 + 层级校验 + 代理树）
+
+#### 背景
+
+- v0.3.x 代理体系仅支持扁平结构，无上下级关系；代理推广收益仅来自直接销售佣金
+- 商业化诉求：支持 3 级代理链路（1 级=开发者直签 / 2 级=代理邀请 / 3 级=代理子邀请），跨级自动分润
+- TODO.md `[迁移] 多级代理体系 → v0.4.x`
+
+#### 实现
+
+**`migrations/009_v0.4.0_agent_multi_level.up.sql`**：
+- `agent` 表新增 `parent_id BIGINT NOT NULL DEFAULT 0` + `level TINYINT NOT NULL DEFAULT 1`
+- 新增索引 `idx_agent_parent` / `idx_agent_level`
+- `agent_invite_code` 表新增 `creator_type VARCHAR(16) NOT NULL DEFAULT 'tenant'` + `creator_agent_id BIGINT NOT NULL DEFAULT 0`
+- 新增索引 `idx_invite_code_creator_agent`
+- `sys_config` 新增 4 项：
+  - `agent.commission.cross_level_2_rate` = `50.00`（二级代理产生佣金时，父级（一级）分润 50%）
+  - `agent.commission.cross_level_3_rate` = `20.00`（三级代理产生佣金时，祖父级（一级）分润 20%）
+  - `agent.commission.max_level` = `3`（最大代理层级）
+  - `agent.invite_code.agent_can_create` = `1`（是否允许代理创建下级邀请码）
+- 配套 `009_v0.4.0_agent_multi_level.down.sql` 回滚
+
+**`internal/model/model.go`**：
+- `Agent` struct 新增 `ParentID uint64` + `Level int` 两字段
+- `AgentInviteCode` struct 新增 `CreatorType string` + `CreatorAgentID uint64` 两字段
+
+**`internal/multilevel/multilevel.go`**（新建包）：
+- `DistributeCrossCommission(ctx, tx, cfgCache, agent, commission, relatedCardIDsJSON)`：沿 `parent_id` 链向上最多 2 层分发跨级佣金
+  - 源 level=2 → 父级（level=1）获 `cross_level_2_rate%`
+  - 源 level=3 → 父级（level=2）获 `cross_level_2_rate%`，祖父级（level=1）获 `cross_level_3_rate%`
+  - 父级状态非 `active` 跳过（break 整链），父级被物理删除时停止
+  - 事务内 `gorm.Expr("balance + ?")` 更新父级余额 + 写 `AgentBalanceLog{Type:"cross_commission"}`
+- `CanCreateSubordinate(ctx, cfgCache, agent)`：校验 `agent_can_create` + `level < max_level` + `status=active`
+- `ComputeSubordinateLevel(ctx, db, cfgCache, ic)`：tenant 邀请码 → (0, 1)；agent 邀请码 → (creator.ID, creator.Level+1) 含 `CanCreateSubordinate` 校验
+- `BuildAgentTree(ctx, db, rootAgentID, maxDepth)`：递归构建代理下级树（含 `tenant_id` 隔离）
+- `ListSubordinates(ctx, db, agentID, tenantID)`：单层直接下级列表
+- 错误哨兵：`ErrAgentNotFound` / `ErrLevelExceedsMax`
+
+**`internal/handler/pay.go`**：
+- `processAgentRegisterPaid` 创建 Agent 前调用 `ComputeSubordinateLevel` 计算 `parent_id` + `level`，写入 Agent
+
+**`internal/handler/agent_business.go`**：
+- `AgentGenerateCards` 在事务内佣金结算后调用 `DistributeCrossCommission`，响应新增 `cross_commissions` 字段（仅非空时返回）
+- 5 个新 handler：
+  - `AgentGenInviteCode` POST `/agent/invite_codes`：代理创建下级邀请码（`CanCreateSubordinate` + `quota.CheckMaxAgents` + `CreatorType="agent"` + `CreatorAgentID=agentID`）
+  - `AgentListInviteCodes` GET `/agent/invite_codes`：列出自己的下级邀请码
+  - `AgentDisableInviteCode` POST `/agent/invite_codes/:id/disable`：禁用自己的邀请码（归属校验）
+  - `AgentListSubordinates` GET `/agent/subordinates`：直接下级单层列表
+  - `AgentGetTree` GET `/agent/tree`：递归下级树（`maxDepth = max_level - 1`）
+
+**`internal/handler/tenant_business.go`**：
+- 新增 `TenantGetAgentTree` GET `/tenant/agents/:id/tree`（校验 agent 归属当前租户）
+
+**`internal/handler/admin_business.go`**：
+- 新增 `AdminGetAgentTree` GET `/admin/agents/:id/tree`（超管跨租户查询）
+
+**`internal/router/router.go`**：注册 7 条新路由（admin 1 + tenant 1 + agent 5）
+
+#### 测试（`internal/multilevel/multilevel_test.go`，27 个用例全 PASS）
+
+- `DistributeCrossCommission`（7 个）：level 1 无父级 / level 2 父级 50% / level 3 父级 + 祖父级 / 父级禁用跳过 / 零佣金 / nil agent / 自定义比例
+- `CanCreateSubordinate`（6 个）：level 1 max=3 / level 3 max=3 / max=1 / `agent_can_create=false` / 禁用 / nil
+- `ComputeSubordinateLevel`（5 个）：tenant 邀请码 → level 1 / agent 邀请码 → level 2 / level 3 创建者超限 / 创建者不存在 / nil
+- `BuildAgentTree`（4 个）：三级树 / `maxDepth=0` 仅根 / 不存在 / 租户隔离
+- `ListSubordinates`（3 个）：单层 / 无子级 / 租户隔离
+- 边界（2 个）：负佣金 / parent 链断裂
+
+测试栈：SQLite in-memory（4 表 AutoMigrate）+ miniredis + 真实 `ConfigCache`（预置 sys_config 4 项）
+
+#### 铁律遵守
+
+- **铁律 04（无硬编码）**：跨级佣金比例 / max_level / `agent_can_create` 全部从 sys_config 读取，默认值仅作 fallback
+- **铁律 05（配置走后端）**：4 项配置可通过后台「系统配置」实时调整，无需重启
+- **铁律 06（反幻觉）**：跨级佣金算法基于 `agent.Level`（源代理层级）+ depth 判断比例（修复了基于 `current.Level` 的 bug，否则 depth=1 时会误用 `cross_level_2_rate`）；测试覆盖正/负/零/边界/兼容全场景
+
+#### 兼容性
+
+- v0.3.x 老代理升级后：`parent_id=0` + `level=1`，行为等同一级代理（无跨级佣金）
+- v0.3.x 老邀请码升级后：`creator_type='tenant'` + `creator_agent_id=0`，新代理仍注册为一级
+- 回滚 SQL：DROP 字段 + 删除 4 项 sys_config；回滚前需确认无活跃二级/三级代理
+
+#### 验证
+
+- `go test ./internal/multilevel/`：27 个用例全 PASS
+- `go test ./...`：11 个测试包全 PASS（无回归）
+- `go build ./...`：通过
+
+---
+
 ### [新增] 全语言 SDK 扩展（Java / C# / Go / C++ / 易语言，v0.4.x 第五项）
 
 #### 背景

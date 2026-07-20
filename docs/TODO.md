@@ -319,9 +319,11 @@
 ### [P2] 三期商业化完整版
 
 #### 多级代理
-- [ ] [待开始] 二级代理支持 - v0.4.0
-- [ ] [待开始] 三级代理支持 - v0.4.0
-- [ ] [待开始] 跨级佣金结算 - v0.4.0
+- [x] [已完成] 二级代理支持 - v0.4.0（migration 009 agent.parent_id + level + invite_code.creator_type/creator_agent_id）
+- [x] [已完成] 三级代理支持 - v0.4.0（max_level=3 sys_config 控制 + CanCreateSubordinate 校验）
+- [x] [已完成] 跨级佣金结算 - v0.4.0（multilevel.DistributeCrossCommission 沿 parent_id 链向上分润，cross_level_2_rate=50% / cross_level_3_rate=20% 可后台调整）
+- [x] [已完成] 代理下级邀请码管理 - v0.4.0（POST/GET /agent/invite_codes + 禁用，CreatorType='agent' 标识）
+- [x] [已完成] 代理树查询（三端） - v0.4.0（GET /admin/agents/:id/tree + /tenant/agents/:id/tree + /agent/tree）
 
 #### 全语言 SDK
 - [ ] [待开始] Java SDK（含 Android） - v0.4.0
@@ -444,8 +446,8 @@
 └─ SDK（3 语言）
 
 三期（v0.4.0）
-├─ 多级代理
-├─ 全语言 SDK
+├─ 多级代理 ──► 二级/三级 + 跨级佣金 + 代理树 ✓
+├─ 全语言 SDK（8 语言） ✓
 ├─ 在线更新 ──► Webhook
 └─ 监控告警
 ```
@@ -472,7 +474,7 @@
 | v0.3.4 | 2026-07-19 | ✅ 已完成（结算与对账闭环：开发者 balance/frozen_balance + tenant_balance_log + tenant_withdraw + 批量结算 + 对账报表 + 双审核页面） |
 | v0.3.5 | 2026-07-19 | ✅ 已完成（P0 修复：RSA 脚本 / 数据库迁移 / H5 公共 API / 套餐配额） |
 | v0.3.6 | 2026-07-20 | ✅ 已完成（剩余 P1 收尾 + 单元测试 + 客户端 SDK 签名对齐测试） |
-| v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移 + JWT jti 单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 + 全语言 SDK 扩展 已完成；多级代理 / 灰度发布 / 在线更新 / 数据备份 / 监控告警 / 通知系统 / 终端用户体系 / API 开放平台等待开始） |
+| v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移 + JWT jti 单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 + 全语言 SDK 扩展 + 多级代理体系 已完成；灰度发布 / 在线更新 / 数据备份 / 监控告警 / 通知系统 / 终端用户体系 / API 开放平台等待开始） |
 
 ---
 
@@ -521,10 +523,11 @@
 - [x] [已完成 2026-07-20] JWT jti 精准单点踢出（jti 嵌入 JWT + BlacklistRefreshTokenByJTI + revokeSessionByJTI + KickDevice/Logout/RefreshToken 改造为 jti 维度，18 个 auth 测试 + 1 个 middleware JTI 注入测试全 PASS） - v0.4.0
 - [x] [已完成 2026-07-20] 2FA backup_codes DB 持久化（migration 008 + 三表加字段 + profile.go loadUserBackupCodes/updateUserBackupCodes/consumeBackupCode + Verify2FA/Disable2FA 改造 + 兼容 v0.3.x Redis 回退；13 个 handler 测试全 PASS） - v0.4.0
 - [x] [已完成 2026-07-20] 登录失败日志结构化（internal/logger 包基于 log/slog 零依赖 + AppConfig 加 LogLevel/LogFormat/LogOutput + 3 处 _ = err 替换为 logger.Error 结构化日志；6 个 logger 测试全 PASS） - v0.4.0
+- [x] [已完成 2026-07-20] 多级代理体系（migration 009 + agent.parent_id/level + invite_code.creator_type/creator_agent_id + 4 项 sys_config + multilevel 包 DistributeCrossCommission/CanCreateSubordinate/ComputeSubordinateLevel/BuildAgentTree/ListSubordinates + pay.go/agent_business.go/tenant_business.go/admin_business.go 接入 + 7 条新路由 + 27 个 multilevel 测试全 PASS） - v0.4.0
 
-**v0.4.x 三期商业化（约 10 项）**：
-- 多级代理（二级 + 三级 + 跨级佣金）
-- 全语言 SDK（Java / C# / Go / C++ / 易语言）
+**v0.4.x 三期商业化（约 8 项）**：
+- ~~多级代理（二级 + 三级 + 跨级佣金）~~ ✓ 已完成
+- ~~全语言 SDK（Java / C# / Go / C++ / 易语言）~~ ✓ 已完成
 - 高级安全（异地登录告警 + 风控引擎 + Cloudflare WAF）
 - 灰度发布 + Webhook 自动更新
 - 数据备份恢复

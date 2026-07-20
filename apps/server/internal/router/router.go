@@ -90,6 +90,7 @@ func Register(container *config.Container) *gin.Engine {
 		// 平台代理管理
 		adminAuth.GET("/agents", handler.AdminListAgents(deps))
 		adminAuth.PUT("/agents/:id", handler.AdminUpdateAgent(deps))
+		adminAuth.GET("/agents/:id/tree", handler.AdminGetAgentTree(deps)) // v0.4.0 多级代理树
 
 		// 公告管理
 		adminAuth.GET("/notices", handler.AdminListNotices(deps))
@@ -188,6 +189,7 @@ func Register(container *config.Container) *gin.Engine {
 		// 代理管理（v0.3.0）
 		tenantAuth.GET("/agents", handler.TenantListAgents(deps))
 		tenantAuth.PUT("/agents/:id", handler.TenantUpdateAgent(deps))
+		tenantAuth.GET("/agents/:id/tree", handler.TenantGetAgentTree(deps)) // v0.4.0 多级代理树
 
 		// 邀请码（v0.3.0）
 		tenantAuth.GET("/agents/invite_codes", handler.TenantListInviteCodes(deps))
@@ -268,6 +270,13 @@ func Register(container *config.Container) *gin.Engine {
 		// 消息通知
 		agentAuth.GET("/notices", handler.AgentListNotices(deps))
 		agentAuth.POST("/notices/:id/read", handler.AgentReadNotice(deps))
+
+		// v0.4.0 多级代理：下级邀请码 + 下级代理树
+		agentAuth.GET("/invite_codes", handler.AgentListInviteCodes(deps))
+		agentAuth.POST("/invite_codes", handler.AgentGenInviteCode(deps))
+		agentAuth.POST("/invite_codes/:id/disable", handler.AgentDisableInviteCode(deps))
+		agentAuth.GET("/subordinates", handler.AgentListSubordinates(deps))
+		agentAuth.GET("/tree", handler.AgentGetTree(deps))
 	}
 
 	// ----- 公共 API（无需鉴权） -----

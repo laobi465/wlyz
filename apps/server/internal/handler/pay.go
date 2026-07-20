@@ -19,6 +19,7 @@ import (
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
+	"github.com/your-org/keyauth-saas/apps/server/internal/multilevel"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/crypto"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/epay"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/snowflake"
@@ -651,6 +652,13 @@ func processAgentRegisterPaid(deps *Deps, notify *epay.NotifyParams) error {
 
 	// 7. 事务：建 Agent + 回填订单 + 邀请码闭环
 	now := time.Now()
+	// 7.0 计算多级代理层级（v0.4.0）
+	//   - 邀请码 creator_type='tenant' → 一级代理（parent_id=0, level=1）
+	//   - 邀请码 creator_type='agent'  → 下级代理（parent_id=创建者ID, level=创建者.level+1）
+	parentID, agentLevel, levelErr := multilevel.ComputeSubordinateLevel(ctx, deps.DB, deps.CfgCache, &ic)
+	if levelErr != nil {
+		return levelErr
+	}
 	txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
 		// 7.1 事务内重复 quota 校验（防 TOCTOU）
 		var agentCount int64
@@ -678,6 +686,8 @@ func processAgentRegisterPaid(deps *Deps, notify *epay.NotifyParams) error {
 			Balance:         0,
 			CommissionRate:  ic.DefaultCommissionRate,
 			CommissionMode:  "percentage",
+			ParentID:        parentID,   // v0.4.0：多级代理上级 ID（0=一级代理）
+			Level:           agentLevel, // v0.4.0：代理层级（1/2/3）
 			LastLoginAt:     nil,
 			LastLoginIP:     "",
 		}

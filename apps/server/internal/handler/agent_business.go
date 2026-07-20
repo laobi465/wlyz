@@ -7,6 +7,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -18,6 +19,8 @@ import (
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
+	"github.com/your-org/keyauth-saas/apps/server/internal/multilevel"
+	"github.com/your-org/keyauth-saas/apps/server/internal/quota"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/crypto"
 )
 
@@ -569,11 +572,12 @@ func AgentGenerateCards(deps *Deps) gin.HandlerFunc {
 		batchNo := fmt.Sprintf("AB%s%06d", time.Now().Format("20060102"), agentID%1000000)
 
 		// 7. 事务：扣余额 → 生成卡密 → 写 deduct 流水 → 加回佣金 → 写 commission 流水
-		var (
-			cardKeys []string
-			cardIDs  []uint64
-			balanceAfter float64
-		)
+	var (
+		cardKeys         []string
+		cardIDs          []uint64
+		balanceAfter     float64
+		crossCommissions []multilevel.CrossCommissionResult // v0.4.0：跨级佣金明细
+	)
 		txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
 			// 7.1 扣代理余额（用 SQL 表达式避免并发覆盖）
 			if err := tx.Model(&model.Agent{}).Where("id = ?", agentID).
@@ -630,47 +634,63 @@ func AgentGenerateCards(deps *Deps) gin.HandlerFunc {
 			}
 
 			// 7.4 实时结算佣金（加回 balance）
-			if commission > 0 {
-				if err := tx.Model(&model.Agent{}).Where("id = ?", agentID).
-					UpdateColumn("balance", gorm.Expr("balance + ?", commission)).Error; err != nil {
-					return fmt.Errorf("结算佣金失败: %w", err)
-				}
-				agent.Balance += commission
+		if commission > 0 {
+			if err := tx.Model(&model.Agent{}).Where("id = ?", agentID).
+				UpdateColumn("balance", gorm.Expr("balance + ?", commission)).Error; err != nil {
+				return fmt.Errorf("结算佣金失败: %w", err)
+			}
+			agent.Balance += commission
 
-				// 写佣金流水（type='commission'）
-				commissionLog := &model.AgentBalanceLog{
-					AgentID:        agentID,
-					TenantID:       tenantID,
-					Type:           "commission",
-					Amount:         commission,
-					BalanceAfter:   agent.Balance,
-					RelatedCardIDs: string(cardIDsJSON),
-					Status:         "settled",
-					Remark:         "代理购卡佣金",
-				}
-				if err := tx.Create(commissionLog).Error; err != nil {
-					return fmt.Errorf("写入佣金流水失败: %w", err)
-				}
+			// 写佣金流水（type='commission'）
+			commissionLog := &model.AgentBalanceLog{
+				AgentID:        agentID,
+				TenantID:       tenantID,
+				Type:           "commission",
+				Amount:         commission,
+				BalanceAfter:   agent.Balance,
+				RelatedCardIDs: string(cardIDsJSON),
+				Status:         "settled",
+				Remark:         "代理购卡佣金",
+			}
+			if err := tx.Create(commissionLog).Error; err != nil {
+				return fmt.Errorf("写入佣金流水失败: %w", err)
 			}
 
-			balanceAfter = agent.Balance
-			return nil
-		})
-		if txErr != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5003, "代理购卡失败: "+txErr.Error())
-			return
+			// 7.5 v0.4.0 多级代理跨级佣金分发
+			//   沿 parent_id 链向上传递（level 2 → 父级 level 1；level 3 → 父级 level 2 + 祖父级 level 1）
+			//   父级非 active 自动跳过；比例从 sys_config 读取
+			crossResults, crossErr := multilevel.DistributeCrossCommission(
+				c.Request.Context(), tx, deps.CfgCache, &agent, commission, string(cardIDsJSON),
+			)
+			if crossErr != nil {
+				return fmt.Errorf("跨级佣金分发失败: %w", crossErr)
+			}
+			crossCommissions = crossResults
 		}
 
-		middleware.Success(c, gin.H{
-			"batch_no":      batchNo,
-			"quantity":      req.Quantity,
-			"card_keys":     cardKeys,
-			"card_ids":      cardIDs,
-			"cost_total":    costTotal,
-			"commission":    commission,
-			"balance_after": balanceAfter,
-			"warn":          "卡密明文仅本次返回一次，请立即保存或导出",
-		})
+		balanceAfter = agent.Balance
+		return nil
+	})
+	if txErr != nil {
+		middleware.Fail(c, http.StatusInternalServerError, 5003, "代理购卡失败: "+txErr.Error())
+		return
+	}
+
+	resp := gin.H{
+		"batch_no":      batchNo,
+		"quantity":      req.Quantity,
+		"card_keys":     cardKeys,
+		"card_ids":      cardIDs,
+		"cost_total":    costTotal,
+		"commission":    commission,
+		"balance_after": balanceAfter,
+		"warn":          "卡密明文仅本次返回一次，请立即保存或导出",
+	}
+	// v0.4.0：跨级佣金明细（仅当有上级代理被结算时返回）
+	if len(crossCommissions) > 0 {
+		resp["cross_commissions"] = crossCommissions
+	}
+	middleware.Success(c, resp)
 	}
 }
 
@@ -1149,6 +1169,255 @@ func AgentReadNotice(deps *Deps) gin.HandlerFunc {
 		middleware.Success(c, gin.H{
 			"notice_id": noticeID,
 			"read":      true,
+		})
+	}
+}
+
+// ============== 12. v0.4.0 多级代理：下级邀请码管理 ==============
+
+// agentGenInviteCodeReq 代理生成下级邀请码请求体
+type agentGenInviteCodeReq struct {
+	Count          int     `json:"count" binding:"required,min=1,max=50"`
+	ExpireDays     int     `json:"expire_days" binding:"required,min=1,max=365"`
+	CommissionRate float64 `json:"commission_rate" binding:"omitempty,min=0,max=100"`
+}
+
+// AgentGenInviteCode POST /api/v1/agent/invite_codes
+// 代理生成下级邀请码（仅 level < max_level 且 agent_can_create=true 时允许）
+func AgentGenInviteCode(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tenantID := getTenantID(c)
+		agentID := getUserID(c)
+		if agentID == 0 {
+			middleware.Fail(c, http.StatusForbidden, 1003, "无法识别代理身份")
+			return
+		}
+
+		var req agentGenInviteCodeReq
+		if err := c.ShouldBindJSON(&req); err != nil {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "参数错误: "+err.Error())
+			return
+		}
+
+		// 1. 查代理（必须 active）
+		var agent model.Agent
+		if err := deps.DB.Where("id = ? AND tenant_id = ?", agentID, tenantID).First(&agent).Error; err != nil {
+			middleware.Fail(c, http.StatusForbidden, 1003, "代理账号不存在或无权访问")
+			return
+		}
+		if agent.Status != "active" {
+			middleware.Fail(c, http.StatusForbidden, 1005, "代理账号已被禁用")
+			return
+		}
+
+		// 2. 校验多级代理资格（agent_can_create + level < max_level）
+		ctx := c.Request.Context()
+		if err := multilevel.CanCreateSubordinate(ctx, deps.CfgCache, &agent); err != nil {
+			middleware.Fail(c, http.StatusForbidden, 1050, "无法创建下级邀请码: "+err.Error())
+			return
+		}
+
+		// 3. 佣金比例（请求未传则用代理自己的 CommissionRate）
+		rate := req.CommissionRate
+		if rate <= 0 {
+			rate = agent.CommissionRate
+		}
+
+		// 4. 套餐配额校验（quota.CheckMaxAgents 防止发放无效邀请码）
+		if err := quota.CheckMaxAgents(deps.DB, tenantID); err != nil {
+			middleware.Fail(c, http.StatusForbidden, 1008, err.Error())
+			return
+		}
+
+		// 5. 事务内批量生成
+		codes := make([]string, 0, req.Count)
+		expiresAt := time.Now().AddDate(0, 0, req.ExpireDays)
+		txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
+			for i := 0; i < req.Count; i++ {
+				code, err := genInviteCodeUnique(tx)
+				if err != nil {
+					return err
+				}
+				ic := &model.AgentInviteCode{
+					TenantID:              tenantID,
+					Code:                  code,
+					MaxUses:               1,
+					UsedCount:             0,
+					ValidDays:             req.ExpireDays,
+					ExpiresAt:             expiresAt,
+					Status:                "active",
+					DefaultCommissionRate: rate,
+					CreatedBy:             agentID,
+					CreatorType:           "agent",      // v0.4.0：代理创建
+					CreatorAgentID:        agentID,      // v0.4.0：创建者代理 ID
+				}
+				if err := tx.Create(ic).Error; err != nil {
+					return fmt.Errorf("创建邀请码失败: %w", err)
+				}
+				codes = append(codes, code)
+			}
+			return nil
+		})
+		if txErr != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5003, "生成邀请码失败: "+txErr.Error())
+			return
+		}
+
+		middleware.Success(c, gin.H{
+			"codes":       codes,
+			"count":       len(codes),
+			"expire_days": req.ExpireDays,
+			"expires_at":  expiresAt.Unix(),
+			"creator":     "agent",
+			"creator_id":  agentID,
+			"level":       agent.Level,
+		})
+	}
+}
+
+// AgentListInviteCodes GET /api/v1/agent/invite_codes
+// 代理查询自己创建的下级邀请码列表
+func AgentListInviteCodes(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tenantID := getTenantID(c)
+		agentID := getUserID(c)
+		if agentID == 0 {
+			middleware.Fail(c, http.StatusForbidden, 1003, "无法识别代理身份")
+			return
+		}
+
+		status := c.Query("status")
+		page, size := parsePagination(c)
+
+		query := deps.DB.Model(&model.AgentInviteCode{}).
+			Where("tenant_id = ? AND creator_type = ? AND creator_agent_id = ?",
+				tenantID, "agent", agentID)
+		if status != "" {
+			query = query.Where("status = ?", status)
+		}
+
+		var total int64
+		if err := query.Count(&total).Error; err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "查询邀请码总数失败")
+			return
+		}
+		var codes []model.AgentInviteCode
+		if err := query.Order("created_at DESC").
+			Offset((page - 1) * size).Limit(size).Find(&codes).Error; err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "查询邀请码列表失败")
+			return
+		}
+
+		middleware.Success(c, gin.H{
+			"list":  codes,
+			"total": total,
+			"page":  page,
+			"size":  size,
+		})
+	}
+}
+
+// AgentDisableInviteCode POST /api/v1/agent/invite_codes/:id/disable
+// 代理禁用自己创建的下级邀请码
+func AgentDisableInviteCode(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tenantID := getTenantID(c)
+		agentID := getUserID(c)
+		if agentID == 0 {
+			middleware.Fail(c, http.StatusForbidden, 1003, "无法识别代理身份")
+			return
+		}
+		codeID, err := parseUintParam(c, "id")
+		if err != nil || codeID == 0 {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "邀请码 ID 无效")
+			return
+		}
+
+		// 校验：必须是当前代理创建的邀请码
+		var ic model.AgentInviteCode
+		if err := deps.DB.Where("id = ? AND tenant_id = ? AND creator_type = ? AND creator_agent_id = ?",
+			codeID, tenantID, "agent", agentID).First(&ic).Error; err != nil {
+			middleware.Fail(c, http.StatusNotFound, 1004, "邀请码不存在或无权操作")
+			return
+		}
+		if ic.Status == "exhausted" {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "邀请码已用尽，无需禁用")
+			return
+		}
+		if err := deps.DB.Model(&ic).Update("status", "disabled").Error; err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "禁用邀请码失败")
+			return
+		}
+
+		middleware.Success(c, gin.H{
+			"id":     ic.ID,
+			"status": "disabled",
+		})
+	}
+}
+
+// ============== 13. v0.4.0 多级代理：下级代理查询 ==============
+
+// AgentListSubordinates GET /api/v1/agent/subordinates
+// 代理查询直接下级代理列表（单层，不递归）
+func AgentListSubordinates(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tenantID := getTenantID(c)
+		agentID := getUserID(c)
+		if agentID == 0 {
+			middleware.Fail(c, http.StatusForbidden, 1003, "无法识别代理身份")
+			return
+		}
+
+		subs, err := multilevel.ListSubordinates(c.Request.Context(), deps.DB, agentID, tenantID)
+		if err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "查询下级代理失败: "+err.Error())
+			return
+		}
+
+		middleware.Success(c, gin.H{
+			"list":  subs,
+			"total": len(subs),
+		})
+	}
+}
+
+// AgentGetTree GET /api/v1/agent/tree
+// 代理查询自己的下级代理树（递归，最深 max_level-1 层）
+func AgentGetTree(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tenantID := getTenantID(c)
+		agentID := getUserID(c)
+		if agentID == 0 {
+			middleware.Fail(c, http.StatusForbidden, 1003, "无法识别代理身份")
+			return
+		}
+
+		// 最深递归层数 = max_level - 1（例如 max_level=3 时，level=1 代理可下钻 2 层）
+		maxLevel := int(deps.CfgCache.GetInt(c.Request.Context(), "agent.commission.max_level", 3))
+		if maxLevel < 1 {
+			maxLevel = 1
+		}
+		maxDepth := maxLevel - 1
+
+		tree, err := multilevel.BuildAgentTree(c.Request.Context(), deps.DB, agentID, maxDepth)
+		if err != nil {
+			if errors.Is(err, multilevel.ErrAgentNotFound) {
+				middleware.Fail(c, http.StatusNotFound, 1004, "代理账号不存在")
+				return
+			}
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "构建代理树失败: "+err.Error())
+			return
+		}
+
+		// 校验：树根必须属于当前 tenant（防越权）
+		if tree.Agent.TenantID != tenantID {
+			middleware.Fail(c, http.StatusForbidden, 1003, "无权访问该代理树")
+			return
+		}
+
+		middleware.Success(c, gin.H{
+			"tree": tree,
 		})
 	}
 }

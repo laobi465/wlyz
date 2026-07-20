@@ -5,6 +5,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
+	"github.com/your-org/keyauth-saas/apps/server/internal/multilevel"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/crypto"
 )
 
@@ -1089,6 +1091,40 @@ func AdminRemoveIPBlacklist(deps *Deps) gin.HandlerFunc {
 		}
 
 		middleware.Success(c, gin.H{"id": id, "deleted": true})
+	}
+}
+
+// ============== v0.4.0 多级代理：代理树查询 ==============
+
+// AdminGetAgentTree GET /api/v1/admin/agents/:id/tree
+// 平台超管查询指定代理的下级代理树（递归，最深 max_level-1 层，跨租户可查）
+func AdminGetAgentTree(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		agentID, err := parseUintParam(c, "id")
+		if err != nil || agentID == 0 {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "代理 ID 无效")
+			return
+		}
+
+		maxLevel := int(deps.CfgCache.GetInt(c.Request.Context(), "agent.commission.max_level", 3))
+		if maxLevel < 1 {
+			maxLevel = 1
+		}
+		maxDepth := maxLevel - 1
+
+		tree, err := multilevel.BuildAgentTree(c.Request.Context(), deps.DB, agentID, maxDepth)
+		if err != nil {
+			if errors.Is(err, multilevel.ErrAgentNotFound) {
+				middleware.Fail(c, http.StatusNotFound, 1004, "代理账号不存在")
+				return
+			}
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "构建代理树失败: "+err.Error())
+			return
+		}
+
+		middleware.Success(c, gin.H{
+			"tree": tree,
+		})
 	}
 }
 

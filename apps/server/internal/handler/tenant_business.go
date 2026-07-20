@@ -18,6 +18,7 @@ import (
 	"github.com/your-org/keyauth-saas/apps/server/internal/heartbeat"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
+	"github.com/your-org/keyauth-saas/apps/server/internal/multilevel"
 	"github.com/your-org/keyauth-saas/apps/server/internal/quota"
 )
 
@@ -1488,13 +1489,55 @@ func TenantDeleteNotice(deps *Deps) gin.HandlerFunc {
 		}
 
 		// 事务删除：先删关联的 NoticeTarget / NoticeRead，再删 Notice 本身，避免脏数据
-		deps.DB.Where("notice_id = ?", id).Delete(&model.NoticeRead{})
-		deps.DB.Where("notice_id = ?", id).Delete(&model.NoticeTarget{})
-		if err := deps.DB.Delete(&model.Notice{}, id).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "删除公告失败: "+err.Error())
+	deps.DB.Where("notice_id = ?", id).Delete(&model.NoticeRead{})
+	deps.DB.Where("notice_id = ?", id).Delete(&model.NoticeTarget{})
+	if err := deps.DB.Delete(&model.Notice{}, id).Error; err != nil {
+		middleware.Fail(c, http.StatusInternalServerError, 5002, "删除公告失败: "+err.Error())
+		return
+	}
+
+	middleware.Success(c, gin.H{"id": id, "deleted": true})
+	}
+}
+
+// ============== v0.4.0 多级代理：代理树查询 ==============
+
+// TenantGetAgentTree GET /api/v1/tenant/agents/:id/tree
+// 开发者查询指定代理的下级代理树（递归，最深 max_level-1 层）
+func TenantGetAgentTree(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tenantID := getTenantID(c)
+		agentID, err := parseUintParam(c, "id")
+		if err != nil || agentID == 0 {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "代理 ID 无效")
 			return
 		}
 
-		middleware.Success(c, gin.H{"id": id, "deleted": true})
+		// 校验：代理必须属于当前开发者
+		var agent model.Agent
+		if err := deps.DB.Where("id = ? AND tenant_id = ?", agentID, tenantID).First(&agent).Error; err != nil {
+			middleware.Fail(c, http.StatusNotFound, 1004, "代理不存在或无权访问")
+			return
+		}
+
+		maxLevel := int(deps.CfgCache.GetInt(c.Request.Context(), "agent.commission.max_level", 3))
+		if maxLevel < 1 {
+			maxLevel = 1
+		}
+		maxDepth := maxLevel - 1
+
+		tree, err := multilevel.BuildAgentTree(c.Request.Context(), deps.DB, agentID, maxDepth)
+		if err != nil {
+			if errors.Is(err, multilevel.ErrAgentNotFound) {
+				middleware.Fail(c, http.StatusNotFound, 1004, "代理账号不存在")
+				return
+			}
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "构建代理树失败: "+err.Error())
+			return
+		}
+
+		middleware.Success(c, gin.H{
+			"tree": tree,
+		})
 	}
 }
