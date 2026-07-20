@@ -275,3 +275,51 @@ export const agentRegisterApi = (data: {
 export const agentRegisterOrderStatusApi = (orderNo: string) => {
   return request.get<AgentRegisterOrder>(`/public/auth/agent/register/order/${orderNo}`)
 }
+
+// ============== v0.4.x 残留项 1：代理子域名绑定 ==============
+
+export type AgentSubdomainStatus = 'none' | 'pending' | 'approved' | 'rejected'
+
+export interface AgentSubdomainInfo {
+  enabled: boolean
+  pattern: string
+  subdomain: string
+  subdomain_status: AgentSubdomainStatus
+}
+
+export interface AgentApplySubdomainReq {
+  subdomain: string
+}
+
+/** 查询当前代理子域名绑定状态（GET /agent/subdomain） */
+export const agentSubdomainStatusApi = () => {
+  return request.get<AgentSubdomainInfo>('/agent/subdomain')
+}
+
+/** 申请子域名（POST /agent/subdomain/apply） */
+export const agentApplySubdomainApi = (data: AgentApplySubdomainReq) => {
+  return request.post<{ subdomain: string; subdomain_status: string; message: string }>(
+    '/agent/subdomain/apply',
+    data
+  )
+}
+
+/** 解绑子域名（DELETE /agent/subdomain） */
+export const agentUnbindSubdomainApi = () => {
+  return request.delete<{ subdomain_status: string; message: string }>('/agent/subdomain')
+}
+
+// ============== v0.4.x 残留项 3（P-10）：代理扫码购卡 URL ==============
+
+export interface AgentPortalQrCode {
+  agent_id: number
+  subdomain: string
+  subdomain_status: AgentSubdomainStatus
+  portal_url: string
+  qrcode_api: string
+}
+
+/** 获取代理门户购卡二维码 URL（GET /agent/portal/qrcode） */
+export const agentPortalQrCodeApi = () => {
+  return request.get<AgentPortalQrCode>('/agent/portal/qrcode')
+}

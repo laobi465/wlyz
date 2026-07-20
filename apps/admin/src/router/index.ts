@@ -66,7 +66,19 @@ const routes: RouteRecordRaw[] = [
       { path: 'my-cards', name: 'H5MyCards', component: lazy(() => import('@/views/h5/MyCards.vue')), meta: { title: '我的卡密', role: 'enduser' } },
       { path: 'sessions', name: 'H5Sessions', component: lazy(() => import('@/views/h5/Sessions.vue')), meta: { title: '会话管理', role: 'enduser' } },
       { path: 'edit-profile', name: 'H5EditProfile', component: lazy(() => import('@/views/h5/EditProfile.vue')), meta: { title: '编辑资料', role: 'enduser' } },
-      { path: 'change-password', name: 'H5ChangePassword', component: lazy(() => import('@/views/h5/ChangePassword.vue')), meta: { title: '修改密码', role: 'enduser' } }
+      { path: 'change-password', name: 'H5ChangePassword', component: lazy(() => import('@/views/h5/ChangePassword.vue')), meta: { title: '修改密码', role: 'enduser' } },
+
+      // v0.4.x 残留项 1-4：H5 终端用户订单/公告/帮助/客服
+      // 订单相关需 enduser 鉴权；公告详情/帮助/客服为公开端点
+      { path: 'orders', name: 'H5Orders', component: lazy(() => import('@/views/h5/Orders.vue')), meta: { title: '我的订单', role: 'enduser' } },
+      { path: 'orders/:orderNo', name: 'H5OrderDetail', component: lazy(() => import('@/views/h5/OrderDetail.vue')), meta: { title: '订单详情', role: 'enduser' } },
+      { path: 'notices/:id', name: 'H5NoticeDetail', component: lazy(() => import('@/views/h5/NoticeDetail.vue')), meta: { title: '平台公告', public: true } },
+      { path: 'help', name: 'H5Help', component: lazy(() => import('@/views/h5/Help.vue')), meta: { title: '帮助中心', public: true } },
+      { path: 'contact', name: 'H5Contact', component: lazy(() => import('@/views/h5/Contact.vue')), meta: { title: '联系客服', public: true } },
+
+      // v0.4.x 残留项 2（P-06）：代理独立门户 H5 页面（公开访问）
+      { path: 'portal/:agentId', name: 'AgentPortal', component: lazy(() => import('@/views/h5/AgentPortal.vue')), meta: { title: '代理门户', public: true } },
+      { path: 'portal/:agentId/buy/:cardTypeId', name: 'AgentPortalBuy', component: lazy(() => import('@/views/h5/AgentPortalBuy.vue')), meta: { title: '购卡结算', public: true } }
     ]
   },
 
@@ -133,6 +145,8 @@ const routes: RouteRecordRaw[] = [
       { path: 'balance',     name: 'AgentBalance',    component: lazy(() => import('@/views/agent/Balance.vue')), meta: { title: '余额/提现', icon: 'Wallet' } },
       { path: 'commission',  name: 'AgentCommission', component: lazy(() => import('@/views/agent/Commission.vue')), meta: { title: '佣金记录',  icon: 'GoldMedal' } },
       { path: 'notices',     name: 'AgentNotices',    component: lazy(() => import('@/views/agent/Notices.vue')), meta: { title: '消息通知',  icon: 'Bell' } },
+      // v0.4.x 残留项 3（P-10）：代理扫码购卡页面
+      { path: 'qrcode',      name: 'AgentQrCode',     component: lazy(() => import('@/views/agent/QrCode.vue')), meta: { title: '扫码购卡',  icon: 'Iphone' } },
       { path: 'profile',     name: 'AgentProfile',    component: lazy(() => import('@/views/agent/Profile.vue')), meta: { title: '账号设置',  icon: 'Setting' } }
     ]
   },

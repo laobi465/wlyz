@@ -499,3 +499,165 @@ func AdminReconciliation(deps *Deps) gin.HandlerFunc {
 		})
 	}
 }
+
+// ============== v0.4.x 开发者月费订单管理 ==============
+
+// monthlyFeeOrderItem 月费订单列表项（联表 sys_tenant 拿用户名）
+type monthlyFeeOrderItem struct {
+	model.TenantMonthlyFeeOrder
+	TenantUsername string `json:"tenant_username"`
+}
+
+// AdminListMonthlyFeeOrders GET /admin/monthly_fee_orders
+// 查询所有开发者月费订单（默认 status=pending）
+func AdminListMonthlyFeeOrders(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		page, pageSize := parsePagination(c)
+
+		q := deps.DB.Table("tenant_monthly_fee_order AS o").
+			Select("o.*, t.username AS tenant_username").
+			Joins("LEFT JOIN sys_tenant AS t ON t.id = o.tenant_id")
+
+		if s := c.Query("pay_status"); s != "" {
+			q = q.Where("o.pay_status = ?", s)
+		} else {
+			q = q.Where("o.pay_status = ?", "pending")
+		}
+		if tenantIDStr := c.Query("tenant_id"); tenantIDStr != "" {
+			if tid, err := strconv.ParseUint(tenantIDStr, 10, 64); err == nil && tid > 0 {
+				q = q.Where("o.tenant_id = ?", tid)
+			}
+		}
+		if kw := c.Query("keyword"); kw != "" {
+			q = q.Where("t.username LIKE ? OR o.order_no LIKE ?",
+				"%"+kw+"%", "%"+kw+"%")
+		}
+		if startDate := c.Query("start_date"); startDate != "" {
+			q = q.Where("o.period_start >= ?", startDate+" 00:00:00")
+		}
+		if endDate := c.Query("end_date"); endDate != "" {
+			q = q.Where("o.period_end <= ?", endDate+" 23:59:59")
+		}
+
+		var total int64
+		q.Count(&total)
+
+		var list []monthlyFeeOrderItem
+		if err := q.Order("o.id DESC").
+			Offset((page - 1) * pageSize).Limit(pageSize).
+			Scan(&list).Error; err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询月费订单失败")
+			return
+		}
+
+		middleware.Success(c, gin.H{
+			"list":      list,
+			"total":     total,
+			"page":      page,
+			"page_size": pageSize,
+		})
+	}
+}
+
+// AdminMonthlyFeeStats GET /admin/monthly_fee_orders/stats
+// 月费订单统计（已收/未收/退款）
+func AdminMonthlyFeeStats(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		q := deps.DB.Model(&model.TenantMonthlyFeeOrder{})
+		if startDate := c.Query("start_date"); startDate != "" {
+			q = q.Where("period_start >= ?", startDate+" 00:00:00")
+		}
+		if endDate := c.Query("end_date"); endDate != "" {
+			q = q.Where("period_end <= ?", endDate+" 23:59:59")
+		}
+
+		var (
+			totalOrders    int64
+			pendingCount   int64
+			paidCount      int64
+			closedCount    int64
+			pendingAmount  float64
+			paidAmount     float64
+		)
+		q.Count(&totalOrders)
+
+		deps.DB.Model(&model.TenantMonthlyFeeOrder{}).Where("pay_status = ?", "pending").
+			Count(&pendingCount)
+		deps.DB.Model(&model.TenantMonthlyFeeOrder{}).Where("pay_status = ?", "paid").
+			Count(&paidCount)
+		deps.DB.Model(&model.TenantMonthlyFeeOrder{}).Where("pay_status = ?", "closed").
+			Count(&closedCount)
+
+		deps.DB.Model(&model.TenantMonthlyFeeOrder{}).Where("pay_status = ?", "pending").
+			Select("COALESCE(SUM(amount), 0)").Scan(&pendingAmount)
+		deps.DB.Model(&model.TenantMonthlyFeeOrder{}).Where("pay_status = ?", "paid").
+			Select("COALESCE(SUM(amount), 0)").Scan(&paidAmount)
+
+		middleware.Success(c, gin.H{
+			"total_orders":   totalOrders,
+			"pending_count":  pendingCount,
+			"paid_count":     paidCount,
+			"closed_count":   closedCount,
+			"pending_amount": pendingAmount,
+			"paid_amount":    paidAmount,
+		})
+	}
+}
+
+// AdminMarkMonthlyFeePaid POST /admin/monthly_fee_orders/:id/mark_paid
+// 超管手动标记月费订单已支付（线下对公转账场景）
+// 铁律 06：事务内更新 pay_status + pay_mode=manual + paid_at
+func AdminMarkMonthlyFeePaid(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		orderID, err := parseUintParam(c, "id")
+		if err != nil || orderID == 0 {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "订单 ID 格式错误")
+			return
+		}
+
+		var order model.TenantMonthlyFeeOrder
+		if err := deps.DB.First(&order, orderID).Error; err != nil {
+			middleware.Fail(c, http.StatusNotFound, 1008, "月费订单不存在")
+			return
+		}
+		if order.PayStatus == "paid" {
+			middleware.Fail(c, http.StatusBadRequest, 1009, "订单已支付")
+			return
+		}
+		if order.PayStatus == "closed" {
+			middleware.Fail(c, http.StatusBadRequest, 1009, "订单已关闭")
+			return
+		}
+
+		adminID := getUserID(c)
+		now := time.Now()
+		txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Model(&order).Updates(map[string]interface{}{
+				"pay_status": "paid",
+				"pay_mode":   "manual",
+				"paid_at":    &now,
+			}).Error; err != nil {
+				return fmt.Errorf("更新月费订单状态失败: %w", err)
+			}
+			return nil
+		})
+		if txErr != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "标记支付失败: "+txErr.Error())
+			return
+		}
+
+		RecordOperation(deps, c, "monthly_fee", "mark_paid", "success", "tenant_monthly_fee_order", &orderID, map[string]interface{}{
+			"order_no":  order.OrderNo,
+			"tenant_id": order.TenantID,
+			"amount":    order.Amount,
+			"admin_id":  adminID,
+		})
+
+		middleware.Success(c, gin.H{
+			"order_id":   orderID,
+			"pay_status": "paid",
+			"pay_mode":   "manual",
+			"paid_at":    now.Unix(),
+		})
+	}
+}

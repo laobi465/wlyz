@@ -141,7 +141,7 @@ SDK 校验签名 → 通过则解锁功能
 | S-01 | 平台看板 | ✅ | 8 数据卡 + 待办列表 + 收入趋势 + 最近开发者/订单表（v0.2.6） |
 | S-02 | 租户管理 | ✅ | 开发者 CRUD + 状态/套餐分配（v0.3.0） |
 | S-03 | 套餐管理 | ✅ | 套餐 CRUD + 应用数/卡密数/代理数上限 + 抽成比例（v0.3.0） |
-| S-04 | 应用审核 | ☐ | 应用上架审核、违规下架（v0.4.x） |
+| S-04 | 应用审核 | ✅ | 应用上架审核、违规下架（v0.4.x：migration 023 app 加 audit_status 4 字段 + app.audit.enabled 配置；admin 4 端点 pending/audit/offline/online；client 验证 API 校验 audit_status=approved） |
 | S-05 | 代理全局视图 | ✅ | 跨租户代理列表 + 状态/封禁（v0.3.0） |
 | S-06 | 平台总支付配置 | ✅ | sys_config 易支付网关/商户号/密钥 + 抽成比例 + TestPayConfig（v0.2.3） |
 | S-07 | 系统配置 | ✅ | sys_config 全局参数 CRUD + Redis 缓存（v0.2.0） |
@@ -154,7 +154,7 @@ SDK 校验签名 → 通过则解锁功能
 | S-14 | 管理员管理 | ✅ | 超管账号 + 2FA TOTP + 登录设备管理（v0.3.0）+ 安装向导首次配置（v0.3.6 `/install`） |
 | S-15 | 平台总公告管理 | ✅ | 公告 CRUD + 横幅开关 + 公开 API（v0.3.0） |
 | S-16 | 开发者公告管理 | ✅ | 公告 CRUD（v0.3.0） |
-| S-17 | 代理注册管理 | ◐ | 注册订单流程已实现（v0.3.6：AgentRegister + processAgentRegisterPaid + 邀请码状态机闭环），收入统计/退款待 v0.4.x |
+| S-17 | 代理注册管理 | ✅ | 注册订单流程已实现（v0.3.6：AgentRegister + processAgentRegisterPaid + 邀请码状态机闭环）；v0.4.x 补齐收入统计/退款（migration 026 加 5 退款字段 + admin 4 端点 list/stats/refund/detail；refund 事务：退还注册费到 agent.balance + 禁用代理账号） |
 
 ### 3.2 开发者控制台（19 个模块）
 
@@ -174,7 +174,7 @@ SDK 校验签名 → 通过则解锁功能
 | D-12 | 验证日志 | ✅ | log_verify 按月分区 + 异步 worker（v0.3.3） |
 | D-13 | 操作日志 | ✅ | log_operation + 切面 RecordOperation（v0.3.3） |
 | D-14 | 财务统计 | ✅ | 结算记录 + 余额流水 + 提现申请 + 提现审核（v0.3.2 + v0.3.4） |
-| D-15 | 安全设置 | ☐ | IP 黑名单、频率限制（v0.4.x，目前仅超管侧） |
+| D-15 | 安全设置 | ✅ | IP 黑名单、频率限制（v0.4.x：migration 025 tenant_security_config 表 + TenantSecurityMiddleware IP 黑名单 + Redis 频率限制 + tenant 2 端点 get/put） |
 | D-16 | SDK 下载 | ✅ | 八语言 SDK 已发布（Python / Node.js / PHP / Go / Java / C# / C++ / 易语言，`sdks/` 目录）+ 单元测试 + 跨语言签名对齐测试（`sdks/tests/` + `pkg/crypto/sign_alignment_test.go` 7 语言自动化 + 1 语言 Windows-only skip） |
 | D-17 | 开发者设置 | ✅ | 资料 + 公司信息 + 密码 + 2FA + 登录设备（v0.3.0） |
 | D-18 | 支付配置 | ✅ | 双层模式切换（平台总支付 / 自有易支付）（v0.3.6：CreatePayOrder 双层切换 + TOP/ORD 前缀分发 + EpayTenantNotify 完整实现） |
@@ -189,11 +189,11 @@ SDK 校验签名 → 通过则解锁功能
 | P-03 | 卡密管理 | ✅ | 自己生成的卡密列表（v0.2.5） |
 | P-04 | 销售订单 | ✅ | 自售订单 + 状态筛选 + 分页（v0.2.5） |
 | P-05 | 佣金结算 | ✅ | 佣金明细 + 提现申请 + 双模式（percentage/diff）（v0.2.5） |
-| P-06 | 独立门户 | ☐ | 代理专属购卡页 + 子域名绑定（v0.4.x） |
+| P-06 | 独立门户 | ✅ | 代理专属购卡页 + 子域名绑定（v0.4.x：AgentPortal.vue 门户页 + AgentPortalBuy.vue 结算页 + 后端 PublicPortal/PublicPortalOrder 端点；migration 024 agent 加 subdomain_status 字段 + agent.subdomain.enabled/pattern 配置 + agent 3 端点 status/apply/unbind + admin 3 端点 list/approve/reject） |
 | P-07 | 代理设置 | ✅ | 资料 + 提现账户 + 密码 + 2FA + 登录设备（v0.2.6 + v0.3.1） |
 | P-08 | 公告中心 | ✅ | 平台 + 开发者通知列表 + 已读标记（v0.2.7） |
 | P-09 | 余额充值 | ✅ | 充值申请 + 支付方式 + 凭证上传 + 待审核闭环（v0.3.1 + v0.3.2） |
-| P-10 | 实时购卡 | ☐ | 扫码购卡（备用方式）（v0.4.x） |
+| P-10 | 实时购卡 | ✅ | 扫码购卡（备用方式）（v0.4.x：AgentPortalQrCode 端点返回代理专属购卡 URL + QrCode.vue 渲染二维码 + 复制链接 + 下载按钮） |
 
 ### 3.4 终端用户 H5（14 个页面）
 
@@ -203,16 +203,16 @@ SDK 校验签名 → 通过则解锁功能
 | U-02 | 应用详情页 | ✅ | PublicAppInfo 渲染（v0.3.5） |
 | U-03 | 购卡结算页 | ✅ | PublicCardTypes + CreatePayOrder（v0.2.3 + v0.3.5） |
 | U-04 | 支付结果页 | ✅ | GetPayOrder + 卡密明文展示（v0.2.4 + v0.3.5） |
-| U-05 | 我的卡密 | ◐ | 后端已建（v0.4.0：H5EndUserListMyCards + H5EndUserGetCardDetail），前端待接入（v0.4.x） |
+| U-05 | 我的卡密 | ✅ | 后端已建（v0.4.0：H5EndUserListMyCards + H5EndUserGetCardDetail）；前端已接入（v0.4.x：MyCards.vue 分页列表 + 绑定弹窗 + 解绑操作） |
 | U-06 | 卡密详情 | ✅ | 卡密查询 + 详情（v0.2.4） |
 | U-07 | 查卡页 | ✅ | 按 card_key 查询（v0.2.4） |
-| U-08 | 在线激活页 | ◐ | 后端已建（v0.4.0：H5EndUserBindCard + UnbindCard 事务化绑卡），前端待接入（v0.4.x） |
-| U-09 | 用户登录/注册 | ◐ | 后端已建（v0.4.0：H5EndUserRegister + H5EndUserLogin + 验证码 + 重置密码），前端待接入（v0.4.x） |
-| U-10 | 用户中心 | ◐ | 后端已建（v0.4.0：H5EndUserMe + UpdateProfile + ChangePassword + 会话管理 + 单点踢出），前端待接入（v0.4.x） |
-| U-11 | 订单列表 | ☐ | 终端用户订单视图（v0.4.x，后端订单查询已存在，待 H5 接入） |
-| U-12 | 公告详情 | ☐ | v0.4.x |
-| U-13 | 帮助中心 | ☐ | v0.4.x |
-| U-14 | 联系客服 | ☐ | v0.4.x |
+| U-08 | 在线激活页 | ✅ | 后端已建（v0.4.0：H5EndUserBindCard + UnbindCard 事务化绑卡）；前端已接入（v0.4.x：MyCards.vue 绑定/解绑操作） |
+| U-09 | 用户登录/注册 | ✅ | 后端已建（v0.4.0：H5EndUserRegister + H5EndUserLogin + 验证码 + 重置密码）；前端已接入（v0.4.x：Login.vue + Register.vue + ResetPassword.vue） |
+| U-10 | 用户中心 | ✅ | 后端已建（v0.4.0：H5EndUserMe + UpdateProfile + ChangePassword + 会话管理 + 单点踢出）；前端已接入（v0.4.x：Profile.vue + EditProfile.vue + ChangePassword.vue + Sessions.vue） |
+| U-11 | 订单列表 | ✅ | 终端用户订单视图（v0.4.x：H5EndUserListOrders + H5EndUserGetOrder 2 端点 + Orders.vue 列表页 + OrderDetail.vue 详情页 + Profile 菜单入口） |
+| U-12 | 公告详情 | ✅ | v0.4.x（PublicNoticeDetail 端点 + view_count 并发自增 + NoticeDetail.vue 支持 text/html 渲染 + Profile 菜单入口） |
+| U-13 | 帮助中心 | ✅ | v0.4.x（Help.vue 4 分类 FAQ 折叠列表：购卡/支付/卡密/账户安全 + Profile 菜单入口；前端硬编码 v0.5.x 可改后端） |
+| U-14 | 联系客服 | ✅ | v0.4.x（migration 028 4 项 contact.* sys_config + PublicContact 端点 + Contact.vue 展示+复制+跳转 + Profile 菜单入口） |
 
 ### 3.5 客户端 SDK
 

@@ -6,8 +6,10 @@ package handler
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -1782,4 +1784,176 @@ func TenantGetAgentTree(deps *Deps) gin.HandlerFunc {
 			"tree": tree,
 		})
 	}
+}
+
+// ============== v0.4.x D-15 开发者安全设置（IP 黑名单 + 频率限制） ==============
+
+// tenantUpdateSecurityReq 安全配置更新请求体
+type tenantUpdateSecurityReq struct {
+	IPBlacklist           []string `json:"ip_blacklist" binding:"omitempty,dive,max=45"`                  // IP 或 CIDR 数组
+	VerifyRateLimitPerMin *int     `json:"verify_rate_limit_per_min" binding:"omitempty,min=0,max=10000"` // 0=不限
+	LoginRateLimitPerMin  *int     `json:"login_rate_limit_per_min" binding:"omitempty,min=0,max=10000"`
+}
+
+// TenantGetSecurity GET /api/v1/tenant/security
+// 返回当前开发者安全配置（无记录则返回空配置）
+func TenantGetSecurity(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tenantID := getTenantID(c)
+		if tenantID == 0 {
+			middleware.Fail(c, http.StatusForbidden, 1003, "无法识别租户身份")
+			return
+		}
+
+		var sec model.TenantSecurityConfig
+		err := deps.DB.Where("tenant_id = ?", tenantID).First(&sec).Error
+		if err != nil {
+			if err == gorm.ErrRecordNotFound {
+				// 无配置：返回空安全配置（向后兼容）
+				middleware.Success(c, gin.H{
+					"tenant_id":                 tenantID,
+					"ip_blacklist":              []string{},
+					"verify_rate_limit_per_min": 0,
+					"login_rate_limit_per_min":  0,
+					"updated_at":                nil,
+				})
+				return
+			}
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询安全配置失败")
+			return
+		}
+
+		// 解析 ip_blacklist JSON 数组
+		ipList := []string{}
+		if sec.IPBlacklist != "" && sec.IPBlacklist != "[]" {
+			_ = json.Unmarshal([]byte(sec.IPBlacklist), &ipList)
+		}
+
+		middleware.Success(c, gin.H{
+			"tenant_id":                 sec.TenantID,
+			"ip_blacklist":              ipList,
+			"verify_rate_limit_per_min": sec.VerifyRateLimitPerMin,
+			"login_rate_limit_per_min":  sec.LoginRateLimitPerMin,
+			"updated_at":                sec.UpdatedAt,
+		})
+	}
+}
+
+// TenantUpdateSecurity PUT /api/v1/tenant/security
+// 事务：upsert tenant_security_config 记录
+func TenantUpdateSecurity(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tenantID := getTenantID(c)
+		if tenantID == 0 {
+			middleware.Fail(c, http.StatusForbidden, 1003, "无法识别租户身份")
+			return
+		}
+
+		var req tenantUpdateSecurityReq
+		if err := c.ShouldBindJSON(&req); err != nil {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "参数错误: "+err.Error())
+			return
+		}
+
+		// 序列化 IP 黑名单为 JSON 数组（空数组也存 "[]"，避免 NOT NULL 约束冲突）
+		ipBlacklistJSON := "[]"
+		if len(req.IPBlacklist) > 0 {
+			// 去重 + 去空 + 校验格式
+			seen := make(map[string]bool, len(req.IPBlacklist))
+			deduped := make([]string, 0, len(req.IPBlacklist))
+			for _, entry := range req.IPBlacklist {
+				entry = strings.TrimSpace(entry)
+				if entry == "" || seen[entry] {
+					continue
+				}
+				// 格式校验：单 IP 或 CIDR
+				if !isValidIPEntry(entry) {
+					middleware.Fail(c, http.StatusBadRequest, 1001, "IP 黑名单格式错误: "+entry)
+					return
+				}
+				seen[entry] = true
+				deduped = append(deduped, entry)
+			}
+			if len(deduped) > 0 {
+				b, _ := json.Marshal(deduped)
+				ipBlacklistJSON = string(b)
+			}
+		}
+
+		// 查现有记录
+		var sec model.TenantSecurityConfig
+		notFound := false
+		if err := deps.DB.Where("tenant_id = ?", tenantID).First(&sec).Error; err != nil {
+			if err != gorm.ErrRecordNotFound {
+				middleware.Fail(c, http.StatusInternalServerError, 5001, "查询安全配置失败")
+				return
+			}
+			notFound = true
+			sec = model.TenantSecurityConfig{
+				TenantID:    tenantID,
+				IPBlacklist: "[]",
+			}
+		}
+
+		// 合并更新字段
+		updates := map[string]interface{}{
+			"ip_blacklist": ipBlacklistJSON,
+		}
+		if req.VerifyRateLimitPerMin != nil {
+			updates["verify_rate_limit_per_min"] = *req.VerifyRateLimitPerMin
+		}
+		if req.LoginRateLimitPerMin != nil {
+			updates["login_rate_limit_per_min"] = *req.LoginRateLimitPerMin
+		}
+
+		if notFound {
+			// INSERT：填入默认值 + 用户提交值
+			sec.IPBlacklist = ipBlacklistJSON
+			if req.VerifyRateLimitPerMin != nil {
+				sec.VerifyRateLimitPerMin = *req.VerifyRateLimitPerMin
+			}
+			if req.LoginRateLimitPerMin != nil {
+				sec.LoginRateLimitPerMin = *req.LoginRateLimitPerMin
+			}
+			if err := deps.DB.Create(&sec).Error; err != nil {
+				middleware.Fail(c, http.StatusInternalServerError, 5001, "保存安全配置失败: "+err.Error())
+				return
+			}
+		} else {
+			if err := deps.DB.Model(&sec).Updates(updates).Error; err != nil {
+				middleware.Fail(c, http.StatusInternalServerError, 5001, "更新安全配置失败: "+err.Error())
+				return
+			}
+		}
+
+		RecordOperation(deps, c, "tenant_security", "update", "success", "tenant_security_config", &tenantID, map[string]interface{}{
+			"ip_blacklist_count":         len(req.IPBlacklist),
+			"verify_rate_limit_per_min": req.VerifyRateLimitPerMin,
+			"login_rate_limit_per_min":  req.LoginRateLimitPerMin,
+		})
+
+		middleware.Success(c, gin.H{
+			"tenant_id":                 tenantID,
+			"ip_blacklist":              req.IPBlacklist,
+			"verify_rate_limit_per_min": updates["verify_rate_limit_per_min"],
+			"login_rate_limit_per_min":  updates["login_rate_limit_per_min"],
+		})
+	}
+}
+
+// isValidIPEntry 校验 IP 或 CIDR 格式
+func isValidIPEntry(entry string) bool {
+	if entry == "" {
+		return false
+	}
+	// 单 IP
+	if !strings.Contains(entry, "/") {
+		if ip := net.ParseIP(entry); ip != nil {
+			return true
+		}
+		return false
+	}
+	// CIDR
+	_, _, err := net.ParseCIDR(entry)
+	return err == nil
 }

@@ -39,6 +39,11 @@
         <span class="label">我的卡密</span>
         <el-icon class="arrow"><ArrowRight /></el-icon>
       </div>
+      <div class="menu-item" @click="router.push('/h5/orders')">
+        <el-icon><List /></el-icon>
+        <span class="label">我的订单</span>
+        <el-icon class="arrow"><ArrowRight /></el-icon>
+      </div>
       <div class="menu-item" @click="router.push('/h5/sessions')">
         <el-icon><Monitor /></el-icon>
         <span class="label">会话管理</span>
@@ -56,6 +61,25 @@
       </div>
     </div>
 
+    <!-- 公共服务菜单（v0.4.x 残留项 2-4） -->
+    <div class="menu-card">
+      <div class="menu-item" @click="goNoticeList">
+        <el-icon><Bell /></el-icon>
+        <span class="label">平台公告</span>
+        <el-icon class="arrow"><ArrowRight /></el-icon>
+      </div>
+      <div class="menu-item" @click="router.push('/h5/help')">
+        <el-icon><QuestionFilled /></el-icon>
+        <span class="label">帮助中心</span>
+        <el-icon class="arrow"><ArrowRight /></el-icon>
+      </div>
+      <div class="menu-item" @click="router.push('/h5/contact')">
+        <el-icon><Headset /></el-icon>
+        <span class="label">联系客服</span>
+        <el-icon class="arrow"><ArrowRight /></el-icon>
+      </div>
+    </div>
+
     <div class="logout-row">
       <el-button type="danger" plain :loading="loggingOut" @click="logout">退出登录</el-button>
     </div>
@@ -66,12 +90,19 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Key, Monitor, EditPen, Lock, ArrowRight } from '@element-plus/icons-vue'
-import { endUserMeApi, endUserLogoutApi, endUserListMyCardsApi, endUserListSessionsApi } from '@/api/enduser'
+import { Key, Monitor, EditPen, Lock, List, Bell, QuestionFilled, Headset, ArrowRight } from '@element-plus/icons-vue'
+import {
+  endUserMeApi,
+  endUserLogoutApi,
+  endUserListMyCardsApi,
+  endUserListSessionsApi,
+  endUserListPlatformNoticesApi
+} from '@/api/enduser'
 import { useEndUserStore } from '@/stores/enduser'
 
 const router = useRouter()
 const endUserStore = useEndUserStore()
+const noticeLoading = ref(false)
 
 const user = ref(endUserStore.user)
 const stats = ref({ cardCount: 0, sessionCount: 0 })
@@ -124,6 +155,28 @@ const loadStats = async () => {
     }
   } catch {
     // 静默失败：统计只是辅助信息
+  }
+}
+
+// 平台公告入口：拉取最新平台公告，跳转详情页
+// 若无公告，提示用户；若有多条，跳转置顶/最新的一条
+// v0.4.x 简化实现：仅跳转最新一条；v0.5.x 可改为独立的公告列表页
+const goNoticeList = async () => {
+  if (noticeLoading.value) return
+  noticeLoading.value = true
+  try {
+    const resp = await endUserListPlatformNoticesApi()
+    const list = resp.list || []
+    if (list.length === 0) {
+      ElMessage.info('暂无平台公告')
+      return
+    }
+    // is_pinned 优先（后端已按 is_pinned DESC, start_at DESC 排序，取首条即可）
+    router.push(`/h5/notices/${list[0].id}`)
+  } catch {
+    // 错误已由 http 拦截器处理
+  } finally {
+    noticeLoading.value = false
   }
 }
 

@@ -124,6 +124,11 @@ type App struct {
 	OfflineGrace        int    `gorm:"not null;default:86400" json:"offline_grace"`
 	UnbindDeductSeconds int    `gorm:"not null;default:86400" json:"unbind_deduct_seconds"`
 	AgentCommissionMode string `gorm:"size:32;not null;default:diff" json:"agent_commission_mode"` // percentage/diff
+	// v0.4.x S-04：应用审核（pending/approved/rejected）；app.audit.enabled=1 时新应用初始为 pending
+	AuditStatus string     `gorm:"size:16;index;not null;default:approved" json:"audit_status"`
+	AuditRemark string     `gorm:"size:255;not null;default:''" json:"audit_remark"`
+	AuditedAt  *time.Time `json:"audited_at"`
+	AuditedBy  uint64     `gorm:"not null;default:0" json:"audited_by"`
 }
 
 func (App) TableName() string { return "app" }
@@ -284,6 +289,7 @@ type Agent struct {
 	TOTPSecret            string  `gorm:"size:64" json:"-"` // 2FA 密钥（AES 加密）
 	BackupCodes           string  `gorm:"size:512" json:"-"` // v0.4.0：2FA 备用码（AES 加密的逗号分隔字符串）
 	Subdomain             string  `gorm:"size:64" json:"subdomain"`
+	SubdomainStatus       string  `gorm:"size:16;index;not null;default:none" json:"subdomain_status"` // v0.4.x：none/pending/approved/rejected
 	LastLoginAt           *time.Time `json:"last_login_at"`
 	LastLoginIP           string  `gorm:"size:45" json:"last_login_ip"`
 }
@@ -378,9 +384,47 @@ type AgentRegistrationOrder struct {
 	PayTradeNo    string     `gorm:"size:128" json:"pay_trade_no"`
 	PaidAt        *time.Time `json:"paid_at"`
 	ClientIP      string     `gorm:"size:45" json:"client_ip"`
+	// v0.4.x S-17：超管退款字段（refund_status=none 时未退款）
+	RefundStatus string     `gorm:"size:16;index;not null;default:none" json:"refund_status"` // none/refunded
+	RefundAmount float64    `gorm:"type:decimal(10,2);not null;default:0" json:"refund_amount"`
+	RefundAt     *time.Time `json:"refund_at"`
+	RefundBy     uint64     `gorm:"not null;default:0" json:"refund_by"`
+	RefundReason string     `gorm:"size:255;not null;default:''" json:"refund_reason"`
 }
 
 func (AgentRegistrationOrder) TableName() string { return "agent_registration_order" }
+
+// ============== v0.4.x 开发者安全配置（D-15） ==============
+
+// TenantSecurityConfig 开发者安全配置（IP 黑名单 + 验证 API 频率限制）
+type TenantSecurityConfig struct {
+	ID                    uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	TenantID              uint64    `gorm:"uniqueIndex:uk_tenant_id;not null" json:"tenant_id"`
+	IPBlacklist           string    `gorm:"type:text;not null" json:"ip_blacklist"`                  // JSON 数组：["1.2.3.4","10.0.0.0/8"]
+	VerifyRateLimitPerMin int       `gorm:"not null;default:0" json:"verify_rate_limit_per_min"`     // 客户端验证 API 限速（每分钟，0=不限）
+	LoginRateLimitPerMin  int       `gorm:"not null;default:0" json:"login_rate_limit_per_min"`     // 客户端登录 API 限速（每分钟，0=不限）
+	UpdatedAt             time.Time `gorm:"not null;default:CURRENT_TIMESTAMP;ON UPDATE:CURRENT_TIMESTAMP" json:"updated_at"`
+}
+
+func (TenantSecurityConfig) TableName() string { return "tenant_security_config" }
+
+// ============== v0.4.x 开发者月费订单 ==============
+
+// TenantMonthlyFeeOrder 开发者月度服务费订单
+// 订单号前缀 MFD，与 ORD/TOP/REG 区分，dispatchPaidOrder 按 prefix 分发
+type TenantMonthlyFeeOrder struct {
+	BaseModel
+	TenantID    uint64     `gorm:"index;not null" json:"tenant_id"`
+	PeriodStart time.Time  `gorm:"index:idx_period;not null" json:"period_start"`
+	PeriodEnd   time.Time  `gorm:"index:idx_period;not null" json:"period_end"`
+	Amount      float64    `gorm:"type:decimal(10,2);not null" json:"amount"`
+	PayStatus   string     `gorm:"size:16;index;not null;default:pending" json:"pay_status"` // pending/paid/closed
+	PayMode     string     `gorm:"size:32;not null;default:''" json:"pay_mode"`             // platform_epay/manual
+	OrderNo     string     `gorm:"uniqueIndex;size:64;not null" json:"order_no"`            // MFD 前缀
+	PaidAt      *time.Time `json:"paid_at"`
+}
+
+func (TenantMonthlyFeeOrder) TableName() string { return "tenant_monthly_fee_order" }
 
 // ============== 公告层 ==============
 

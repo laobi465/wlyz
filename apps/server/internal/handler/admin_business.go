@@ -6,6 +6,7 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -1272,3 +1273,619 @@ func AdminGetVersion(deps *Deps) gin.HandlerFunc {
 
 // 防止未使用导入报错（gorm 在某些函数中显式使用，但保留兜底）
 var _ = gorm.ErrRecordNotFound
+
+// ============== v0.4.x 代理子域名审批 ==============
+
+// adminSubdomainListItem 子域名列表项（联表开发者名）
+type adminSubdomainListItem struct {
+	AgentID         uint64     `json:"agent_id"`
+	Username        string     `json:"username"`
+	RealName        string     `json:"real_name"`
+	TenantID        uint64     `json:"tenant_id"`
+	TenantName      string     `json:"tenant_name"`
+	Subdomain       string     `json:"subdomain"`
+	SubdomainStatus string     `json:"subdomain_status"`
+	AgentStatus     string     `json:"agent_status"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
+// AdminListSubdomains GET /api/v1/admin/agents/subdomains
+// 平台超管查询代理子域名申请列表（支持 status / tenant_id / keyword 筛选）
+func AdminListSubdomains(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		page, pageSize := parsePagination(c)
+
+		q := deps.DB.Model(&model.Agent{}).
+			Where("subdomain_status != ?", "none")
+		if status := c.Query("status"); status != "" {
+			q = q.Where("subdomain_status = ?", status)
+		}
+		if tenantIDStr := c.Query("tenant_id"); tenantIDStr != "" {
+			if tid, err := strconv.ParseUint(tenantIDStr, 10, 64); err == nil && tid > 0 {
+				q = q.Where("tenant_id = ?", tid)
+			}
+		}
+		if kw := c.Query("keyword"); kw != "" {
+			q = q.Where("username LIKE ? OR real_name LIKE ? OR subdomain LIKE ?",
+				"%"+kw+"%", "%"+kw+"%", "%"+kw+"%")
+		}
+
+		var total int64
+		q.Count(&total)
+
+		var agents []model.Agent
+		if err := q.Order("updated_at DESC").
+			Offset((page - 1) * pageSize).Limit(pageSize).
+			Find(&agents).Error; err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败")
+			return
+		}
+
+		// 批量查 tenant_name
+		tenantIDs := make(map[uint64]struct{}, len(agents))
+		for _, a := range agents {
+			tenantIDs[a.TenantID] = struct{}{}
+		}
+		tenantNameMap := make(map[uint64]string, len(tenantIDs))
+		if len(tenantIDs) > 0 {
+			ids := make([]uint64, 0, len(tenantIDs))
+			for id := range tenantIDs {
+				ids = append(ids, id)
+			}
+			var tenants []model.SysTenant
+			deps.DB.Select("id, username").Where("id IN ?", ids).Find(&tenants)
+			for _, t := range tenants {
+				tenantNameMap[t.ID] = t.Username
+			}
+		}
+
+		list := make([]adminSubdomainListItem, 0, len(agents))
+		for _, a := range agents {
+			list = append(list, adminSubdomainListItem{
+				AgentID:         a.ID,
+				Username:        a.Username,
+				RealName:        a.RealName,
+				TenantID:        a.TenantID,
+				TenantName:      tenantNameMap[a.TenantID],
+				Subdomain:       a.Subdomain,
+				SubdomainStatus: a.SubdomainStatus,
+				AgentStatus:     a.Status,
+				CreatedAt:       a.CreatedAt,
+				UpdatedAt:       a.UpdatedAt,
+			})
+		}
+
+		middleware.Success(c, gin.H{
+			"list":      list,
+			"total":     total,
+			"page":      page,
+			"page_size": pageSize,
+		})
+	}
+}
+
+// adminSubdomainActionReq 审批操作请求体
+type adminSubdomainActionReq struct {
+	Remark string `json:"remark" binding:"omitempty,max=255"`
+}
+
+// AdminApproveSubdomain POST /api/v1/admin/agents/:id/subdomain/approve
+// 通过子域名申请：状态从 pending → approved
+// 同时再校验一次唯一性，防止并发审批冲突
+func AdminApproveSubdomain(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		agentID, err := parseUintParam(c, "id")
+		if err != nil || agentID == 0 {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "代理 ID 无效")
+			return
+		}
+
+		var req adminSubdomainActionReq
+		_ = c.ShouldBindJSON(&req)
+
+		var agent model.Agent
+		if err := deps.DB.First(&agent, agentID).Error; err != nil {
+			middleware.Fail(c, http.StatusNotFound, 1008, "代理不存在")
+			return
+		}
+		if agent.SubdomainStatus != "pending" {
+			middleware.Fail(c, http.StatusBadRequest, 1001,
+				"当前状态不可审批（state="+agent.SubdomainStatus+"）")
+			return
+		}
+
+		// 并发二次校验：是否有其他 approved 代理占用同名 subdomain
+		var cnt int64
+		deps.DB.Model(&model.Agent{}).
+			Where("id != ? AND subdomain = ? AND subdomain_status = ?",
+				agentID, agent.Subdomain, "approved").
+			Count(&cnt)
+		if cnt > 0 {
+			// 冲突：拒绝本次审批并置为 rejected
+			deps.DB.Model(&model.Agent{}).Where("id = ?", agentID).
+				Updates(map[string]interface{}{
+					"subdomain_status": "rejected",
+				})
+			middleware.Fail(c, http.StatusBadRequest, 1054,
+				"子域名已被其他代理占用，本次审批已自动驳回")
+			return
+		}
+
+		if err := deps.DB.Model(&model.Agent{}).Where("id = ?", agentID).
+			Update("subdomain_status", "approved").Error; err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "审批失败: "+err.Error())
+			return
+		}
+
+		RecordOperation(deps, c, "agent_subdomain", "approve", "success", "agent", &agentID, map[string]interface{}{
+			"subdomain": agent.Subdomain,
+			"remark":    req.Remark,
+		})
+
+		middleware.Success(c, gin.H{
+			"agent_id":         agentID,
+			"subdomain":        agent.Subdomain,
+			"subdomain_status": "approved",
+		})
+	}
+}
+
+// AdminRejectSubdomain POST /api/v1/admin/agents/:id/subdomain/reject
+// 拒绝子域名申请：状态从 pending → rejected（保留 subdomain 字符串便于追溯）
+func AdminRejectSubdomain(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		agentID, err := parseUintParam(c, "id")
+		if err != nil || agentID == 0 {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "代理 ID 无效")
+			return
+		}
+
+		var req adminSubdomainActionReq
+		_ = c.ShouldBindJSON(&req)
+
+		var agent model.Agent
+		if err := deps.DB.First(&agent, agentID).Error; err != nil {
+			middleware.Fail(c, http.StatusNotFound, 1008, "代理不存在")
+			return
+		}
+		if agent.SubdomainStatus != "pending" {
+			middleware.Fail(c, http.StatusBadRequest, 1001,
+				"当前状态不可驳回（state="+agent.SubdomainStatus+"）")
+			return
+		}
+
+		if err := deps.DB.Model(&model.Agent{}).Where("id = ?", agentID).
+			Update("subdomain_status", "rejected").Error; err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "驳回失败: "+err.Error())
+			return
+		}
+
+		RecordOperation(deps, c, "agent_subdomain", "reject", "success", "agent", &agentID, map[string]interface{}{
+			"subdomain": agent.Subdomain,
+			"remark":    req.Remark,
+		})
+
+		middleware.Success(c, gin.H{
+			"agent_id":         agentID,
+			"subdomain":        agent.Subdomain,
+			"subdomain_status": "rejected",
+			"remark":            req.Remark,
+		})
+	}
+}
+
+// ============== v0.4.x S-04 应用审核（应用上架审核、违规下架） ==============
+
+// AdminListPendingApps 待审核应用列表
+// GET /admin/apps/pending?page=&page_size=&status=
+// status 默认 pending；可传 approved/rejected 查看历史
+func AdminListPendingApps(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		page, pageSize := parsePagination(c)
+
+		status := c.DefaultQuery("status", "pending")
+		if status != "pending" && status != "approved" && status != "rejected" {
+			status = "pending"
+		}
+
+		q := deps.DB.Model(&model.App{}).Where("audit_status = ?", status)
+		if kw := c.Query("keyword"); kw != "" {
+			q = q.Where("name LIKE ? OR app_key LIKE ?", "%"+kw+"%", "%"+kw+"%")
+		}
+		if tenantIDStr := c.Query("tenant_id"); tenantIDStr != "" {
+			if tid, err := strconv.ParseUint(tenantIDStr, 10, 64); err == nil && tid > 0 {
+				q = q.Where("tenant_id = ?", tid)
+			}
+		}
+
+		var total int64
+		q.Count(&total)
+
+		var apps []model.App
+		if err := q.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&apps).Error; err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败: "+err.Error())
+			return
+		}
+
+		// 联表查租户用户名 + 审核人用户名
+		list := make([]gin.H, 0, len(apps))
+		for _, a := range apps {
+			var tenantUsername string
+			deps.DB.Model(&model.SysTenant{}).Where("id = ?", a.TenantID).Select("username").Scan(&tenantUsername)
+			var auditorName string
+			if a.AuditedBy > 0 {
+				deps.DB.Model(&model.SysAdmin{}).Where("id = ?", a.AuditedBy).Select("username").Scan(&auditorName)
+			}
+			list = append(list, gin.H{
+				"id":             a.ID,
+				"tenant_id":      a.TenantID,
+				"tenant_username": tenantUsername,
+				"name":           a.Name,
+				"app_key":        a.AppKey,
+				"status":         a.Status,
+				"audit_status":   a.AuditStatus,
+				"audit_remark":   a.AuditRemark,
+				"audited_at":     a.AuditedAt,
+				"audited_by":     a.AuditedBy,
+				"auditor_name":   auditorName,
+				"created_at":     a.CreatedAt,
+			})
+		}
+
+		middleware.Success(c, gin.H{
+			"list":      list,
+			"total":     total,
+			"page":      page,
+			"page_size": pageSize,
+		})
+	}
+}
+
+// adminAuditAppReq 审核应用请求体
+type adminAuditAppReq struct {
+	Status string `json:"status" binding:"required,oneof=approved rejected"`
+	Remark string `json:"remark" binding:"omitempty,max=255"`
+}
+
+// AdminAuditApp 审核应用（通过/驳回）
+// POST /admin/apps/:id/audit
+// 事务：更新 app.audit_status + audited_at + audited_by + audit_remark
+func AdminAuditApp(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		appID, err := parseUintParam(c, "id")
+		if err != nil || appID == 0 {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "应用 ID 格式错误")
+			return
+		}
+		var req adminAuditAppReq
+		if err := c.ShouldBindJSON(&req); err != nil {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "参数错误: "+err.Error())
+			return
+		}
+
+		var app model.App
+		if err := deps.DB.First(&app, appID).Error; err != nil {
+			middleware.Fail(c, http.StatusNotFound, 1008, "应用不存在")
+			return
+		}
+		if app.AuditStatus != "pending" {
+			middleware.Fail(c, http.StatusBadRequest, 1009, "应用已审核（当前状态: "+app.AuditStatus+"）")
+			return
+		}
+
+		adminID := getUserID(c)
+		now := time.Now()
+		updates := map[string]interface{}{
+			"audit_status":  req.Status,
+			"audit_remark":  req.Remark,
+			"audited_at":    &now,
+			"audited_by":    adminID,
+		}
+		if err := deps.DB.Model(&app).Updates(updates).Error; err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "审核失败: "+err.Error())
+			return
+		}
+
+		RecordOperation(deps, c, "app_audit", "audit", "success", "app", &appID, map[string]interface{}{
+			"tenant_id":    app.TenantID,
+			"app_name":     app.Name,
+			"audit_status": req.Status,
+			"remark":        req.Remark,
+		})
+
+		middleware.Success(c, gin.H{
+			"app_id":       appID,
+			"audit_status": req.Status,
+			"audited_at":   now.Unix(),
+			"audited_by":   adminID,
+		})
+	}
+}
+
+// AdminOfflineApp 违规下架
+// POST /admin/apps/:id/offline
+// 铁律 04：仅设置 status=disabled（不删数据）；下架后客户端验证 API 因 status=active 条件被 SignatureAuth 拦截
+func AdminOfflineApp(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		appID, err := parseUintParam(c, "id")
+		if err != nil || appID == 0 {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "应用 ID 格式错误")
+			return
+		}
+		var req struct {
+			Reason string `json:"reason" binding:"required,min=1,max=255"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "参数错误: "+err.Error())
+			return
+		}
+
+		var app model.App
+		if err := deps.DB.First(&app, appID).Error; err != nil {
+			middleware.Fail(c, http.StatusNotFound, 1008, "应用不存在")
+			return
+		}
+		if app.Status == "disabled" {
+			middleware.Fail(c, http.StatusBadRequest, 1009, "应用已下架")
+			return
+		}
+
+		if err := deps.DB.Model(&app).Update("status", "disabled").Error; err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "下架失败: "+err.Error())
+			return
+		}
+
+		RecordOperation(deps, c, "app_audit", "offline", "success", "app", &appID, map[string]interface{}{
+			"tenant_id": app.TenantID,
+			"app_name":  app.Name,
+			"reason":    req.Reason,
+		})
+
+		middleware.Success(c, gin.H{
+			"app_id": appID,
+			"status": "disabled",
+		})
+	}
+}
+
+// AdminOnlineApp 恢复上架
+// POST /admin/apps/:id/online
+func AdminOnlineApp(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		appID, err := parseUintParam(c, "id")
+		if err != nil || appID == 0 {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "应用 ID 格式错误")
+			return
+		}
+
+		var app model.App
+		if err := deps.DB.First(&app, appID).Error; err != nil {
+			middleware.Fail(c, http.StatusNotFound, 1008, "应用不存在")
+			return
+		}
+		if app.Status == "active" {
+			middleware.Fail(c, http.StatusBadRequest, 1009, "应用已上架")
+			return
+		}
+
+		if err := deps.DB.Model(&app).Update("status", "active").Error; err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "上架失败: "+err.Error())
+			return
+		}
+
+		RecordOperation(deps, c, "app_audit", "online", "success", "app", &appID, map[string]interface{}{
+			"tenant_id": app.TenantID,
+			"app_name":  app.Name,
+		})
+
+		middleware.Success(c, gin.H{
+			"app_id": appID,
+			"status": "active",
+		})
+	}
+}
+
+// ============== v0.4.x S-17 超管后台代理注册管理（退款/收入统计） ==============
+
+// agentRegistrationItem 代理注册订单列表项（联表 sys_tenant / agent）
+type agentRegistrationItem struct {
+	model.AgentRegistrationOrder
+	TenantUsername string `json:"tenant_username"`
+	AgentUsername  string `json:"agent_username"`
+}
+
+// AdminListAgentRegistrations GET /admin/agent_registrations
+// 查询代理注册订单（支持 status / refund_status / tenant_id / keyword 筛选）
+func AdminListAgentRegistrations(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		page, pageSize := parsePagination(c)
+
+		q := deps.DB.Table("agent_registration_order AS o").
+			Select("o.*, t.username AS tenant_username, a.username AS agent_username").
+			Joins("LEFT JOIN sys_tenant AS t ON t.id = o.tenant_id").
+			Joins("LEFT JOIN agent AS a ON a.id = o.agent_id")
+
+		if s := c.Query("pay_status"); s != "" {
+			q = q.Where("o.pay_status = ?", s)
+		}
+		if s := c.Query("refund_status"); s != "" {
+			q = q.Where("o.refund_status = ?", s)
+		}
+		if tenantIDStr := c.Query("tenant_id"); tenantIDStr != "" {
+			if tid, err := strconv.ParseUint(tenantIDStr, 10, 64); err == nil && tid > 0 {
+				q = q.Where("o.tenant_id = ?", tid)
+			}
+		}
+		if kw := c.Query("keyword"); kw != "" {
+			q = q.Where("o.username LIKE ? OR o.order_no LIKE ? OR o.pay_trade_no LIKE ?",
+				"%"+kw+"%", "%"+kw+"%", "%"+kw+"%")
+		}
+		if startDate := c.Query("start_date"); startDate != "" {
+			q = q.Where("o.created_at >= ?", startDate+" 00:00:00")
+		}
+		if endDate := c.Query("end_date"); endDate != "" {
+			q = q.Where("o.created_at <= ?", endDate+" 23:59:59")
+		}
+
+		var total int64
+		q.Count(&total)
+
+		var list []agentRegistrationItem
+		if err := q.Order("o.id DESC").
+			Offset((page - 1) * pageSize).Limit(pageSize).
+			Scan(&list).Error; err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询代理注册订单失败")
+			return
+		}
+
+		middleware.Success(c, gin.H{
+			"list":      list,
+			"total":     total,
+			"page":      page,
+			"page_size": pageSize,
+		})
+	}
+}
+
+// AdminAgentRegistrationStats GET /admin/agent_registrations/stats
+// 统计代理注册收入（支持 start_date/end_date 范围筛选）
+func AdminAgentRegistrationStats(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		q := deps.DB.Model(&model.AgentRegistrationOrder{}).
+			Where("pay_status = ?", "paid")
+		if startDate := c.Query("start_date"); startDate != "" {
+			q = q.Where("created_at >= ?", startDate+" 00:00:00")
+		}
+		if endDate := c.Query("end_date"); endDate != "" {
+			q = q.Where("created_at <= ?", endDate+" 23:59:59")
+		}
+
+		var (
+			totalOrders   int64
+			totalAmount   float64
+			refundedCount int64
+			refundAmount  float64
+		)
+		q.Count(&totalOrders)
+		q.Select("COALESCE(SUM(amount), 0)").Scan(&totalAmount)
+
+		deps.DB.Model(&model.AgentRegistrationOrder{}).
+			Where("pay_status = ? AND refund_status = ?", "paid", "refunded").
+			Count(&refundedCount)
+		deps.DB.Model(&model.AgentRegistrationOrder{}).
+			Where("pay_status = ? AND refund_status = ?", "paid", "refunded").
+			Select("COALESCE(SUM(refund_amount), 0)").Scan(&refundAmount)
+
+		middleware.Success(c, gin.H{
+			"total_orders":    totalOrders,
+			"total_amount":    totalAmount,
+			"refunded_count":  refundedCount,
+			"refund_amount":   refundAmount,
+			"net_amount":      totalAmount - refundAmount,
+		})
+	}
+}
+
+// adminRefundAgentRegistrationReq 退款请求体
+type adminRefundAgentRegistrationReq struct {
+	Reason string `json:"reason" binding:"required,min=1,max=255"`
+}
+
+// AdminRefundAgentRegistration POST /admin/agent_registrations/:id/refund
+// 流程（事务）：校验订单状态=paid&未退款 → 写 refund 字段 → 同步禁用关联 Agent 账号
+// 铁律 06：退款事务内同步禁用代理账号，避免账号残留可用
+func AdminRefundAgentRegistration(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		orderID, err := parseUintParam(c, "id")
+		if err != nil || orderID == 0 {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "订单 ID 格式错误")
+			return
+		}
+		var req adminRefundAgentRegistrationReq
+		if err := c.ShouldBindJSON(&req); err != nil {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "参数错误: "+err.Error())
+			return
+		}
+
+		var order model.AgentRegistrationOrder
+		if err := deps.DB.First(&order, orderID).Error; err != nil {
+			middleware.Fail(c, http.StatusNotFound, 1008, "订单不存在")
+			return
+		}
+		if order.PayStatus != "paid" {
+			middleware.Fail(c, http.StatusBadRequest, 1009, "订单未支付，无法退款（状态: "+order.PayStatus+"）")
+			return
+		}
+		if order.RefundStatus == "refunded" {
+			middleware.Fail(c, http.StatusBadRequest, 1009, "订单已退款")
+			return
+		}
+
+		adminID := getUserID(c)
+		now := time.Now()
+		txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
+			// 1. 更新订单退款字段（refund_amount 取订单原值，铁律 04：禁硬编码金额）
+			if err := tx.Model(&order).Updates(map[string]interface{}{
+				"refund_status": "refunded",
+				"refund_amount": order.Amount,
+				"refund_at":     &now,
+				"refund_by":     adminID,
+				"refund_reason": req.Reason,
+			}).Error; err != nil {
+				return fmt.Errorf("更新订单退款字段失败: %w", err)
+			}
+
+			// 2. 同步禁用关联代理账号（避免退款后代理账号仍可登录使用）
+			if order.AgentID != nil && *order.AgentID > 0 {
+				if err := tx.Model(&model.Agent{}).Where("id = ?", *order.AgentID).
+					Update("status", "disabled").Error; err != nil {
+					return fmt.Errorf("禁用代理账号失败: %w", err)
+				}
+			}
+			return nil
+		})
+		if txErr != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "退款失败: "+txErr.Error())
+			return
+		}
+
+		RecordOperation(deps, c, "agent_registration", "refund", "success", "agent_registration_order", &orderID, map[string]interface{}{
+			"order_no":      order.OrderNo,
+			"agent_id":      order.AgentID,
+			"refund_amount": order.Amount,
+			"reason":        req.Reason,
+		})
+
+		middleware.Success(c, gin.H{
+			"order_id":      orderID,
+			"refund_status": "refunded",
+			"refund_amount": order.Amount,
+			"refund_at":     now.Unix(),
+		})
+	}
+}
+
+// AdminGetAgentRegistration GET /admin/agent_registrations/:id
+func AdminGetAgentRegistration(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		orderID, err := parseUintParam(c, "id")
+		if err != nil || orderID == 0 {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "订单 ID 格式错误")
+			return
+		}
+
+		var item agentRegistrationItem
+		if err := deps.DB.Table("agent_registration_order AS o").
+			Select("o.*, t.username AS tenant_username, a.username AS agent_username").
+			Joins("LEFT JOIN sys_tenant AS t ON t.id = o.tenant_id").
+			Joins("LEFT JOIN agent AS a ON a.id = o.agent_id").
+			Where("o.id = ?", orderID).
+			Scan(&item).Error; err != nil {
+			middleware.Fail(c, http.StatusNotFound, 1008, "订单不存在")
+			return
+		}
+
+		middleware.Success(c, gin.H{"order": item})
+	}
+}

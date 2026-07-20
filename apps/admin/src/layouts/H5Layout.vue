@@ -66,14 +66,16 @@ const avatarPlaceholder = computed(() => {
   return name.charAt(0).toUpperCase()
 })
 
-// 「我的」tab 高亮：profile 及其子页面（my-cards/sessions/edit-profile/change-password）
+// 「我的」tab 高亮：profile 及其子页面（my-cards/sessions/edit-profile/change-password/orders）
+// 注：notices/:id / help / contact 为公开页，不归属「我的」tab
 const isProfileActive = computed(() => {
   return (
     route.path === '/h5/profile' ||
     route.path.startsWith('/h5/my-cards') ||
     route.path.startsWith('/h5/sessions') ||
     route.path.startsWith('/h5/edit-profile') ||
-    route.path.startsWith('/h5/change-password')
+    route.path.startsWith('/h5/change-password') ||
+    route.path.startsWith('/h5/orders')
   )
 })
 

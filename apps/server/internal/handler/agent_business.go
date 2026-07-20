@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -1425,3 +1426,237 @@ func AgentGetTree(deps *Deps) gin.HandlerFunc {
 // ============== 标记未使用导入（防编译报错） ==============
 
 var _ = context.Background
+
+// ============== 14. v0.4.x 代理子域名绑定 ==============
+
+// agentSubdomainApplyReq 申请子域名请求体
+type agentSubdomainApplyReq struct {
+	Subdomain string `json:"subdomain" binding:"required,min=3,max=32"`
+}
+
+// AgentSubdomainStatus GET /api/v1/agent/subdomain
+// 返回当前代理的子域名绑定状态
+func AgentSubdomainStatus(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tenantID := getTenantID(c)
+		agentID := getUserID(c)
+		if agentID == 0 {
+			middleware.Fail(c, http.StatusForbidden, 1003, "无法识别代理身份")
+			return
+		}
+
+		var agent model.Agent
+		if err := deps.DB.Select("id, subdomain, subdomain_status").
+			Where("id = ? AND tenant_id = ?", agentID, tenantID).First(&agent).Error; err != nil {
+			middleware.Fail(c, http.StatusForbidden, 1003, "代理账号不存在或无权访问")
+			return
+		}
+
+		// 透传功能开关，便于前端决定是否展示入口
+		ctx := c.Request.Context()
+		enabled := deps.CfgCache.GetBool(ctx, "agent.subdomain.enabled", false)
+		pattern := deps.CfgCache.GetString(ctx, "agent.subdomain.pattern", `^[a-z0-9-]{3,32}$`)
+
+		middleware.Success(c, gin.H{
+			"enabled":           enabled,
+			"pattern":           pattern,
+			"subdomain":         agent.Subdomain,
+			"subdomain_status":  agent.SubdomainStatus,
+		})
+	}
+}
+
+// AgentApplySubdomain POST /api/v1/agent/subdomain/apply
+// 申请子域名：校验格式 + 唯一性 + 写入 pending 状态
+func AgentApplySubdomain(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		tenantID := getTenantID(c)
+		agentID := getUserID(c)
+		if agentID == 0 {
+			middleware.Fail(c, http.StatusForbidden, 1003, "无法识别代理身份")
+			return
+		}
+
+		var req agentSubdomainApplyReq
+		if err := c.ShouldBindJSON(&req); err != nil {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "参数错误: "+err.Error())
+			return
+		}
+		// 规范化：转小写 + 去首尾空白
+		req.Subdomain = strings.ToLower(strings.TrimSpace(req.Subdomain))
+
+		// 1. 功能总开关校验（铁律 05）
+		if !deps.CfgCache.GetBool(ctx, "agent.subdomain.enabled", false) {
+			middleware.Fail(c, http.StatusForbidden, 1051, "代理子域名功能未启用")
+			return
+		}
+
+		// 2. 格式校验（从 sys_config 读取正则，铁律 04）
+		patternStr := deps.CfgCache.GetString(ctx, "agent.subdomain.pattern", `^[a-z0-9-]{3,32}$`)
+		pattern, err := regexp.Compile(patternStr)
+		if err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "子域名格式正则配置异常")
+			return
+		}
+		if !pattern.MatchString(req.Subdomain) {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "子域名格式不符合规则: "+patternStr)
+			return
+		}
+
+		// 3. 查代理
+		var agent model.Agent
+		if err := deps.DB.Where("id = ? AND tenant_id = ?", agentID, tenantID).First(&agent).Error; err != nil {
+			middleware.Fail(c, http.StatusForbidden, 1003, "代理账号不存在或无权访问")
+			return
+		}
+		if agent.Status != "active" {
+			middleware.Fail(c, http.StatusForbidden, 1005, "代理账号已被禁用")
+			return
+		}
+
+		// 4. 状态机校验：已 approved 不可重复申请；pending 不可重复提交
+		if agent.SubdomainStatus == "approved" {
+			middleware.Fail(c, http.StatusBadRequest, 1052, "已绑定子域名，请先解绑后重新申请")
+			return
+		}
+		if agent.SubdomainStatus == "pending" {
+			middleware.Fail(c, http.StatusBadRequest, 1053, "已有待审核的子域名申请，请等待审批")
+			return
+		}
+
+		// 5. 唯一性校验：子域名不可与任何 approved 状态的代理重复
+		var cnt int64
+		deps.DB.Model(&model.Agent{}).
+			Where("subdomain = ? AND subdomain_status = ?", req.Subdomain, "approved").
+			Count(&cnt)
+		if cnt > 0 {
+			middleware.Fail(c, http.StatusBadRequest, 1054, "子域名已被占用")
+			return
+		}
+
+		// 6. 写入 pending 状态（保留 subdomain 字符串，等待 admin 审批通过后才置 approved）
+		if err := deps.DB.Model(&model.Agent{}).Where("id = ?", agentID).
+			Updates(map[string]interface{}{
+				"subdomain":        req.Subdomain,
+				"subdomain_status": "pending",
+			}).Error; err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "申请失败: "+err.Error())
+			return
+		}
+
+		RecordOperation(deps, c, "agent_subdomain", "apply", "success", "agent", &agentID, map[string]interface{}{
+			"subdomain": req.Subdomain,
+		})
+
+		middleware.Success(c, gin.H{
+			"subdomain":        req.Subdomain,
+			"subdomain_status": "pending",
+			"message":          "申请已提交，等待平台审批",
+		})
+	}
+}
+
+// AgentUnbindSubdomain DELETE /api/v1/agent/subdomain
+// 解绑子域名：仅允许 approved 状态解绑；pending 状态视为撤销申请
+func AgentUnbindSubdomain(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tenantID := getTenantID(c)
+		agentID := getUserID(c)
+		if agentID == 0 {
+			middleware.Fail(c, http.StatusForbidden, 1003, "无法识别代理身份")
+			return
+		}
+
+		var agent model.Agent
+		if err := deps.DB.Select("id, subdomain, subdomain_status").
+			Where("id = ? AND tenant_id = ?", agentID, tenantID).First(&agent).Error; err != nil {
+			middleware.Fail(c, http.StatusForbidden, 1003, "代理账号不存在或无权访问")
+			return
+		}
+
+		if agent.SubdomainStatus == "none" {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "当前未绑定子域名，无需解绑")
+			return
+		}
+
+		prevStatus := agent.SubdomainStatus
+		if err := deps.DB.Model(&model.Agent{}).Where("id = ?", agentID).
+			Updates(map[string]interface{}{
+				"subdomain":        "",
+				"subdomain_status": "none",
+			}).Error; err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "解绑失败: "+err.Error())
+			return
+		}
+
+		RecordOperation(deps, c, "agent_subdomain", "unbind", "success", "agent", &agentID, map[string]interface{}{
+			"subdomain":  agent.Subdomain,
+			"prev_status": prevStatus,
+		})
+
+		middleware.Success(c, gin.H{
+			"subdomain_status": "none",
+			"message":          "子域名已解绑",
+		})
+	}
+}
+
+// ============== 15. v0.4.x P-10 代理扫码购卡 URL ==============
+
+// AgentPortalQrCode GET /api/v1/agent/portal/qrcode
+// 返回代理专属购卡 URL（基于 subdomain 优先，回退 agent_id）
+// 前端拿到 URL 后用 qrcode 库渲染二维码
+func AgentPortalQrCode(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tenantID := getTenantID(c)
+		agentID := getUserID(c)
+		if agentID == 0 {
+			middleware.Fail(c, http.StatusForbidden, 1003, "无法识别代理身份")
+			return
+		}
+
+		var agent model.Agent
+		if err := deps.DB.Select("id, subdomain, subdomain_status, status").
+			Where("id = ? AND tenant_id = ?", agentID, tenantID).First(&agent).Error; err != nil {
+			middleware.Fail(c, http.StatusForbidden, 1003, "代理账号不存在或无权访问")
+			return
+		}
+
+		// 拼接购卡 URL：优先 subdomain，回退 /h5/portal/:agentId
+		// 注：subdomain 必须为 approved 状态才使用，否则回退 agent_id
+		ctx := c.Request.Context()
+		baseURL := strings.TrimRight(deps.CfgCache.GetString(ctx, "agent.portal.base_url", ""), "/")
+
+		var portalURL string
+		if agent.SubdomainStatus == "approved" && agent.Subdomain != "" {
+			// 优先用 base_url 拼接 subdomain（运维需配置泛域名解析）
+			// 例：base_url=https://keyauth.example.com, subdomain=agent1
+			//   → https://agent1.keyauth.example.com
+			if baseURL != "" {
+				// 提取 scheme + host（去 scheme 前缀后取主域名）
+				scheme := "https"
+				host := baseURL
+				if idx := strings.Index(host, "://"); idx >= 0 {
+					scheme = host[:idx]
+					host = host[idx+3:]
+				}
+				portalURL = scheme + "://" + agent.Subdomain + "." + host + "/h5/portal/" + strconv.FormatUint(agentID, 10)
+			} else {
+				// baseURL 未配置：回退到当前 Host + agent_id 路径
+				portalURL = "/h5/portal/" + strconv.FormatUint(agentID, 10)
+			}
+		} else {
+			// 未审批或未申请：直接用 agent_id 路径（前端 H5 路由）
+			portalURL = baseURL + "/h5/portal/" + strconv.FormatUint(agentID, 10)
+		}
+
+		middleware.Success(c, gin.H{
+			"agent_id":         agentID,
+			"subdomain":        agent.Subdomain,
+			"subdomain_status": agent.SubdomainStatus,
+			"portal_url":       portalURL,
+			"qrcode_api":       "https://api.qrserver.com/v1/create-qr-code/?data=" + portalURL,
+		})
+	}
+}

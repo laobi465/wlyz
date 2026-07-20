@@ -4,6 +4,7 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -14,6 +15,8 @@ import (
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 	"github.com/your-org/keyauth-saas/apps/server/internal/openapi"
+	"github.com/your-org/keyauth-saas/apps/server/pkg/epay"
+	"github.com/your-org/keyauth-saas/apps/server/pkg/snowflake"
 )
 
 // ============== 公共 DTO ==============
@@ -487,6 +490,195 @@ func TenantRejectWithdraw(deps *Deps) gin.HandlerFunc {
 			"status":        "rejected",
 			"reason":        req.Reason,
 			"balance_after": newBalance,
+		})
+	}
+}
+
+// ============== v0.4.x 开发者月费订单（自有支付附加） ==============
+
+// TenantGetMonthlyFeeCurrent GET /api/v1/tenant/monthly_fee/current
+// 返回当前开发者月费配置 + 当前账单周期 + 是否欠费
+// 铁律 05：月费开关/金额/免费天数从 sys_config 读取
+//  - pay.tenant_monthly_fee.enabled=0 时返回 enabled=false，前端隐藏月费入口
+//  - pay.tenant_monthly_fee.amount 决定账单金额
+//  - pay.tenant_monthly_fee.free_days 决定注册后免费天数，期间不生成账单
+func TenantGetMonthlyFeeCurrent(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tenantID := getTenantID(c)
+		if tenantID == 0 {
+			middleware.Fail(c, http.StatusForbidden, 1003, "无法识别租户身份")
+			return
+		}
+
+		ctx := c.Request.Context()
+		enabled := deps.CfgCache.GetBool(ctx, "pay.tenant_monthly_fee.enabled", false)
+		amount := deps.CfgCache.GetFloat64(ctx, "pay.tenant_monthly_fee.amount", 50.00)
+		freeDays := deps.CfgCache.GetInt(ctx, "pay.tenant_monthly_fee.free_days", 30)
+
+		// 查开发者注册时间（用于计算免费期）
+		var tenant model.SysTenant
+		if err := deps.DB.Select("id, created_at").First(&tenant, tenantID).Error; err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询开发者信息失败")
+			return
+		}
+
+		// 当前账单周期 = 当前自然月（月初到月末）
+		now := time.Now()
+		periodStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+		periodEnd := periodStart.AddDate(0, 1, 0).Add(-time.Second)
+
+		// 是否在免费期内
+		freeUntil := tenant.CreatedAt.AddDate(0, 0, freeDays)
+		inFreePeriod := now.Before(freeUntil)
+
+		// 查当前周期 pending 月费订单
+		var currentOrder *model.TenantMonthlyFeeOrder
+		var order model.TenantMonthlyFeeOrder
+		if err := deps.DB.Where("tenant_id = ? AND period_start >= ? AND period_end <= ?",
+			tenantID, periodStart, periodEnd).
+			Order("id DESC").First(&order).Error; err == nil {
+			currentOrder = &order
+		}
+
+		// 查累计未支付账单数 + 总金额
+		var pendingCount int64
+		var pendingAmount float64
+		deps.DB.Model(&model.TenantMonthlyFeeOrder{}).
+			Where("tenant_id = ? AND pay_status = ?", tenantID, "pending").
+			Count(&pendingCount)
+		deps.DB.Model(&model.TenantMonthlyFeeOrder{}).
+			Where("tenant_id = ? AND pay_status = ?", tenantID, "pending").
+			Select("COALESCE(SUM(amount), 0)").Scan(&pendingAmount)
+
+		middleware.Success(c, gin.H{
+			"enabled":           enabled,
+			"amount":            amount,
+			"free_days":         freeDays,
+			"in_free_period":    inFreePeriod,
+			"free_until":        freeUntil.Unix(),
+			"period_start":      periodStart.Unix(),
+			"period_end":        periodEnd.Unix(),
+			"current_order":     currentOrder,
+			"pending_count":     pendingCount,
+			"pending_amount":    pendingAmount,
+		})
+	}
+}
+
+// tenantPayMonthlyFeeReq 月费支付请求体
+type tenantPayMonthlyFeeReq struct {
+	PayType string `json:"pay_type" binding:"required,oneof=alipay wxpay qqpay"`
+}
+
+// TenantPayMonthlyFee POST /api/v1/tenant/monthly_fee/pay
+// 开发者发起月费支付：构造易支付跳转 URL（前缀 MFD）
+// 铁律 04：金额从 sys_config 读取；订单号前缀 MFD 与 ORD/TOP/REG 区分
+func TenantPayMonthlyFee(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tenantID := getTenantID(c)
+		if tenantID == 0 {
+			middleware.Fail(c, http.StatusForbidden, 1003, "无法识别租户身份")
+			return
+		}
+
+		ctx := c.Request.Context()
+		// 1. 总开关
+		if !deps.CfgCache.GetBool(ctx, "pay.tenant_monthly_fee.enabled", false) {
+			middleware.Fail(c, http.StatusForbidden, 4001, "开发者月费未启用")
+			return
+		}
+
+		// 2. 平台支付必须可用
+		if !deps.CfgCache.GetBool(ctx, "pay.platform.enabled", true) {
+			middleware.Fail(c, http.StatusForbidden, 4001, "平台总支付未启用")
+			return
+		}
+
+		var req tenantPayMonthlyFeeReq
+		if err := c.ShouldBindJSON(&req); err != nil {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "参数错误: "+err.Error())
+			return
+		}
+
+		// 3. 计算账单金额 + 周期
+		amount := deps.CfgCache.GetFloat64(ctx, "pay.tenant_monthly_fee.amount", 50.00)
+		if amount <= 0 {
+			middleware.Fail(c, http.StatusForbidden, 4001, "月费金额未配置")
+			return
+		}
+
+		var tenant model.SysTenant
+		if err := deps.DB.First(&tenant, tenantID).Error; err != nil {
+			middleware.Fail(c, http.StatusForbidden, 4004, "开发者账号不存在")
+			return
+		}
+		if tenant.Status != "active" {
+			middleware.Fail(c, http.StatusForbidden, 4004, "开发者账号已被禁用")
+			return
+		}
+
+		// 4. 当前账单周期（自然月）
+		now := time.Now()
+		periodStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+		periodEnd := periodStart.AddDate(0, 1, 0).Add(-time.Second)
+
+		// 5. 幂等：同周期已有 pending 订单则复用，避免重复生成
+		var order model.TenantMonthlyFeeOrder
+		err := deps.DB.Where("tenant_id = ? AND period_start = ? AND pay_status = ?",
+			tenantID, periodStart, "pending").
+			Order("id DESC").First(&order).Error
+		if err == gorm.ErrRecordNotFound {
+			// 6. 创建新订单
+			orderNo := snowflake.OrderNo("MFD")
+			order = model.TenantMonthlyFeeOrder{
+				TenantID:    tenantID,
+				PeriodStart: periodStart,
+				PeriodEnd:   periodEnd,
+				Amount:      amount,
+				PayStatus:   "pending",
+				PayMode:     "platform_epay",
+				OrderNo:     orderNo,
+			}
+			if err := deps.DB.Create(&order).Error; err != nil {
+				middleware.Fail(c, http.StatusInternalServerError, 4007, "创建月费订单失败: "+err.Error())
+				return
+			}
+		} else if err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询月费订单失败: "+err.Error())
+			return
+		}
+
+		// 7. 加载易支付配置 + 构造跳转 URL
+		payCfg, err := loadPlatformPayConfig(deps)
+		if err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 4006, "平台支付配置错误: "+err.Error())
+			return
+		}
+		namePrefix := deps.CfgCache.GetString(ctx, "pay.platform.order_name_prefix", "KeyAuth开发者月费")
+		moneyStr := strconv.FormatFloat(order.Amount, 'f', 2, 64)
+		payURL, err := epay.BuildSubmitURL(payCfg, &epay.OrderParams{
+			OutTradeNo: order.OrderNo,
+			Name:       fmt.Sprintf("%s·%s", namePrefix, periodStart.Format("2006-01")),
+			Money:      moneyStr,
+			PayType:    req.PayType,
+			NotifyURL:  resolveNotifyURL(deps, c),
+			ReturnURL:  resolveReturnURL(deps, c),
+			ClientIP:   c.ClientIP(),
+		})
+		if err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 4008, "构造支付链接失败: "+err.Error())
+			return
+		}
+
+		middleware.Success(c, gin.H{
+			"order_no":     order.OrderNo,
+			"order_id":     order.ID,
+			"pay_url":      payURL,
+			"amount":       order.Amount,
+			"money":        moneyStr,
+			"pay_type":     req.PayType,
+			"period_start": order.PeriodStart.Unix(),
+			"period_end":   order.PeriodEnd.Unix(),
 		})
 	}
 }

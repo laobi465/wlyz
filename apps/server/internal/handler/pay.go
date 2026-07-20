@@ -432,10 +432,13 @@ func EpayNotify(deps *Deps) gin.HandlerFunc {
 //   - ORD → 平台总支付卡密购买（processPaidOrder）
 //   - TOP → 开发者自有易支付卡密购买（processTenantOwnPaidOrder，v0.3.6）
 //   - REG → 代理注册付费（processAgentRegisterPaid）
+//   - MFD → 开发者月度服务费（processMonthlyFeePaid，v0.4.x）
 func dispatchPaidOrder(deps *Deps, notify *epay.NotifyParams) error {
 	switch {
 	case strings.HasPrefix(notify.OutTradeNo, "REG"):
 		return processAgentRegisterPaid(deps, notify)
+	case strings.HasPrefix(notify.OutTradeNo, "MFD"):
+		return processMonthlyFeePaid(deps, notify)
 	case strings.HasPrefix(notify.OutTradeNo, "TOP"):
 		return processTenantOwnPaidOrder(deps, notify)
 	case strings.HasPrefix(notify.OutTradeNo, "ORD"):
@@ -999,6 +1002,68 @@ func processTenantOwnPaidOrder(deps *Deps, notify *epay.NotifyParams) error {
 	})
 
 	return txErr
+}
+
+// processMonthlyFeePaid 处理开发者月度服务费支付成功（v0.4.x 新增）
+// 流程（事务）：
+//  1. 查 TenantMonthlyFeeOrder，校验金额 + 状态（pending → paid）
+//  2. 事务内更新 pay_status=paid + pay_mode=platform_epay + paid_at
+//  3. 不写抽成记录（月费直接归平台，与卡密抽成解耦）
+// 铁律 04/05：金额从订单自身读取（创建时已从 sys_config 读取并入库）；订单号前缀 MFD
+// 铁律 06：幂等校验，已支付直接返回成功
+// 注：model 当前未单独存 pay_trade_no 字段，平台交易号通过 Webhook 事件 payload 保留追溯链路（待核实：后续如需对账可加列）
+func processMonthlyFeePaid(deps *Deps, notify *epay.NotifyParams) error {
+	// 1. 查订单
+	var order model.TenantMonthlyFeeOrder
+	if err := deps.DB.Where("order_no = ?", notify.OutTradeNo).First(&order).Error; err != nil {
+		return fmt.Errorf("月费订单不存在: %w", err)
+	}
+
+	// 2. 校验金额（防伪造回调）
+	expectedMoney := strconv.FormatFloat(order.Amount, 'f', 2, 64)
+	if notify.Money != expectedMoney {
+		return fmt.Errorf("月费订单金额不匹配: 期望 %s，实际 %s", expectedMoney, notify.Money)
+	}
+
+	// 3. 幂等校验
+	if order.PayStatus == "paid" {
+		return nil
+	}
+	if order.PayStatus != "pending" {
+		return fmt.Errorf("月费订单状态异常: %s", order.PayStatus)
+	}
+
+	// 4. 事务：更新订单状态
+	now := time.Now()
+	txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&order).Updates(map[string]interface{}{
+			"pay_status": "paid",
+			"pay_mode":   "platform_epay",
+			"paid_at":    now,
+		}).Error; err != nil {
+			return fmt.Errorf("更新月费订单状态失败: %w", err)
+		}
+		return nil
+	})
+
+	if txErr != nil {
+		return txErr
+	}
+
+	// 5. v0.4.0 Webhook：异步分发 order.paid 事件（复用订单已支付事件，payload 标注 order_type=monthly_fee）
+	DispatchWebhookEvent(deps, order.TenantID, openapi.EventOrderPaid, gin.H{
+		"order_no":     order.OrderNo,
+		"order_id":     order.ID,
+		"order_type":   "monthly_fee",
+		"tenant_id":    order.TenantID,
+		"amount":       order.Amount,
+		"period_start": order.PeriodStart.Unix(),
+		"period_end":   order.PeriodEnd.Unix(),
+		"pay_trade_no": notify.TradeNo,
+		"paid_at":      now.Unix(),
+	})
+
+	return nil
 }
 
 // ============== 超管：结算记录列表 ==============

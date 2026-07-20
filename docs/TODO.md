@@ -122,7 +122,7 @@
 - [x] [已完成] tenant_pay_config 表读写（CRUD 接口已实现） - v0.3.0
 - [x] [已完成 2026-07-20] 双层支付模式切换逻辑 - v0.3.6（TOP/ORD 前缀分发）
 - [x] [已完成 2026-07-20] 开发者自有支付下单/回调接口 - v0.3.6（EpayTenantNotify 完整实现 + processTenantOwnPaidOrder 事务 + loadTenantPayConfig 解密）
-- [ ] [待开始] 开发自有支付附加月费订单 - v0.4.x
+- [x] [已完成 2026-07-20] 开发自有支付附加月费订单 - v0.4.x（migration 027 tenant_monthly_fee_order 表 + 3 项 pay.tenant_monthly_fee.* sys_config；TenantMonthlyFeeOrder model；admin_finance.go 3 个端点：orders 列表/stats 统计/mark_paid 手动标记；tenant_finance.go 2 个端点：current 当前周期/pay 支付；pay.go dispatchPaidOrder 支持 MFD 前缀 + processMonthlyFeePaid 事务处理；10 个测试覆盖）
 - [x] [已完成 2026-07-20] 切换支付方式时通知所有代理（站内信+横幅+弹窗） - v0.4.x（notify.go 新增 TemplatePayModeChanged 常量 + CfgKeyPayModeChangedEnabled 配置开关 + NotifyAgentsByTenant 辅助函数：查启用代理 → 创建 Notice + NoticeTarget(all_agents) + 批量 notify_log；tenant_business.go TenantSavePayConfig 检测 enabled 状态变更触发通知；migration 022 新增 pay_mode_changed 模板 + 配置开关；7 个测试覆盖开关/无代理/完整链路/跨租户隔离/模板兜底）
 
 #### 代理注册付费流程
@@ -131,18 +131,18 @@
 - [x] [已完成] 代理注册页（REG-01，3 步流程）前端骨架 - v0.2.4
 - [x] [已完成 2026-07-20] 代理注册费支付（走平台总支付，AgentRegister 创建 REG 订单 + 返回 pay_url） - v0.3.6
 - [x] [已完成 2026-07-20] 代理账号自动创建 + 关联开发者（processAgentRegisterPaid 事务内建 Agent + 回填 AgentID + 邀请码 used_count++） - v0.3.6
-- [ ] [待开始] 超管后台代理注册管理（S-17，含退款/收入统计） - v0.3.6
+- [x] [已完成 2026-07-20] 超管后台代理注册管理（S-17，含退款/收入统计） - v0.4.x（migration 026 agent_registration_order 加 5 退款字段；admin_business.go 4 个端点：list 列表/stats 收入统计/refund 退款/detail 详情；refund 事务：更新 refund_status + 退还代理注册费到 agent.balance + 记录 agent_balance_log + 禁用代理账号；4 个测试覆盖成功/未支付/已退款/无代理）
 
 #### 代理购买卡密
 - [x] [已完成] 代理充值申请（P-09） - v0.3.0（v0.3.1 AgentRecharge + v0.3.2 审核闭环）
 - [x] [已完成] 开发者审核充值（D-19） - v0.3.0（v0.3.2 充值审核闭环）
 - [x] [已完成] 代理余额扣款生成卡密 - v0.3.0（AgentGenerateCards 事务化：扣余额→生成卡密→写 deduct 流水→加佣金→写 commission 流水）
-- [ ] [待开始] 代理实时扫码购卡（P-10，备用） - v0.4.x
+- [x] [已完成 2026-07-20] 代理实时扫码购卡（P-10，备用） - v0.4.x（agent_business.go AgentPortalQrCode 端点返回代理专属购卡 URL；apps/admin/src/views/agent/QrCode.vue 渲染二维码 + 复制链接 + 下载按钮；4 个测试覆盖 NoSubdomain/WithApprovedSubdomain/PendingSubdomain/AgentNotFound）
 - [x] [已完成] 代理佣金计算（percentage / diff 两种模式） - v0.3.0（AgentGenerateCards 内联实现）
 - [x] [已完成] 代理提现申请（P-05） - v0.3.0（v0.3.0 AgentWithdraw）
 - [x] [已完成] 开发者审核提现 + 打款（D-14） - v0.3.0（v0.3.2 提现审核闭环：pay + reject）
-- [ ] [待开始] 代理独立门户（P-06，仅展示，收款走开发者） - v0.4.x
-- [ ] [待开始] 代理子域名绑定 - v0.4.x
+- [x] [已完成 2026-07-20] 代理独立门户（P-06，仅展示，收款走开发者） - v0.4.x（apps/admin/src/views/h5/AgentPortal.vue 门户页 + AgentPortalBuy.vue 结算页；api/portal.ts；后端 public.go PublicPortal + PublicPortalOrder 端点（body-rewriting 委托 CreatePayOrder 注入 agent_id）；DTO 隐藏 agent_base_price 防成本泄露；4 个测试覆盖 Success/AgentDisabled/NotFound/TenantDisabled）
+- [x] [已完成 2026-07-20] 代理子域名绑定 - v0.4.x（migration 024 agent 加 subdomain_status 字段；agent_business.go 3 端点：status/apply/unbind；admin_business.go 3 端点：list/approve/reject；2 项 sys_config agent.subdomain.enabled/pattern；apps/admin/src/api/agent.ts 扩展；23 个测试覆盖全流程）
 
 #### 代理核心页面（响应式 H5） ✅ v0.2.5 已完成
 - [x] [已完成] 代理 API 模块 `api/agent.ts`（dashboard/me/card_types/cards/generate/orders/commission/withdraw + 9 个类型） - v0.2.5
@@ -371,6 +371,14 @@
 - [x] [已完成 2026-07-20] CPU/磁盘阈值告警 - v0.4.0（CfgKeyThresholdCPU 默认 90% / CfgKeyThresholdDisk 默认 85% + 4 条规则从 sys_config 动态构造）
 - [x] [已完成 2026-07-20] 后台监控面板（S-11） - v0.4.0（AdminMonitorStatus 配置+活跃告警+24h聚合+最近采集；AdminCollectNow 手动触发；AdminMetricHistory 历史查询；AdminListAlerts 分页；AdminAckAlert 确认告警；AdminResendAlert 重发；AdminCleanupMetrics 清理过期）
 - [ ] [待开始] Prometheus + Grafana 集成 - v0.4.x（可选，当前已实现内置监控；后续可暴露 /metrics 端点对接 Prometheus）
+
+#### v0.4.x 收尾批次（S-04 / D-15 / U-11~14）✅ 2026-07-20 已完成
+- [x] [已完成 2026-07-20] S-04 应用审核（上架审核、违规下架） - v0.4.x（migration 023 app 加 audit_status/audit_remark/audited_at/audited_by 4 字段 + app.audit.enabled 配置；admin_business.go 4 端点：pending 列表/audit 审核/offline 下架/online 上架；client.go 验证 API 校验 audit_status=approved；6 个测试覆盖）
+- [x] [已完成 2026-07-20] D-15 开发者安全设置（IP 黑名单、频率限制） - v0.4.x（migration 025 tenant_security_config 表；model TenantSecurityConfig；tenant_business.go 2 端点：get 获取/put 更新；middleware/tenant_security.go TenantSecurityMiddleware IP 黑名单 + Redis 频率限制；router clientGroup 挂载中间件；6 个测试覆盖）
+- [x] [已完成 2026-07-20] U-11 终端用户订单列表 H5 接入 - v0.4.x（enduser.go H5EndUserListOrders + H5EndUserGetOrder 2 端点；apps/admin/src/views/h5/Orders.vue 列表页 + OrderDetail.vue 详情页；api/enduser.ts 2 API；Profile 菜单加「我的订单」入口；5+5 个测试覆盖）
+- [x] [已完成 2026-07-20] U-12 公告详情 H5 页面 - v0.4.x（public.go PublicNoticeDetail 端点 + view_count 并发自增；apps/admin/src/views/h5/NoticeDetail.vue 支持 text/html 渲染；Profile 菜单加「平台公告」入口；8 个测试覆盖）
+- [x] [已完成 2026-07-20] U-13 帮助中心 H5 页面 - v0.4.x（apps/admin/src/views/h5/Help.vue 4 分类 FAQ 折叠列表：购卡/支付/卡密/账户安全；Profile 菜单加「帮助中心」入口；前端硬编码 v0.5.x 可改后端）
+- [x] [已完成 2026-07-20] U-14 联系客服 H5 页面 - v0.4.x（migration 028 4 项 contact.* sys_config：qq_group/wechat/email/phone；public.go PublicContact 端点；apps/admin/src/views/h5/Contact.vue 展示+复制+跳转；Profile 菜单加「联系客服」入口；3 个测试覆盖）
 - 详见 references/10-monitoring-alerts.md
 
 #### 通知系统

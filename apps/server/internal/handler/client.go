@@ -189,6 +189,15 @@ func ClientLogin(deps *Deps) gin.HandlerFunc {
 		app := c.MustGet("app").(*model.App)
 		tenantID := app.TenantID
 
+		// v0.4.x S-04：审核状态校验（铁律 04：未硬编码状态值，pending/rejected 均拒绝）
+		//   app.audit_status='approved' 才允许通过；pending/rejected 返回 2003 让客户端提示开发者
+		if app.AuditStatus != "approved" {
+			writeVerifyLogCtx(deps, c, app, req.HWID, req.CardKey, "login", "fail",
+				"应用未通过审核（audit_status="+app.AuditStatus+"）")
+			middleware.Fail(c, http.StatusForbidden, 2003, "应用未通过审核，请联系开发者")
+			return
+		}
+
 		// 1. 查卡密
 		card, err := loadCardByCardKey(deps.DB, tenantID, req.CardKey)
 		if err != nil {
@@ -337,6 +346,14 @@ func ClientVerify(deps *Deps) gin.HandlerFunc {
 		}
 
 		app := c.MustGet("app").(*model.App)
+
+		// v0.4.x S-04：审核状态校验（与 ClientLogin 一致）
+		if app.AuditStatus != "approved" {
+			writeVerifyLogCtx(deps, c, app, req.HWID, req.CardKey, "verify", "fail",
+				"应用未通过审核（audit_status="+app.AuditStatus+"）")
+			middleware.Fail(c, http.StatusForbidden, 2003, "应用未通过审核，请联系开发者")
+			return
+		}
 
 		// 1. 查卡密
 		card, err := loadCardByCardKey(deps.DB, app.TenantID, req.CardKey)

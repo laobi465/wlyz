@@ -122,48 +122,57 @@ func TenantCreateApp(deps *Deps) gin.HandlerFunc {
 		}
 
 		// 4. 填充默认值（从 sys_config 读取，铁律 05）
-		maxDevices := req.MaxDevices
-		if maxDevices == 0 {
-			maxDevices = deps.CfgCache.GetInt(ctx, "app.default.max_devices", 1)
-		}
-		heartbeatInterval := req.HeartbeatInterval
-		if heartbeatInterval == 0 {
-			heartbeatInterval = deps.CfgCache.GetInt(ctx, "app.default.heartbeat_interval", 60)
-		}
-		heartbeatTimeout := req.HeartbeatTimeout
-		if heartbeatTimeout == 0 {
-			heartbeatTimeout = deps.CfgCache.GetInt(ctx, "app.default.heartbeat_timeout", 180)
-		}
-		offlineGrace := req.OfflineGrace
-		if offlineGrace == 0 {
-			offlineGrace = deps.CfgCache.GetInt(ctx, "app.default.offline_grace", 86400)
-		}
-		unbindDeduct := req.UnbindDeductSeconds
-		if unbindDeduct == 0 {
-			unbindDeduct = deps.CfgCache.GetInt(ctx, "app.default.unbind_deduct_seconds", 86400)
-		}
-		commissionMode := req.AgentCommissionMode
-		if commissionMode == "" {
-			commissionMode = "diff"
-		}
+	maxDevices := req.MaxDevices
+	if maxDevices == 0 {
+		maxDevices = deps.CfgCache.GetInt(ctx, "app.default.max_devices", 1)
+	}
+	heartbeatInterval := req.HeartbeatInterval
+	if heartbeatInterval == 0 {
+		heartbeatInterval = deps.CfgCache.GetInt(ctx, "app.default.heartbeat_interval", 60)
+	}
+	heartbeatTimeout := req.HeartbeatTimeout
+	if heartbeatTimeout == 0 {
+		heartbeatTimeout = deps.CfgCache.GetInt(ctx, "app.default.heartbeat_timeout", 180)
+	}
+	offlineGrace := req.OfflineGrace
+	if offlineGrace == 0 {
+		offlineGrace = deps.CfgCache.GetInt(ctx, "app.default.offline_grace", 86400)
+	}
+	unbindDeduct := req.UnbindDeductSeconds
+	if unbindDeduct == 0 {
+		unbindDeduct = deps.CfgCache.GetInt(ctx, "app.default.unbind_deduct_seconds", 86400)
+	}
+	commissionMode := req.AgentCommissionMode
+	if commissionMode == "" {
+		commissionMode = "diff"
+	}
 
-		// 5. 入库
-		app := &model.App{
-			TenantID:            tenantID,
-			AppKey:              appKey,
-			AppSecret:           appSecretEnc,
-			SignSecret:          signSecretEnc,
-			Name:                req.Name,
-			Description:         req.Description,
-			Icon:                req.Icon,
-			Status:              "active",
-			MaxDevices:          maxDevices,
-			HeartbeatInterval:   heartbeatInterval,
-			HeartbeatTimeout:    heartbeatTimeout,
-			OfflineGrace:        offlineGrace,
-			UnbindDeductSeconds: unbindDeduct,
-			AgentCommissionMode: commissionMode,
-		}
+	// v0.4.x S-04：审核状态受 sys_config app.audit.enabled 控制（铁律 05）
+	//   app.audit.enabled=1 → 新应用初始 audit_status=pending，需 admin 审核通过后才能用于客户端验证
+	//   app.audit.enabled=0 → 新应用直接 audit_status=approved（默认行为，向后兼容）
+	auditStatus := "approved"
+	if deps.CfgCache.GetBool(ctx, "app.audit.enabled", false) {
+		auditStatus = "pending"
+	}
+
+	// 5. 入库
+	app := &model.App{
+		TenantID:            tenantID,
+		AppKey:              appKey,
+		AppSecret:           appSecretEnc,
+		SignSecret:          signSecretEnc,
+		Name:                req.Name,
+		Description:         req.Description,
+		Icon:                req.Icon,
+		Status:              "active",
+		MaxDevices:          maxDevices,
+		HeartbeatInterval:   heartbeatInterval,
+		HeartbeatTimeout:    heartbeatTimeout,
+		OfflineGrace:        offlineGrace,
+		UnbindDeductSeconds: unbindDeduct,
+		AgentCommissionMode: commissionMode,
+		AuditStatus:         auditStatus,
+	}
 		if err := deps.DB.Create(app).Error; err != nil {
 			middleware.Fail(c, http.StatusInternalServerError, 5009, "创建应用失败: "+err.Error())
 			return

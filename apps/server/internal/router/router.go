@@ -60,6 +60,10 @@ func Register(container *config.Container) *gin.Engine {
 	clientGroup := v1.Group("/client")
 	clientGroup.Use(middleware.SignatureAuth(container.DB, container.Redis, container.ConfigCache()))
 	clientGroup.Use(middleware.RateLimitByIP(container.Redis, container.ConfigCache(), "verify"))
+	// v0.4.x D-15：开发者安全配置中间件（IP 黑名单 + 租户级频率限制）
+	// 铁律 05：阈值从 tenant_security_config 表读取，fail-open 保证 DB/Redis 故障不阻塞主链路
+	// 依赖 SignatureAuth 注入的 c.Get("app")，因此必须挂在 SignatureAuth 之后
+	clientGroup.Use(middleware.TenantSecurityMiddleware(container.DB, container.Redis, "verify"))
 	{
 		clientGroup.POST("/login", handler.ClientLogin(deps))
 		clientGroup.POST("/verify", handler.ClientVerify(deps))
@@ -97,6 +101,12 @@ func Register(container *config.Container) *gin.Engine {
 		adminAuth.GET("/agents", handler.AdminListAgents(deps))
 		adminAuth.PUT("/agents/:id", handler.AdminUpdateAgent(deps))
 		adminAuth.GET("/agents/:id/tree", handler.AdminGetAgentTree(deps)) // v0.4.0 多级代理树
+
+		// v0.4.x 代理子域名审批（残留项 1）
+		// 铁律 05：审批操作仅平台超管可执行；agent.subdomain.enabled=0 时代理端无法申请
+		adminAuth.GET("/agents/subdomains", handler.AdminListSubdomains(deps))
+		adminAuth.POST("/agents/:id/subdomain/approve", handler.AdminApproveSubdomain(deps))
+		adminAuth.POST("/agents/:id/subdomain/reject", handler.AdminRejectSubdomain(deps))
 
 		// 版本管理（v0.4.0 灰度发布：跨租户查询）
 		adminAuth.GET("/versions", handler.AdminListVersions(deps))
@@ -202,6 +212,26 @@ func Register(container *config.Container) *gin.Engine {
 
 		// 对账报表（v0.3.4 新增）
 		adminAuth.GET("/reconciliation", handler.AdminReconciliation(deps))
+
+		// v0.4.x S-04 应用审核（4 个端点：pending 列表 / 审核 / 下架 / 上架）
+		// 铁律 05：app.audit.enabled=1 时新建应用 audit_status=pending，需超管审核通过后客户端才能验证
+		adminAuth.GET("/apps/pending", handler.AdminListPendingApps(deps))
+		adminAuth.POST("/apps/:id/audit", handler.AdminAuditApp(deps))
+		adminAuth.POST("/apps/:id/offline", handler.AdminOfflineApp(deps))
+		adminAuth.POST("/apps/:id/online", handler.AdminOnlineApp(deps))
+
+		// v0.4.x S-17 超管后台代理注册管理（4 个端点：列表 / 统计 / 退款 / 详情）
+		// 铁律 06：退款事务内同步禁用关联 Agent，防止退款后代理仍可登录
+		adminAuth.GET("/agent_registrations", handler.AdminListAgentRegistrations(deps))
+		adminAuth.GET("/agent_registrations/stats", handler.AdminAgentRegistrationStats(deps))
+		adminAuth.GET("/agent_registrations/:id", handler.AdminGetAgentRegistration(deps))
+		adminAuth.POST("/agent_registrations/:id/refund", handler.AdminRefundAgentRegistration(deps))
+
+		// v0.4.x 开发者月费订单管理（3 个端点：列表 / 统计 / 手动标记已支付）
+		// 铁律 04：月费金额从 sys_config pay.tenant_monthly_fee.amount 读取，订单创建时已固化
+		adminAuth.GET("/monthly_fee_orders", handler.AdminListMonthlyFeeOrders(deps))
+		adminAuth.GET("/monthly_fee_orders/stats", handler.AdminMonthlyFeeStats(deps))
+		adminAuth.POST("/monthly_fee_orders/:id/mark_paid", handler.AdminMarkMonthlyFeePaid(deps))
 
 		// 账号设置（v0.3.0 三角色统一）
 		adminAuth.GET("/auth/me", handler.ProfileMe(deps))
@@ -309,6 +339,16 @@ func Register(container *config.Container) *gin.Engine {
 		tenantAuth.GET("/withdrawals/mine", handler.TenantListOwnWithdrawals(deps))   // 自己的提现申请
 		tenantAuth.POST("/withdraw", handler.TenantWithdraw(deps))                    // 发起提现申请
 
+		// v0.4.x D-15 开发者安全设置（2 个端点：查询 / 更新）
+		// 铁律 04：IP 黑名单 JSON 数组 + 限速阈值存 tenant_security_config，无硬编码
+		tenantAuth.GET("/security", handler.TenantGetSecurity(deps))
+		tenantAuth.PUT("/security", handler.TenantUpdateSecurity(deps))
+
+		// v0.4.x 开发者月费订单（2 个端点：当前账单 / 发起支付）
+		// 铁律 05：开关/金额/免费天数从 sys_config pay.tenant_monthly_fee.* 读取
+		tenantAuth.GET("/monthly_fee/current", handler.TenantGetMonthlyFeeCurrent(deps))
+		tenantAuth.POST("/monthly_fee/pay", handler.TenantPayMonthlyFee(deps))
+
 		// API 开放平台（v0.4.0 开发者 API Token + Webhook 事件推送）
 		// 铁律 06：Token 明文仅生成时返回一次；Webhook secret AES-256-GCM 加密存储
 		tenantAuth.GET("/openapi/meta", handler.TenantOpenAPIMeta(deps))
@@ -381,6 +421,15 @@ func Register(container *config.Container) *gin.Engine {
 		agentAuth.POST("/invite_codes/:id/disable", handler.AgentDisableInviteCode(deps))
 		agentAuth.GET("/subordinates", handler.AgentListSubordinates(deps))
 		agentAuth.GET("/tree", handler.AgentGetTree(deps))
+
+		// v0.4.x 残留项 1：代理子域名绑定（申请/状态查询/解绑）
+		// 铁律 05：agent.subdomain.enabled=0 时所有写操作被 handler 内部拒绝
+		agentAuth.GET("/subdomain", handler.AgentSubdomainStatus(deps))
+		agentAuth.POST("/subdomain/apply", handler.AgentApplySubdomain(deps))
+		agentAuth.DELETE("/subdomain", handler.AgentUnbindSubdomain(deps))
+
+		// v0.4.x 残留项 3（P-10）：代理扫码购卡 URL（前端渲染二维码）
+		agentAuth.GET("/portal/qrcode", handler.AgentPortalQrCode(deps))
 	}
 
 	// ----- 公共 API（无需鉴权） -----
@@ -395,6 +444,10 @@ func Register(container *config.Container) *gin.Engine {
 		publicGroup.GET("/auth/agent/register/order/:order_no", handler.AgentRegisterOrderStatus(deps)) // v0.3.6
 		publicGroup.POST("/auth/refresh", handler.RefreshToken(deps)) // 三角色共用
 		publicGroup.GET("/notices/platform", handler.PublicPlatformNotices(deps))
+		// v0.4.x 残留项 2：U-12 公告详情 H5 页面（公开端点，增加 view_count）
+		publicGroup.GET("/notices/:id", handler.PublicNoticeDetail(deps))
+		// v0.4.x 残留项 4：U-14 联系客服 H5 页面（从 sys_config 读取）
+		publicGroup.GET("/contact", handler.PublicContact(deps))
 
 		// GitHub Webhook 接收（v0.4.0 在线更新：无鉴权，靠 HMAC-SHA256 签名校验）
 		publicGroup.POST("/update/webhook", handler.GitHubWebhook(deps))
@@ -410,6 +463,10 @@ func Register(container *config.Container) *gin.Engine {
 		publicGroup.POST("/enduser/refresh", handler.H5RefreshToken(deps))
 		publicGroup.POST("/enduser/verify_code", handler.H5SendVerifyCode(deps))
 		publicGroup.POST("/enduser/reset_password", handler.H5ResetPassword(deps))
+
+		// v0.4.x 残留项 2（P-06）：代理独立 H5 门户（展示 + 走开发者支付通道）
+		publicGroup.GET("/portal/:agent_id", handler.PublicPortal(deps))
+		publicGroup.POST("/portal/:agent_id/order", handler.PublicPortalOrder(deps))
 	}
 
 	// ----- H5 终端用户 API（终端用户 access token 鉴权，v0.4.0 新增） -----
@@ -432,6 +489,10 @@ func Register(container *config.Container) *gin.Engine {
 		h5Auth.POST("/cards/unbind", handler.H5EndUserUnbindCard(deps))
 		h5Auth.GET("/cards", handler.H5EndUserListMyCards(deps))
 		h5Auth.GET("/cards/:id", handler.H5EndUserGetCardDetail(deps))
+
+		// v0.4.x 残留项 1：U-11 终端用户订单列表 H5 接入
+		h5Auth.GET("/orders", handler.H5EndUserListOrders(deps))
+		h5Auth.GET("/orders/:order_no", handler.H5EndUserGetOrder(deps))
 	}
 
 	// ----- 第三方开放 API（API Token 鉴权，v0.4.0 新增） -----

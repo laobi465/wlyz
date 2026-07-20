@@ -10,6 +10,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -483,6 +484,146 @@ func H5EndUserGetCardDetail(deps *Deps) gin.HandlerFunc {
 			return
 		}
 		middleware.Success(c, card)
+	}
+}
+
+// ============== 终端用户订单接口（v0.4.x 残留项 1：U-11） ==============
+
+// H5EndUserListOrders GET /h5/orders?status=&page=&page_size=
+// 列出当前终端用户的订单（按 buyer_user_id 筛选）
+// status 可选：pending / paid / closed / refunded / 空（全部）
+func H5EndUserListOrders(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID := c.GetUint64("enduser_id")
+		status := strings.TrimSpace(c.Query("status"))
+		page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+		pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+		if page <= 0 {
+			page = 1
+		}
+		if pageSize <= 0 || pageSize > 100 {
+			pageSize = 20
+		}
+
+		q := deps.DB.Model(&model.AppOrder{}).Where("buyer_user_id = ?", userID)
+		// 铁律 04：状态白名单（避免任意 status 拼接）
+		switch status {
+		case "pending", "paid", "closed", "refunded":
+			q = q.Where("pay_status = ?", status)
+		case "":
+			// 全部
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "无效的 status 参数"})
+			return
+		}
+
+		var total int64
+		q.Count(&total)
+
+		var orders []model.AppOrder
+		if err := q.Order("id DESC").
+			Offset((page - 1) * pageSize).Limit(pageSize).Find(&orders).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "查询订单失败: " + err.Error()})
+			return
+		}
+
+		// 拼装响应项（铁律 04：仅返回 H5 必要字段，敏感字段如 card_ids 不外泄明文卡密 ID）
+		items := make([]gin.H, 0, len(orders))
+		for _, o := range orders {
+			items = append(items, gin.H{
+				"id":           o.ID,
+				"order_no":     o.OrderNo,
+				"app_id":       o.AppID,
+				"tenant_id":    o.TenantID,
+				"card_type_id": o.CardTypeID,
+				"quantity":     o.Quantity,
+				"unit_price":   o.UnitPrice,
+				"total_amount": o.TotalAmount,
+				"pay_channel":  o.PayChannel,
+				"pay_status":   o.PayStatus,
+				"pay_trade_no": o.PayTradeNo,
+				"paid_at":      o.PaidAt,
+				"created_at":   o.CreatedAt,
+				"client_ip":    o.ClientIP,
+			})
+		}
+
+		middleware.Success(c, gin.H{
+			"list":      items,
+			"total":     total,
+			"page":      page,
+			"page_size": pageSize,
+		})
+	}
+}
+
+// H5EndUserGetOrder GET /h5/orders/:order_no
+// 查询单个订单详情 + 已支付时返回卡密明文列表
+// 安全：仅返回属于当前 enduser_id 的订单；卡密明文仅在 pay_status=paid 时返回
+func H5EndUserGetOrder(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID := c.GetUint64("enduser_id")
+		orderNo := strings.TrimSpace(c.Param("order_no"))
+		if orderNo == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "订单号不能为空"})
+			return
+		}
+
+		var order model.AppOrder
+		if err := deps.DB.Where("order_no = ? AND buyer_user_id = ?", orderNo, userID).First(&order).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"code": 404, "message": "订单不存在或不属于当前用户"})
+			return
+		}
+
+		// 解析卡密 ID 列表
+		var cardIDs []uint64
+		if order.CardIDs != "" {
+			_ = json.Unmarshal([]byte(order.CardIDs), &cardIDs)
+		}
+
+		// v0.3.5 起策略：订单已支付时返回卡密明文，供 H5 终端用户直接查看
+		// 安全：仅返回该订单关联的卡密；card_ids 字段为 JSON 数组
+		// 注：始终初始化为空切片而非 nil，便于前端无空值判断（JSON 序列化为 [] 而非 null）
+		cardKeys := make([]string, 0)
+		cards := make([]gin.H, 0)
+		if order.PayStatus == "paid" && len(cardIDs) > 0 {
+			var appCards []model.AppCard
+			deps.DB.Where("id IN ?", cardIDs).Order("id ASC").Find(&appCards)
+			for _, card := range appCards {
+				cardKeys = append(cardKeys, card.CardKey)
+				cards = append(cards, gin.H{
+					"id":            card.ID,
+					"card_key":      card.CardKey,
+					"status":        card.Status,
+					"expires_at":    card.ExpiresAt,
+					"activated_at":  card.ActivatedAt,
+					"duration_seconds": card.DurationSeconds,
+					"max_uses":      card.MaxUses,
+					"used_count":    card.UsedCount,
+				})
+			}
+		}
+
+		middleware.Success(c, gin.H{
+			"id":              order.ID,
+			"order_no":        order.OrderNo,
+			"app_id":          order.AppID,
+			"tenant_id":       order.TenantID,
+			"card_type_id":    order.CardTypeID,
+			"quantity":        order.Quantity,
+			"unit_price":      order.UnitPrice,
+			"total_amount":    order.TotalAmount,
+			"pay_channel":     order.PayChannel,
+			"pay_status":      order.PayStatus,
+			"pay_trade_no":    order.PayTradeNo,
+			"paid_at":         order.PaidAt,
+			"created_at":      order.CreatedAt,
+			"client_ip":       order.ClientIP,
+			"buyer_contact":   order.BuyerContact,
+			"card_ids":        cardIDs,
+			"card_keys":       cardKeys, // 仅 paid 时非空
+			"cards":           cards,   // 仅 paid 时非空：卡密明细列表
+		})
 	}
 }
 
