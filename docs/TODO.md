@@ -114,12 +114,12 @@
 ### [P1] 二期增值功能
 
 #### 开发者自有易支付
-- [ ] [待开始] 套餐 allow_custom_pay 字段生效 - v0.3.6
+- [x] [已完成 2026-07-20] 套餐 allow_custom_pay 字段生效 - v0.3.6（CreatePayOrder 内查 SysPackage.AllowCustomPay）
 - [x] [已完成] 开发者审核充值（D-19） - v0.3.0（v0.3.2 充值审核闭环）
-- [ ] [待开始] 开发者支付配置页（D-18）双层支付模式 - v0.3.6
+- [x] [已完成 2026-07-20] 开发者支付配置页（D-18）双层支付模式 - v0.3.6（CreatePayOrder 双层切换 + pay_mode 响应字段）
 - [x] [已完成] tenant_pay_config 表读写（CRUD 接口已实现） - v0.3.0
-- [ ] [待开始] 双层支付模式切换逻辑 - v0.3.6
-- [ ] [待开始] 开发者自有支付下单/回调接口（pay.go:528 EpayTenantNotify 仍返回 "fail"） - v0.3.6
+- [x] [已完成 2026-07-20] 双层支付模式切换逻辑 - v0.3.6（TOP/ORD 前缀分发）
+- [x] [已完成 2026-07-20] 开发者自有支付下单/回调接口 - v0.3.6（EpayTenantNotify 完整实现 + processTenantOwnPaidOrder 事务 + loadTenantPayConfig 解密）
 - [ ] [待开始] 开发自有支付附加月费订单 - v0.4.x
 - [ ] [待开始] 切换支付方式时通知所有代理（站内信+横幅+弹窗） - v0.4.x
 
@@ -470,7 +470,7 @@
 | v0.3.3 | 2026-07-19 | ✅ 已完成（日志系统：异步 Worker + 三表独立查询 + CSV 导出 + 前端 3 Tab 升级） |
 | v0.3.4 | 2026-07-19 | ✅ 已完成（结算与对账闭环：开发者 balance/frozen_balance + tenant_balance_log + tenant_withdraw + 批量结算 + 对账报表 + 双审核页面） |
 | v0.3.5 | 2026-07-19 | ✅ 已完成（P0 修复：RSA 脚本 / 数据库迁移 / H5 公共 API / 套餐配额） |
-| v0.3.6 | 待定 | [进行中] 剩余 P1 收尾（文档同步 + 卡密 CSV + 设备强制下线 + 安装向导 + 代理注册付费 ✓ + 开发者自有易支付 + SDK 三语言） |
+| v0.3.6 | 待定 | [进行中] 剩余 P1 收尾（文档同步 + 卡密 CSV + 设备强制下线 + 安装向导 + 代理注册付费 ✓ + 开发者自有易支付 ✓ + SDK 三语言） |
 | v0.4.0 | 待定 | [待开始] 三期商业化 |
 
 ---
@@ -508,9 +508,9 @@
 - [x] [已完成 2026-07-20] 设备强制下线（card.go TenantBanCard 联动 heartbeat.Remove 清 Redis 心跳 + DB 标记 banned）
 - [x] [已完成 2026-07-20] 安装向导页面（/install，后端 install.go InstallStatus/Install + 前端 Install.vue 4 步向导 + 路由）
 - [x] [已完成 2026-07-20] 代理注册付费流程（AgentRegister 创建 REG 订单 + processAgentRegisterPaid 事务建 Agent + 邀请码状态机闭环 + Register.vue 落地 3 处 TODO + 修 install.go 配置键名 bug）
-- [ ] [待开始] 开发者自有易支付回调实现（pay.go:528 EpayTenantNotify）
-- [ ] [待开始] 双层支付模式切换逻辑
-- [ ] [待开始] 套餐 allow_custom_pay 字段生效
+- [x] [已完成 2026-07-20] 开发者自有易支付回调实现（EpayTenantNotify + processTenantOwnPaidOrder + loadTenantPayConfig）
+- [x] [已完成 2026-07-20] 双层支付模式切换逻辑（CreatePayOrder 内 SysPackage.AllowCustomPay + TenantPayConfig.Enabled 双开关，TOP/ORD 前缀分发）
+- [x] [已完成 2026-07-20] 套餐 allow_custom_pay 字段生效（CreatePayOrder 内读取生效）
 - [ ] [待开始] 客户端 SDK（Python / Node.js / PHP 三语言）
 - [ ] [待开始] 单元测试 + 集成测试
 - [x] [已完成 2026-07-20] v0.3.6 文档同步

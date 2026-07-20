@@ -170,15 +170,56 @@ func CreatePayOrder(deps *Deps) gin.HandlerFunc {
 			return
 		}
 
-		// 6. 加载易支付配置
-		cfg, err := loadPlatformPayConfig(deps)
-		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 4006, "支付配置错误: "+err.Error())
-			return
+		// 6. 双层支付模式切换（v0.3.6）：
+		//    优先级：套餐 AllowCustomPay=true + 开发者 TenantPayConfig.Enabled=true → 走自有支付
+		//    否则：回退平台总支付（需 pay.platform.enabled=true）
+		var pkg model.SysPackage
+		_ = deps.DB.First(&pkg, tenant.PackageID).Error
+
+		useTenantPay := false
+		if pkg.AllowCustomPay {
+			var tpc model.TenantPayConfig
+			if err := deps.DB.Where("tenant_id = ? AND channel = ? AND enabled = ?",
+				app.TenantID, "epay", true).First(&tpc).Error; err == nil {
+				useTenantPay = true
+			}
+		}
+
+		var (
+			payCfg    *epay.Config
+			orderNo   string
+			payNotify string
+			payReturn string
+			payErr    error
+		)
+		if useTenantPay {
+			// 6.1 走开发者自有易支付
+			payCfg, payErr = loadTenantPayConfig(deps, app.TenantID)
+			if payErr != nil {
+				middleware.Fail(c, http.StatusInternalServerError, 4006, "自有支付配置错误: "+payErr.Error())
+				return
+			}
+			orderNo = snowflake.OrderNo("TOP")
+			// 回调 URL 携带 tenant_id 以便 EpayTenantNotify 加载对应密钥
+			payNotify = resolveTenantNotifyURL(deps, c, app.TenantID)
+			payReturn = resolveTenantReturnURL(deps, c)
+		} else {
+			// 6.2 走平台总支付
+			if !deps.CfgCache.GetBool(ctx, "pay.platform.enabled", true) {
+				middleware.Fail(c, http.StatusForbidden, 4001, "平台总支付未启用且开发者未开通自有支付")
+				return
+			}
+			payCfg, payErr = loadPlatformPayConfig(deps)
+			if payErr != nil {
+				middleware.Fail(c, http.StatusInternalServerError, 4006, "平台支付配置错误: "+payErr.Error())
+				return
+			}
+			orderNo = snowflake.OrderNo("ORD")
+			payNotify = resolveNotifyURL(deps, c)
+			payReturn = resolveReturnURL(deps, c)
 		}
 
 		// 7. 创建订单
-		orderNo := snowflake.OrderNo("ORD")
 		var agentID *uint64
 		if req.AgentID > 0 {
 			agentID = &req.AgentID
@@ -211,28 +252,62 @@ func CreatePayOrder(deps *Deps) gin.HandlerFunc {
 			Name:       fmt.Sprintf("%s·%s×%d", namePrefix, ct.Name, req.Quantity),
 			Money:      moneyStr,
 			PayType:    req.PayType,
-			NotifyURL:  resolveNotifyURL(deps, c),
-			ReturnURL:  resolveReturnURL(deps, c),
+			NotifyURL:  payNotify,
+			ReturnURL:  payReturn,
 			ClientIP:   c.ClientIP(),
 		}
-		payURL, err := epay.BuildSubmitURL(cfg, orderParams)
-		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 4008, "构造支付链接失败: "+err.Error())
+		payURL, buildErr := epay.BuildSubmitURL(payCfg, orderParams)
+		if buildErr != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 4008, "构造支付链接失败: "+buildErr.Error())
 			return
 		}
 
 		middleware.Success(c, gin.H{
-			"order_no":   orderNo,
-			"order_id":   order.ID,
-			"pay_url":    payURL,
-			"total_amount": totalAmount,
-			"money":      moneyStr,
-			"pay_type":   req.PayType,
-			"expire_at":  time.Now().Add(time.Duration(orderExpire) * time.Second).Unix(),
-			"quantity":   req.Quantity,
-			"card_type":  ct.Name,
+			"order_no":       orderNo,
+			"order_id":       order.ID,
+			"pay_url":        payURL,
+			"total_amount":   totalAmount,
+			"money":          moneyStr,
+			"pay_type":       req.PayType,
+			"pay_mode":       ternary(useTenantPay, "tenant", "platform"), // v0.3.6 标识支付通道
+			"expire_at":      time.Now().Add(time.Duration(orderExpire) * time.Second).Unix(),
+			"quantity":       req.Quantity,
+			"card_type":      ct.Name,
 		})
 	}
+}
+
+// resolveTenantNotifyURL 拼接开发者自有易支付异步回调 URL（携带 tenant_id）
+func resolveTenantNotifyURL(deps *Deps, c *gin.Context, tenantID uint64) string {
+	ctx := context.Background()
+	notifyPath := deps.CfgCache.GetString(ctx, "pay.tenant.notify_path", "/api/v1/pay/notify/tenant/")
+	scheme := "https"
+	if r := c.Request; r.TLS == nil {
+		if xfp := r.Header.Get("X-Forwarded-Proto"); xfp != "" {
+			scheme = xfp
+		} else {
+			scheme = "http"
+		}
+	}
+	host := c.Request.Host
+	if host == "" {
+		return strings.TrimRight(deps.CfgCache.GetString(ctx, "pay.platform.gateway_url", ""), "/") +
+			notifyPath + strconv.FormatUint(tenantID, 10)
+	}
+	return scheme + "://" + host + notifyPath + strconv.FormatUint(tenantID, 10)
+}
+
+// resolveTenantReturnURL 拼接开发者自有易支付同步跳转 URL（复用平台 return 配置）
+func resolveTenantReturnURL(deps *Deps, c *gin.Context) string {
+	return resolveReturnURL(deps, c)
+}
+
+// ternary 简化的三元运算符辅助
+func ternary(cond bool, a, b string) string {
+	if cond {
+		return a
+	}
+	return b
 }
 
 // ============== GetPayOrder 查询订单状态 ==============
@@ -351,11 +426,16 @@ func EpayNotify(deps *Deps) gin.HandlerFunc {
 }
 
 // dispatchPaidOrder 按订单号前缀分发到对应业务处理器
-// 铁律 04：避免硬编码业务分发，集中在此路由
+// 前缀定义（铁律 04：集中分发，避免散落）：
+//   - ORD → 平台总支付卡密购买（processPaidOrder）
+//   - TOP → 开发者自有易支付卡密购买（processTenantOwnPaidOrder，v0.3.6）
+//   - REG → 代理注册付费（processAgentRegisterPaid）
 func dispatchPaidOrder(deps *Deps, notify *epay.NotifyParams) error {
 	switch {
 	case strings.HasPrefix(notify.OutTradeNo, "REG"):
 		return processAgentRegisterPaid(deps, notify)
+	case strings.HasPrefix(notify.OutTradeNo, "TOP"):
+		return processTenantOwnPaidOrder(deps, notify)
 	case strings.HasPrefix(notify.OutTradeNo, "ORD"):
 		return processPaidOrder(deps, notify)
 	default:
@@ -681,15 +761,199 @@ func EpayReturn(deps *Deps) gin.HandlerFunc {
 	}
 }
 
-// ============== EpayTenantNotify 开发者自有易支付回调（v0.3.0） ==============
+// ============== EpayTenantNotify 开发者自有易支付回调（v0.3.6 实现） ==============
 
 // EpayTenantNotify 开发者自有易支付回调
 // POST /api/v1/pay/notify/tenant/:tenant_id
-// TODO(v0.3.0): 按租户隔离回调路由，从 tenant_pay_config 读取该租户的易支付配置
+// 流程：
+//  1. 从 URL 取 tenant_id，加载该租户的 TenantPayConfig（channel=epay, enabled=true）
+//  2. AES 解密 key_encrypted
+//  3. 收集回调参数 + 验签（用该租户密钥）
+//  4. Redis 防重入（key 含 tenant_id 命名空间隔离）
+//  5. dispatchPaidOrder 按订单号前缀分发：TOP → processTenantOwnPaidOrder
+//  6. 返回 "success"
 func EpayTenantNotify(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.String(200, "fail")
+		// 1. 取 tenant_id
+		tenantIDStr := c.Param("tenant_id")
+		tenantID, err := strconv.ParseUint(tenantIDStr, 10, 64)
+		if err != nil || tenantID == 0 {
+			c.String(200, "fail")
+			return
+		}
+
+		// 2. 加载该租户的易支付配置
+		cfg, err := loadTenantPayConfig(deps, tenantID)
+		if err != nil {
+			c.String(200, "fail")
+			return
+		}
+
+		// 3. 收集参数 + 验签
+		params := collectNotifyParams(c)
+		if !epay.VerifyNotify(params, cfg.Secret) {
+			c.String(200, "fail")
+			return
+		}
+		notify := epay.ParseNotify(params)
+		if !notify.IsSuccess() {
+			c.String(200, "fail")
+			return
+		}
+
+		// 4. Redis 防重入（按 tenant_id 命名空间隔离）
+		lockKey := fmt.Sprintf("pay:notify:tenant:%d:lock:%s", tenantID, notify.OutTradeNo)
+		ok, err := deps.Redis.SetNX(c.Request.Context(), lockKey, "1", 60*time.Second).Result()
+		if err != nil || !ok {
+			c.String(200, "success")
+			return
+		}
+
+		// 5. 处理订单（TOP 前缀走自有支付分支，ORD 走平台总支付分支）
+		if err := dispatchPaidOrder(deps, notify); err != nil {
+			deps.Redis.Del(c.Request.Context(), lockKey)
+			c.String(200, "fail")
+			return
+		}
+
+		c.String(200, "success")
 	}
+}
+
+// loadTenantPayConfig 加载租户自有易支付配置并解密密钥
+// 铁律 05：密钥 AES-256-GCM 加密入库，运行时解密
+func loadTenantPayConfig(deps *Deps, tenantID uint64) (*epay.Config, error) {
+	var cfg model.TenantPayConfig
+	if err := deps.DB.Where("tenant_id = ? AND channel = ? AND enabled = ?",
+		tenantID, "epay", true).First(&cfg).Error; err != nil {
+		return nil, fmt.Errorf("开发者自有易支付未启用: %w", err)
+	}
+	if cfg.GatewayURL == "" || cfg.PID == "" || cfg.KeyEncrypted == "" {
+		return nil, fmt.Errorf("开发者自有易支付配置不完整")
+	}
+	secret, err := deps.Crypto.DecryptAES(cfg.KeyEncrypted)
+	if err != nil {
+		return nil, fmt.Errorf("开发者商户密钥解密失败: %w", err)
+	}
+	if secret == "" {
+		return nil, fmt.Errorf("开发者商户密钥为空")
+	}
+	return &epay.Config{
+		GatewayURL: cfg.GatewayURL,
+		PID:        cfg.PID,
+		Secret:     secret,
+		SignType:   "MD5",
+	}, nil
+}
+
+// processTenantOwnPaidOrder 处理开发者自有易支付成功订单（事务）
+// 与 processPaidOrder 区别：
+//  1. 不写 PlatformSettlement（资金直接进开发者易支付账户，平台不抽成）
+//  2. 平台通过套餐 CustomPayFee 月费模式收取开通费，不在每单抽成
+//  3. 写 TenantBalanceLog 记录订单已结算（type=settle，amount=订单总额）
+//     → 开发者 balance 累加订单总额，对应"已直接收款"的事实
+func processTenantOwnPaidOrder(deps *Deps, notify *epay.NotifyParams) error {
+	// 1. 查订单
+	var order model.AppOrder
+	if err := deps.DB.Where("order_no = ?", notify.OutTradeNo).First(&order).Error; err != nil {
+		return fmt.Errorf("订单不存在: %w", err)
+	}
+
+	// 2. 校验金额（防伪造回调）
+	expectedMoney := strconv.FormatFloat(order.TotalAmount, 'f', 2, 64)
+	if notify.Money != expectedMoney {
+		return fmt.Errorf("金额不匹配: 期望 %s，实际 %s", expectedMoney, notify.Money)
+	}
+
+	// 3. 幂等校验
+	if order.PayStatus == "paid" {
+		return nil
+	}
+	if order.PayStatus != "pending" {
+		return fmt.Errorf("订单状态异常: %s", order.PayStatus)
+	}
+
+	// 4. 查卡类（自动发卡参数来源）
+	var ct model.AppCardType
+	if err := deps.DB.First(&ct, order.CardTypeID).Error; err != nil {
+		return fmt.Errorf("卡类不存在: %w", err)
+	}
+
+	// 5. 事务：更新订单 + 自动发卡 + 写开发者流水（balance 累加）
+	now := time.Now()
+	txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
+		// 5.1 更新订单状态
+		if err := tx.Model(&order).Updates(map[string]interface{}{
+			"pay_status":   "paid",
+			"pay_trade_no": notify.TradeNo,
+			"paid_at":      now,
+		}).Error; err != nil {
+			return fmt.Errorf("更新订单状态失败: %w", err)
+		}
+
+		// 5.2 自动发卡
+		cardIDs := make([]uint64, 0, order.Quantity)
+		batchNo := fmt.Sprintf("T%s%06d", now.Format("20060102"), order.ID%1000000)
+		for i := 0; i < order.Quantity; i++ {
+			key, hash, checksum, err := crypto.GenerateCardKey("")
+			if err != nil {
+				return fmt.Errorf("生成第 %d 张卡密失败: %w", i+1, err)
+			}
+			card := &model.AppCard{
+				TenantID:        order.TenantID,
+				AppID:           order.AppID,
+				CardTypeID:      order.CardTypeID,
+				CardKey:         key,
+				CardKeyHash:     hash,
+				Checksum:        checksum,
+				Status:          "unused",
+				BatchNo:         batchNo,
+				DurationSeconds: ct.DurationSeconds,
+				MaxUses:         ct.MaxUses,
+				CreatedBy:       order.TenantID,
+				CreatorType:     "auto",
+				OrderID:         &order.ID,
+			}
+			if err := tx.Create(card).Error; err != nil {
+				return fmt.Errorf("入库第 %d 张卡密失败: %w", i+1, err)
+			}
+			cardIDs = append(cardIDs, card.ID)
+		}
+
+		// 5.3 回填订单 card_ids
+		cardIDsJSON, _ := json.Marshal(cardIDs)
+		if err := tx.Model(&order).Update("card_ids", string(cardIDsJSON)).Error; err != nil {
+			return fmt.Errorf("回填 card_ids 失败: %w", err)
+		}
+
+		// 5.4 开发者余额累加 + 流水（自有支付资金已直接到开发者账户）
+		var tenant model.SysTenant
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&tenant, order.TenantID).Error; err != nil {
+			return fmt.Errorf("查询开发者失败: %w", err)
+		}
+		newBalance := tenant.Balance + order.TotalAmount
+		if err := tx.Model(&tenant).Update("balance", newBalance).Error; err != nil {
+			return fmt.Errorf("更新开发者余额失败: %w", err)
+		}
+
+		log := &model.TenantBalanceLog{
+			TenantID:       order.TenantID,
+			Type:           "settle",
+			Amount:         order.TotalAmount,
+			BalanceAfter:   newBalance,
+			RelatedOrderID: &order.ID,
+			PayMethod:      "tenant_epay",
+			Status:         "settled",
+			Remark:         fmt.Sprintf("自有易支付订单 %s 自动结算", order.OrderNo),
+		}
+		if err := tx.Create(log).Error; err != nil {
+			return fmt.Errorf("写入开发者流水失败: %w", err)
+		}
+
+		return nil
+	})
+
+	return txErr
 }
 
 // ============== 超管：结算记录列表 ==============

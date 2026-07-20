@@ -948,6 +948,49 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
   7. 删除 Redis 中的密码哈希缓存（已用过，安全清理）
 - 前端流程：3 步向导（填写邀请码 → 支付注册费 → 完成注册），路由 `/agent/register`（meta.public=true），新窗口跳转支付页面，用户支付后点「查询状态」按钮轮询订单
 
+#### 双层支付模式切换（v0.3.6）
+
+**设计原则**：通过 `SysPackage.AllowCustomPay` + `TenantPayConfig.Enabled` 双开关实现"平台总支付（默认）/ 开发者自有易支付（按套餐开通）"双层支付模式。订单号前缀区分业务通道，`dispatchPaidOrder` 集中分发。
+
+**订单号前缀定义**：
+
+| 前缀 | 业务通道 | 处理函数 | 抽成 | 资金流向 |
+|---|---|---|---|---|
+| `ORD` | 平台总支付卡密购买 | `processPaidOrder` | 平台按 `PlatformCommissionRate` 抽成，写 `PlatformSettlement` | 资金进平台易支付账户，开发者结算后从 `sys_tenant.balance` 提现 |
+| `TOP` | 开发者自有易支付卡密购买 | `processTenantOwnPaidOrder` | 不抽成，平台通过套餐 `CustomPayFee` 月费模式收费 | 资金直接进开发者易支付账户，订单总额累加到 `sys_tenant.balance` |
+| `REG` | 代理注册付费 | `processAgentRegisterPaid` | 不抽成，注册费归平台 | 资金进平台易支付账户 |
+
+**双层切换逻辑**（`CreatePayOrder` 内）：
+1. 查开发者套餐 `SysPackage.AllowCustomPay`
+2. 查开发者 `TenantPayConfig(tenant_id, channel=epay, enabled=true)`
+3. 双条件命中 → 走自有支付：订单号前缀 `TOP`，回调 URL 携带 `tenant_id`（`resolveTenantNotifyURL`）
+4. 否则回退平台总支付：订单号前缀 `ORD`，需 `pay.platform.enabled=true`
+
+##### POST /api/v1/pay/notify/tenant/:tenant_id
+- 鉴权：无（公开回调，靠签名校验）
+- 路径参数：`tenant_id` —— 开发者租户 ID
+- 行为：
+  1. 从 URL 取 `tenant_id`，调 `loadTenantPayConfig` 加载该租户 `TenantPayConfig(channel=epay, enabled=true)` + AES 解密 `key_encrypted`
+  2. 收集回调参数（GET + POST 合并）+ `epay.VerifyNotify` 验签（用该租户密钥）
+  3. `epay.ParseNotify` + `IsSuccess` 校验 `trade_status=TRADE_SUCCESS`
+  4. Redis 防重入（key=`pay:notify:tenant:{tid}:lock:{order_no}`，TTL=60s，按 tenant_id 命名空间隔离）
+  5. 调 `dispatchPaidOrder(notify)` 按订单号前缀分发
+- 响应：`"success"` / `"fail"`（与平台回调一致）
+- 安全：
+  - 金额校验（订单 DB 中的 `total_amount` 与回调 `money` 字符串严格匹配，防伪造）
+  - 幂等保护（已 paid 直接返回 success）
+  - FOR UPDATE 锁开发者行防并发余额更新
+
+##### processTenantOwnPaidOrder 事务流程
+1. 查 `AppOrder` by `order_no`，校验金额 + 状态（pending → paid）
+2. 查 `AppCardType`（自动发卡参数来源）
+3. 事务内：
+   - 更新订单 `pay_status=paid` + `pay_trade_no` + `paid_at`
+   - 自动发卡 N 张（`batch_no` 前缀 `T` 区分），回填 `card_ids`
+   - FOR UPDATE 锁 `sys_tenant`，`balance += total_amount`
+   - 写 `TenantBalanceLog{type=settle, amount=total_amount, pay_method=tenant_epay, status=settled}`
+4. **不写 `PlatformSettlement`**（资金已直接到开发者易支付账户，平台不抽成）
+
 ### 7.4 慢查询监控
 
 - 慢查询阈值：200ms

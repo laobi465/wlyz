@@ -50,12 +50,15 @@ INSERT INTO `sys_config` (`config_key`, `config_value`, `config_type`, `config_n
 ('pay.platform.pid', '', 'string', '平台易支付商户 PID', 'pay', '（待填写）'),
 ('pay.platform.key_encrypted', '', 'string', '平台易支付商户密钥(已加密)', 'pay', '由后端启动时通过 AES-256-GCM 加密写入（待填写）'),
 ('pay.platform.methods', '["alipay","wxpay","qqpay"]', 'json', '平台支付支持的支付方式', 'pay', '客户端可选支付方式列表'),
-('pay.platform.notify_path', '/api/v1/pay/platform/notify', 'string', '平台支付异步通知路径', 'pay', '易支付异步回调路径'),
-('pay.platform.return_path', '/pay/return', 'string', '平台支付同步跳转路径', 'pay', '支付完成后前端跳转路径'),
+('pay.platform.notify_path', '/api/v1/pay/notify/epay', 'string', '平台支付异步通知路径', 'pay', '易支付异步回调路径（v0.3.6 修正：与 router 一致）'),
+('pay.platform.return_path', '/api/v1/pay/return/epay', 'string', '平台支付同步跳转路径', 'pay', '支付完成后前端跳转路径（v0.3.6 修正：与 router 一致）'),
 ('pay.platform.commission_default', '5.00', 'number', '平台默认抽成比例(%)', 'pay', '使用平台总支付时默认平台抽成，套餐可单独覆盖'),
 ('pay.custom_pay.enabled_default', '0', 'bool', '开发者默认是否可使用自定义支付', 'pay', '需套餐 allow_custom_pay=1 才生效'),
 ('pay.custom_pay.fee_monthly', '30.00', 'number', '开通自定义支付附加月费(元)', 'pay', '套餐 custom_pay_fee 为 0 时使用此默认值'),
 ('pay.order_expire_seconds', '1800', 'number', '订单未支付自动关闭时长(秒)', 'pay', '默认 30 分钟'),
+('pay.tenant.notify_path', '/api/v1/pay/notify/tenant/', 'string', '开发者自有易支付异步通知路径前缀', 'pay', 'v0.3.6 新增：后接 tenant_id 拼接完整回调 URL'),
+('pay.platform.order_name_prefix', 'KeyAuth卡密', 'string', '订单商品名称前缀', 'pay', 'v0.3.6 新增：在易支付下单页显示的商品名前缀'),
+('pay.platform.return_front_url', '/pay/result', 'string', '支付成功前端结果页地址', 'pay', 'v0.3.6 新增：用户支付完成后浏览器跳转的前端页面'),
 
 -- ---------- 代理配置 agent ----------
 ('agent.register.fee', '99.00', 'number', '代理注册费(元)', 'agent', '代理通过开发者邀请码注册时需支付的费用'),

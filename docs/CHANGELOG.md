@@ -11,6 +11,51 @@
 
 ## [0.3.6] - 2026-07-20
 
+### [新增] 开发者自有易支付回调 + 双层支付模式切换（#5）
+
+#### 设计方案
+落地 `SysPackage.AllowCustomPay` + `TenantPayConfig.Enabled` 双开关，实现"平台总支付（默认）/ 开发者自有易支付（按套餐开通）"双层支付模式切换。订单号前缀分发：
+
+- `ORD` → 平台总支付卡密购买（`processPaidOrder`，写 `PlatformSettlement` 抽成记录）
+- `TOP` → 开发者自有易支付卡密购买（`processTenantOwnPaidOrder`，不写抽成，资金直接进开发者易支付账户，平台通过套餐 `CustomPayFee` 月费模式收费）
+- `REG` → 代理注册付费（`processAgentRegisterPaid`，独立通道，注册费归平台）
+
+#### 后端
+- [改造] `apps/server/internal/handler/pay.go` `CreatePayOrder` 增加双层切换逻辑：
+  - 查开发者套餐 `AllowCustomPay` + 开发者 `TenantPayConfig(channel=epay, enabled=true)`
+  - 命中 → 走自有支付：订单号前缀 `TOP`，回调 URL 携带 `tenant_id`（`resolveTenantNotifyURL`）
+  - 未命中 → 回退平台总支付：订单号前缀 `ORD`（保持原逻辑），需 `pay.platform.enabled=true`
+  - 响应新增 `pay_mode` 字段（`tenant` / `platform`）供前端区分
+- [新增] `pay.go` `EpayTenantNotify` 完整实现（替换原 `c.String(200, "fail")` 占位）：
+  - 从 URL 取 `tenant_id`，调 `loadTenantPayConfig` 加载该租户易支付配置
+  - 收集回调参数 + `epay.VerifyNotify` 验签（用该租户密钥）
+  - Redis 防重入（key 含 `tenant_id` 命名空间隔离：`pay:notify:tenant:{tid}:lock:{order_no}`）
+  - 调 `dispatchPaidOrder` 按前缀分发到 `processTenantOwnPaidOrder`
+- [新增] `pay.go` `loadTenantPayConfig` 辅助函数：从 `tenant_pay_config` 表按 `(tenant_id, channel=epay, enabled=true)` 查配置 + AES-256-GCM 解密 `key_encrypted`
+- [新增] `pay.go` `processTenantOwnPaidOrder` 事务内：
+  - 校验订单状态/金额（防伪造回调）
+  - 幂等保护（已 paid 直接返回）
+  - 自动发卡（与 `processPaidOrder` 同流程，batch_no 前缀 `T` 区分）
+  - **不写 `PlatformSettlement`**（资金已直接到开发者易支付账户，平台不抽成）
+  - 写 `TenantBalanceLog{type=settle, amount=订单总额, pay_method=tenant_epay}` + 累加 `sys_tenant.balance`
+- [新增] `pay.go` `dispatchPaidOrder` 增加 `TOP` 分支
+- [新增] `pay.go` `resolveTenantNotifyURL` / `resolveTenantReturnURL` / `ternary` 辅助函数
+- [修复] `migrations/002_seed_data.up.sql` 配置键名 bug：
+  - `pay.platform.notify_path`：`/api/v1/pay/platform/notify` → `/api/v1/pay/notify/epay`（与 router 一致）
+  - `pay.platform.return_path`：`/pay/return` → `/api/v1/pay/return/epay`（与 router 一致）
+- [新增] `002_seed_data.up.sql` 三个新配置项：
+  - `pay.tenant.notify_path`（默认 `/api/v1/pay/notify/tenant/`）
+  - `pay.platform.order_name_prefix`（默认 `KeyAuth卡密`）
+  - `pay.platform.return_front_url`（默认 `/pay/result`）
+
+#### 前端
+- [无变更] 现有 `tenant/PayConfig.vue` + `admin/PayConfig.vue` 已支持开发者保存/启用自有易支付配置，本版本后端切换逻辑生效后即可实时启用，无需前端调整
+
+#### 铁律遵守
+- 铁律 04：订单号前缀 `TOP/ORD/REG` 集中分发，无硬编码业务路由；开发者密钥 AES 加密入库
+- 铁律 05：所有路径/前缀/订单名从 `sys_config` 读取（`pay.tenant.notify_path` / `pay.platform.order_name_prefix` / `pay.platform.return_front_url`）
+- 铁律 06：编译验证通过（`go build ./...` + `vue-tsc --noEmit`）；金额校验防伪造回调；幂等保护；FOR UPDATE 防并发余额更新
+
 ### [新增] 卡密封禁联动设备强制下线（#1）
 
 #### 后端
