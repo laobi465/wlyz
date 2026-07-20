@@ -11,6 +11,86 @@
 
 ## [0.4.0] - 2026-07-20（v0.4.x 迁移项推进）
 
+### [新增] 公告增强 + 数据统计看板（v0.4.x 第十六项：首次登录强制弹窗 + 公告置顶 + 显眼标签 + 富文本编辑 + 验证趋势图 + 代理业绩排行）
+
+#### 背景
+
+- v0.3.x 三级公告体系虽已落地，但缺少「首次登录强制弹窗」机制和「富文本编辑」能力；管理员只能用纯文本发布公告，重要通知无法主动触达用户
+- v0.3.x 平台/开发者/代理三端工作台仅提供 7 日收入趋势，缺少「验证趋势图」（按 result/action 维度聚合的近 30 天独立页）和「代理业绩排行」两大核心数据看板
+- TODO.md `[迁移] v0.4.x 公告体系 → 首次登录强制弹窗 / 公告置顶 + 显眼标签 / 平台总公告富文本编辑` + `[迁移] v0.4.x 数据统计看板 → 验证趋势图（近 30 天独立页）/ 代理业绩排行`
+- 商业诉求：平台/开发者/代理三端首次登录时主动弹出未读公告（is_popup=true），富文本编辑让公告支持 HTML 排版，验证趋势图帮助开发者快速定位验证异常，代理业绩排行激励代理冲业绩
+
+#### 实现
+
+**`migrations/019_v0.4.0_notice_stats_enhancement.up.sql`**：
+- ALTER `notice` ADD `content_format` VARCHAR(16) NOT NULL DEFAULT 'text' 字段（text=纯文本 / html=富文本，v0.4.0 公告富文本编辑）
+- `sys_config` 新增 9 项配置（铁律 05：全部走后台可视化编辑）：
+  - `notice.popup.enabled` = `1` / `notice.popup.max_unread` = `5` / `notice.popup.dismiss_ttl_hours` = `24`
+  - `notice.richtext.enabled` = `1` / `notice.richtext.max_length` = `10000`
+  - `stats.verify_trend.default_days` = `30` / `stats.verify_trend.max_days` = `90`
+  - `stats.agent_ranking.default_limit` = `10` / `stats.agent_ranking.max_limit` = `100`
+- 配套 `019_v0.4.0_notice_stats_enhancement.down.sql` 回滚（删除 9 项 sys_config + content_format 字段）
+
+**`internal/model/model.go`**：
+- `Notice` 扩展 `ContentFormat` 字段（`gorm:"size:16;not null;default:text"`）
+
+**`internal/handler/admin_business.go`**：
+- `adminCreateNoticeReq` / `adminUpdateNoticeReq` 扩展 `ContentFormat` / `IsPopup` / `ShowBadge` 三个字段
+- `AdminListNotices` 列表返回新增 `content_format` / `is_popup` / `show_badge` 三个字段
+- `AdminCreateNotice` 增加：content_format 默认 text + html 时校验 `notice.richtext.enabled=1` + 内容长度校验 `notice.richtext.max_length` + ShowBadge 默认 true
+- `AdminUpdateNotice` 增加：相同的富文本校验 + 支持 content_format/is_popup/show_badge 三个字段更新
+
+**`internal/handler/tenant_business.go`**：
+- `tenantCreateNoticeReq` / `tenantUpdateNoticeReq` 扩展 `ContentFormat` / `IsPopup` / `ShowBadge` 三个字段
+- `TenantCreateNotice` / `TenantUpdateNotice` 与 admin 端保持一致的富文本校验和新字段支持
+
+**`internal/handler/notice_stats.go`**（新建，~620 行）：
+
+  - **9 个配置键常量**（铁律 04：禁止硬编码）+ 7 个默认值常量
+  - **首次登录强制弹窗 API**（3 端点）：
+    - `AdminPopupNotices` GET `/admin/notices/popup`：查询 admin 未读的 is_popup=true 平台公告
+    - `TenantPopupNotices` GET `/tenant/notices/popup`：查询 tenant 未读的 is_popup=true 平台公告 + 自己的开发者公告
+    - `AgentPopupNotices` GET `/agent/notices/popup`：查询 agent 未读的 is_popup=true 平台公告 + 当前租户开发者公告 + 代理通知
+    - 通用 `queryPopupNotices(deps, userType, userID, tenantID)` 函数：status=published + is_popup=true + start_at<=now + (end_at IS NULL OR end_at>now) + 未在 notice_read 表中 + 受 `notice.popup.max_unread` 上限约束 + 按 `is_pinned DESC, sort DESC, start_at DESC` 排序
+    - `notice.popup.enabled=0` 时直接返回 `enabled=false + 空列表`
+    - 响应含 `dismiss_ttl_hours` 字段供前端 localStorage 控制弹窗关闭后再次提醒间隔
+  - `MarkNoticeReadByPopup(deps, userType)` POST `/:role/notices/:id/read`：标记公告已读（FirstOrCreate 幂等）
+  - **验证趋势图 API**（2 端点）：
+    - `AdminVerifyTrend` GET `/admin/stats/verify_trend?days=30`：全平台验证趋势
+    - `TenantVerifyTrend` GET `/tenant/stats/verify_trend?days=30`：仅当前租户
+    - `queryVerifyTrend(deps, tenantID, appID, days)` 函数：按日聚合 `log_verify` 表，按 result 维度分组（success/fail/banned/expired/device_mismatch/rate_limited）+ action 维度聚合（login/verify/heartbeat/bind/unbind/getvar/notice/version）
+    - `parseDaysParam(c, deps)` 函数：days 参数受 `stats.verify_trend.default_days`（默认 30）+ `stats.verify_trend.max_days`（最大 90）上下限约束
+    - 响应含 `days` + `total` + `trend`（每日 result 维度）+ `action_breakdown`（全期 action 维度）
+  - **代理业绩排行 API**（2 端点）：
+    - `AdminAgentRanking` GET `/admin/stats/agent_ranking?start=&end=&limit=10&sort_by=total_amount`：全平台代理排行
+    - `TenantAgentRanking` GET `/tenant/stats/agent_ranking?start=&end=&limit=10&sort_by=total_amount`：仅当前租户代理排行
+    - `queryAgentRanking(c, deps, tenantID)` 函数：联表 `agent + sys_tenant + app_order`（仅统计 pay_status=paid 且 paid_at 在时间范围内）+ sort_by 支持 `total_amount`（默认）/`commission`/`net_amount`/`order_count` 四种排序 + limit 受 `stats.agent_ranking.default_limit`（默认 10）+ `max_limit`（最大 100）上下限约束 + 时间范围默认近 30 天 + rank 字段
+    - 响应含 `start_at` + `end_at` + `sort_by` + `limit` + `total` + `list`（含 agent_id/username/real_name/tenant_name/order_count/total_amount/commission/net_amount/rank）
+
+**`internal/router/router.go`**（修改）：
+- `adminAuth` 组注册 4 条新路由：`GET /notices/popup` + `POST /notices/:id/read` + `GET /stats/verify_trend` + `GET /stats/agent_ranking`
+- `tenantAuth` 组注册 4 条新路由：`GET /notices/popup` + `POST /notices/:id/read` + `GET /stats/verify_trend` + `GET /stats/agent_ranking`
+- `agentAuth` 组注册 1 条新路由：`GET /notices/popup`
+
+#### 验证
+
+- `go build ./...` 通过
+- `go vet ./...` 通过
+- `go test ./...` 全 PASS（17 个测试包无回归）
+  - `internal/handler` 包新增 18 个测试全 PASS：
+    - 公告弹窗 6 个：DisabledByConfig / NoUnread / WithUnread / ExcludesRead / MaxUnreadLimit / TenantScope
+    - 验证趋势 4 个：Empty / WithData / DaysParam / TenantScope
+    - 代理排行 5 个：Empty / WithData / SortByCommission / LimitParam / TenantScope
+    - 常量 3 个：NoticeStatsConfigKeys / DefaultConstants + MarkNoticeReadByPopup_Idempotent
+
+#### 铁律遵循
+
+- **铁律 04（禁硬编码）**：9 个配置键常量 + 7 个默认值常量全部常量化
+- **铁律 05（配置走 sys_config）**：9 项 `notice.*` / `stats.*` 配置全部走 sys_config 后台可视化编辑，实时生效
+- **铁律 06（反幻觉）**：所有测试基于固定输入断言，无随机性；富文本字段允许 HTML 但后端校验长度上限防止超大内容；popup 查询基于 notice_read 子查询排除已读，无并发竞态；验证趋势/代理排行基于真实 log_verify/app_order 表聚合，无 mock 数据
+
+---
+
 ### [新增] 高级安全（v0.4.x 第十五项：异地登录告警 + 风控规则引擎 + 设备指纹升级 + Cloudflare WAF 集成）
 
 #### 背景

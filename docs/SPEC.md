@@ -1525,6 +1525,150 @@ go build ./...                   # 编译验证
 - 慢查询日志：单独文件，便于分析
 - EXPLAIN 分析：每周检查 TOP 10 慢查询
 
+### 7.7 公告增强 + 数据统计看板规范（v0.4.0）
+
+#### 7.7.1 公告弹窗 + 富文本编辑（migration 019）
+
+| 配置键 | 默认值 | 说明 |
+|---|---|---|
+| `notice.popup.enabled` | `1` | 弹窗公告总开关，0=关闭弹窗，仅显示普通列表 |
+| `notice.popup.max_unread` | `5` | 单次 popup 接口返回的最大未读弹窗数量 |
+| `notice.popup.dismiss_ttl_hours` | `24` | 弹窗关闭后再次提醒间隔（小时），0=每次登录都弹（前端 localStorage 配合） |
+| `notice.richtext.enabled` | `1` | 富文本编辑开关，0=仅纯文本 |
+| `notice.richtext.max_length` | `10000` | content 字段富文本最大字符数 |
+
+**Notice 模型扩展字段**（`internal/model/model.go`）：
+- `ContentFormat` VARCHAR(16) NOT NULL DEFAULT 'text' — 内容格式 text=纯文本 / html=富文本
+
+**公告弹窗 API**（`internal/handler/notice_stats.go`）：
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|---|---|---|---|
+| GET | `/admin/notices/popup` | admin | 查询 admin 未读的 is_popup=true 平台公告 |
+| GET | `/tenant/notices/popup` | tenant | 查询 tenant 未读的 is_popup=true 平台公告 + 自己的开发者公告 |
+| GET | `/agent/notices/popup` | agent | 查询 agent 未读的 is_popup=true 平台公告 + 当前租户开发者公告 + 代理通知 |
+| POST | `/admin/notices/:id/read` | admin | 标记公告已读（FirstOrCreate 幂等） |
+| POST | `/tenant/notices/:id/read` | tenant | 标记公告已读（FirstOrCreate 幂等） |
+
+**弹窗查询规则**（`queryPopupNotices`）：
+- `status = 'published'` 已发布
+- `is_popup = true` 弹窗公告
+- `start_at <= now AND (end_at IS NULL OR end_at > now)` 时间范围内
+- `id NOT IN (SELECT notice_id FROM notice_read WHERE user_type=? AND user_id=?)` 未读
+- 按 `is_pinned DESC, sort DESC, start_at DESC` 排序
+- 受 `notice.popup.max_unread` 上限约束
+
+**响应格式**：
+```json
+{
+  "enabled": true,
+  "dismiss_ttl_hours": 24,
+  "list": [
+    {
+      "id": 1,
+      "type": "platform",
+      "title": "公告标题",
+      "content": "<p>富文本内容</p>",
+      "content_format": "html",
+      "is_pinned": true,
+      "show_badge": true,
+      "publish_at": "2026-07-20T10:00:00Z",
+      "expire_at": null
+    }
+  ],
+  "total": 1
+}
+```
+
+#### 7.7.2 验证趋势图（migration 019）
+
+| 配置键 | 默认值 | 说明 |
+|---|---|---|
+| `stats.verify_trend.default_days` | `30` | 默认查询近 N 天 |
+| `stats.verify_trend.max_days` | `90` | 最大查询天数，防止超大范围聚合影响 DB 性能 |
+
+**验证趋势 API**：
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|---|---|---|---|
+| GET | `/admin/stats/verify_trend?days=30` | admin | 全平台验证趋势 |
+| GET | `/tenant/stats/verify_trend?days=30` | tenant | 仅当前租户验证趋势 |
+
+**聚合维度**：
+- 按 result 维度：success / fail / banned / expired / device_mismatch / rate_limited
+- 按 action 维度：login / verify / heartbeat / bind / unbind / getvar / notice / version
+
+**响应格式**：
+```json
+{
+  "days": 30,
+  "total": 1234,
+  "trend": [
+    {
+      "date": "2026-06-21",
+      "total": 100,
+      "success": 80,
+      "fail": 10,
+      "banned": 5,
+      "expired": 3,
+      "device_mismatch": 2,
+      "rate_limited": 0
+    }
+  ],
+  "action_breakdown": {
+    "login": 500,
+    "verify": 400,
+    "heartbeat": 300,
+    "bind": 34
+  }
+}
+```
+
+#### 7.7.3 代理业绩排行（migration 019）
+
+| 配置键 | 默认值 | 说明 |
+|---|---|---|
+| `stats.agent_ranking.default_limit` | `10` | 默认返回前 N 名 |
+| `stats.agent_ranking.max_limit` | `100` | 最大返回条数 |
+
+**代理排行 API**：
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|---|---|---|---|
+| GET | `/admin/stats/agent_ranking?start=&end=&limit=10&sort_by=total_amount` | admin | 全平台代理排行 |
+| GET | `/tenant/stats/agent_ranking?start=&end=&limit=10&sort_by=total_amount` | tenant | 仅当前租户代理排行 |
+
+**sort_by 排序字段**：
+- `total_amount`（默认）— 订单总金额
+- `commission` — 佣金总额
+- `net_amount` — 净额（总额 - 佣金）
+- `order_count` — 订单数
+
+**响应格式**：
+```json
+{
+  "start_at": "2026-06-21 00:00:00",
+  "end_at": "2026-07-20 23:59:59",
+  "sort_by": "total_amount",
+  "limit": 10,
+  "total": 50,
+  "list": [
+    {
+      "agent_id": 6001,
+      "username": "agent-A",
+      "real_name": "代理 A",
+      "tenant_id": 5001,
+      "tenant_name": "tenant-A",
+      "order_count": 42,
+      "total_amount": 15000.00,
+      "commission": 1500.00,
+      "net_amount": 13500.00,
+      "rank": 1
+    }
+  ]
+}
+```
+
 ---
 
 ## 8. 部署规范
@@ -1615,6 +1759,6 @@ ENTRYPOINT ["./keyauth-api"]
 
 ---
 
-**文档版本**：0.3.6  
-**最后更新**：2026-07-20  
+**文档版本**：0.4.0  
+**最后更新**：2026-07-20（v0.4.0 第十六项迁移：公告增强 + 数据统计看板 migration 019 + notice.content_format 字段 + 9 项 notice.*/stats.* sys_config + handler/notice_stats.go 三端 popup API + 验证趋势图 API + 代理业绩排行 API + admin/tenant Create/Update/List 接口支持 is_popup/show_badge/content_format + router 注册 10 条新路由 + 18 个测试全 PASS）  
 **维护者**：KeyAuth SaaS Team

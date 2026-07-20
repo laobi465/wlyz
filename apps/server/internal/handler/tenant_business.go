@@ -1411,14 +1411,17 @@ func TenantListNotices(deps *Deps) gin.HandlerFunc {
 
 // tenantCreateNoticeReq 创建公告请求 DTO
 type tenantCreateNoticeReq struct {
-	Type     string `json:"type" binding:"required,oneof=tenant agent h5"`
-	Title    string `json:"title" binding:"required,max=255"`
-	Content  string `json:"content" binding:"required"`
-	Status   string `json:"status" binding:"omitempty,oneof=draft published offline"`
-	Pinned   bool   `json:"pinned"`
-	Sort     int    `json:"sort" binding:"omitempty,min=0"`
-	PublishAt string `json:"publish_at"` // 映射到 start_at
-	ExpireAt  string `json:"expire_at"`  // 映射到 end_at
+	Type          string `json:"type" binding:"required,oneof=tenant agent h5"`
+	Title         string `json:"title" binding:"required,max=255"`
+	Content       string `json:"content" binding:"required"`
+	ContentFormat string `json:"content_format" binding:"omitempty,oneof=text html"`
+	Status        string `json:"status" binding:"omitempty,oneof=draft published offline"`
+	Pinned        bool   `json:"pinned"`
+	IsPopup       bool   `json:"is_popup"`
+	ShowBadge     *bool  `json:"show_badge"`
+	Sort          int    `json:"sort" binding:"omitempty,min=0"`
+	PublishAt     string `json:"publish_at"` // 映射到 start_at
+	ExpireAt      string `json:"expire_at"`  // 映射到 end_at
 }
 
 // TenantCreateNotice 创建公告
@@ -1471,21 +1474,47 @@ func TenantCreateNotice(deps *Deps) gin.HandlerFunc {
 		if status == "" {
 			status = "draft"
 		}
+		ctx := c.Request.Context()
+
+		// v0.4.0：content_format 默认 text，富文本需 richtext.enabled=1
+		contentFormat := req.ContentFormat
+		if contentFormat == "" {
+			contentFormat = "text"
+		}
+		if contentFormat == "html" && deps.CfgCache != nil {
+			if !deps.CfgCache.GetBool(ctx, "notice.richtext.enabled", true) {
+				middleware.Fail(c, http.StatusBadRequest, 1001, "富文本编辑功能已禁用")
+				return
+			}
+		}
+		if deps.CfgCache != nil {
+			maxLen := deps.CfgCache.GetInt(ctx, "notice.richtext.max_length", 10000)
+			if maxLen > 0 && len(req.Content) > maxLen {
+				middleware.Fail(c, http.StatusBadRequest, 1001, "内容超过最大长度限制")
+				return
+			}
+		}
+		// v0.4.0：ShowBadge 默认 true
+		showBadge := true
+		if req.ShowBadge != nil {
+			showBadge = *req.ShowBadge
+		}
 
 		notice := model.Notice{
-			Type:      req.Type,
-			TenantID:  &tenantID,
-			Title:     req.Title,
-			Content:   req.Content,
-			IsPinned:  req.Pinned,
-			Sort:      req.Sort,
-			IsPopup:   false,
-			ShowBadge: true,
-			StartAt:   startAt,
-			EndAt:     endAt,
-			Status:    status,
-			ViewCount: 0,
-			CreatedBy: userID,
+			Type:          req.Type,
+			TenantID:      &tenantID,
+			Title:         req.Title,
+			Content:       req.Content,
+			ContentFormat: contentFormat,
+			IsPinned:      req.Pinned,
+			IsPopup:       req.IsPopup,
+			ShowBadge:     showBadge,
+			Sort:          req.Sort,
+			StartAt:       startAt,
+			EndAt:         endAt,
+			Status:        status,
+			ViewCount:     0,
+			CreatedBy:     userID,
 		}
 		if err := deps.DB.Create(&notice).Error; err != nil {
 			middleware.Fail(c, http.StatusInternalServerError, 5002, "创建公告失败: "+err.Error())
@@ -1506,13 +1535,16 @@ func TenantCreateNotice(deps *Deps) gin.HandlerFunc {
 
 // tenantUpdateNoticeReq 更新公告请求 DTO（所有字段可选）
 type tenantUpdateNoticeReq struct {
-	Title     *string `json:"title" binding:"omitempty,max=255"`
-	Content   *string `json:"content" binding:"omitempty"`
-	Status    *string `json:"status" binding:"omitempty,oneof=draft published offline"`
-	Pinned    *bool   `json:"pinned"`
-	Sort      *int    `json:"sort" binding:"omitempty,min=0"`
-	PublishAt *string `json:"publish_at"` // 映射 start_at
-	ExpireAt  *string `json:"expire_at"`  // 映射 end_at
+	Title         *string `json:"title" binding:"omitempty,max=255"`
+	Content       *string `json:"content" binding:"omitempty"`
+	ContentFormat *string `json:"content_format" binding:"omitempty,oneof=text html"`
+	Status        *string `json:"status" binding:"omitempty,oneof=draft published offline"`
+	Pinned        *bool   `json:"pinned"`
+	IsPopup       *bool   `json:"is_popup"`
+	ShowBadge     *bool   `json:"show_badge"`
+	Sort          *int    `json:"sort" binding:"omitempty,min=0"`
+	PublishAt     *string `json:"publish_at"` // 映射 start_at
+	ExpireAt      *string `json:"expire_at"`  // 映射 end_at
 }
 
 // TenantUpdateNotice 更新公告
@@ -1546,6 +1578,22 @@ func TenantUpdateNotice(deps *Deps) gin.HandlerFunc {
 			middleware.Fail(c, http.StatusBadRequest, 1001, "参数错误: "+err.Error())
 			return
 		}
+		ctx := c.Request.Context()
+
+		// v0.4.0：富文本校验
+		if req.ContentFormat != nil && *req.ContentFormat == "html" && deps.CfgCache != nil {
+			if !deps.CfgCache.GetBool(ctx, "notice.richtext.enabled", true) {
+				middleware.Fail(c, http.StatusBadRequest, 1001, "富文本编辑功能已禁用")
+				return
+			}
+		}
+		if req.Content != nil && deps.CfgCache != nil {
+			maxLen := deps.CfgCache.GetInt(ctx, "notice.richtext.max_length", 10000)
+			if maxLen > 0 && len(*req.Content) > maxLen {
+				middleware.Fail(c, http.StatusBadRequest, 1001, "内容超过最大长度限制")
+				return
+			}
+		}
 
 		updates := map[string]interface{}{}
 		if req.Title != nil {
@@ -1554,11 +1602,20 @@ func TenantUpdateNotice(deps *Deps) gin.HandlerFunc {
 		if req.Content != nil {
 			updates["content"] = *req.Content
 		}
+		if req.ContentFormat != nil {
+			updates["content_format"] = *req.ContentFormat
+		}
 		if req.Status != nil {
 			updates["status"] = *req.Status
 		}
 		if req.Pinned != nil {
 			updates["is_pinned"] = *req.Pinned
+		}
+		if req.IsPopup != nil {
+			updates["is_popup"] = *req.IsPopup
+		}
+		if req.ShowBadge != nil {
+			updates["show_badge"] = *req.ShowBadge
 		}
 		if req.Sort != nil {
 			updates["sort"] = *req.Sort

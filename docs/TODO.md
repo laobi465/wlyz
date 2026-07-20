@@ -284,9 +284,9 @@
 - [x] [已完成] 代理通知（type=agent_notify）自动写入 - v0.3.0
 - [x] [已完成] 开发者控制台顶部公告显示区组件（平台+开发者同时显示） - v0.3.0
 - [x] [已完成] 代理控制台公告中心（P-08） - v0.2.7
-- [ ] [待开始] 首次登录强制弹窗 - v0.4.x
-- [ ] [待开始] 公告置顶 + 显眼标签 - v0.4.x
-- [ ] [待开始] 平台总公告富文本编辑 - v0.4.x（当前为纯文本）
+- [x] [已完成 2026-07-20] 首次登录强制弹窗 - v0.4.0（migration 019 + 3 项 notice.popup.* sys_config + admin/tenant/agent 三端 popup 接口 + notice_read 标记幂等 + is_popup=true 已发布未读过滤 + max_unread 上限）
+- [x] [已完成 2026-07-20] 公告置顶 + 显眼标签 - v0.4.0（Notice.IsPinned/ShowBadge 字段已有 + AdminListNotices 已按 is_pinned DESC 排序 + admin/tenant Create/Update/List 接口支持 is_popup/show_badge/content_format 字段）
+- [x] [已完成 2026-07-20] 平台总公告富文本编辑 - v0.4.0（migration 019 notice.content_format 字段 text/html + 2 项 notice.richtext.* sys_config + admin/tenant Create/Update 接口校验 richtext.enabled 开关 + max_length 长度限制）
 
 #### 云变量与版本管理
 - [x] [已完成] 云变量 CRUD - v0.3.0
@@ -299,8 +299,8 @@
 - [x] [已完成] 开发者工作台数据看板（8 数据卡 + 应用 TOP5 + 收入趋势 + 最近订单） - v0.2.6
 - [x] [已完成] 超管平台看板（S-01，8 数据卡 + 待办列表 + 收入趋势 + 最近开发者/订单） - v0.2.6
 - [x] [已完成] 代理工作台（4 数据卡 + 4 快捷入口 + 最近订单） - v0.2.5
-- [ ] [待开始] 验证趋势图（近 30 天独立页） - v0.4.x
-- [ ] [待开始] 代理业绩排行 - v0.4.x
+- [x] [已完成 2026-07-20] 验证趋势图（近 30 天独立页） - v0.4.0（migration 019 + 2 项 stats.verify_trend.* sys_config + admin/tenant 两端 /stats/verify_trend 接口 + 按 result 维度聚合 success/fail/banned/expired/device_mismatch/rate_limited + action 维度聚合 login/verify/heartbeat/bind/unbind + days 参数受 sys_config 上下限约束）
+- [x] [已完成 2026-07-20] 代理业绩排行 - v0.4.0（migration 019 + 2 项 stats.agent_ranking.* sys_config + admin/tenant 两端 /stats/agent_ranking 接口 + 联表 agent + sys_tenant + app_order + sort_by 支持 total_amount/commission/net_amount/order_count 四种排序 + limit 受 sys_config 上下限约束 + rank 字段）
 
 #### 客户端 SDK（3 语言）
 - [x] [已完成 2026-07-20] Python SDK（keyauth-py） - v0.3.6（`sdks/python/`：KeyAuthClient 9 API + HMAC-SHA512/256 + KeyAuthError + CardInfo/DeviceInfo 数据类 + setup.py + README）
@@ -549,8 +549,12 @@
 - ~~通知系统（短信 / 邮件 / 站内信）~~ ✓ 已完成；阿里云 SDK 完整签名 + SMTP SSL 包装 后续优化
 - ~~终端用户体系（H5 用户登录/注册/中心/订单）~~ ✓ 已完成后端；前端 H5 页面接入后续
 
+- ~~高级安全（异地登录告警 + 风控引擎 + Cloudflare WAF）~~ ✓ 已完成
+- ~~公告增强（首次登录强制弹窗 + 公告置顶 + 显眼标签 + 富文本编辑）~~ ✓ 已完成
+- ~~数据统计看板（验证趋势图 + 代理业绩排行）~~ 已完成
+
 ---
 
 **文档版本**：0.4.0  
-**最后更新**：2026-07-20（v0.4.0 第十五项迁移：高级安全 migration 018 + 3 张新表 risk_rule/risk_event/login_geo_alert + app_device 6 字段扩展 + 16 项 cloudflare.*/risk.* sys_config + 5 条 seed 内置规则 + internal/risk 包 901 行 + middleware/cloudflare.go CloudflareRealIP 中间件 + middleware/risk_engine.go 匿名请求风控评估 + ratelimit/IPBlacklist 接入 RealIP(c) + handler/auth.go 登录流程接入风控评估 + handler/risk.go 11 端点 admin 风控面板 + router 注册 11 条路由 + risk 包 ~30 测试 + cloudflare 5 测试全 PASS）  
+**最后更新**：2026-07-20（v0.4.0 第十六项迁移：公告增强 + 数据统计看板 migration 019 + notice.content_format 字段 + 9 项 notice.*/stats.* sys_config + handler/notice_stats.go 三端 popup API + 验证趋势图 API + 代理业绩排行 API + admin/tenant Create/Update/List 接口支持 is_popup/show_badge/content_format + router 注册 10 条新路由 + 18 个测试全 PASS）  
 **维护者**：KeyAuth SaaS Team

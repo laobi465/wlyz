@@ -155,6 +155,13 @@ func Register(container *config.Container) *gin.Engine {
 		adminAuth.POST("/notices", handler.AdminCreateNotice(deps))
 		adminAuth.PUT("/notices/:id", handler.AdminUpdateNotice(deps))
 		adminAuth.DELETE("/notices/:id", handler.AdminDeleteNotice(deps))
+		// v0.4.0 公告弹窗增强：admin 端首次登录强制弹窗
+		adminAuth.GET("/notices/popup", handler.AdminPopupNotices(deps))
+		adminAuth.POST("/notices/:id/read", handler.MarkNoticeReadByPopup(deps, "admin"))
+
+		// v0.4.0 数据统计看板：验证趋势图 + 代理业绩排行
+		adminAuth.GET("/stats/verify_trend", handler.AdminVerifyTrend(deps))
+		adminAuth.GET("/stats/agent_ranking", handler.AdminAgentRanking(deps))
 
 		// 日志审计（v0.3.3 升级：3 表独立查询 + CSV 导出）
 		adminAuth.GET("/logs", handler.AdminListLogs(deps))                           // 兼容旧接口（仅 operation）
@@ -279,6 +286,13 @@ func Register(container *config.Container) *gin.Engine {
 		tenantAuth.POST("/notices", handler.TenantCreateNotice(deps))
 		tenantAuth.PUT("/notices/:id", handler.TenantUpdateNotice(deps))
 		tenantAuth.DELETE("/notices/:id", handler.TenantDeleteNotice(deps))
+		// v0.4.0 公告弹窗增强：tenant 端首次登录强制弹窗
+		tenantAuth.GET("/notices/popup", handler.TenantPopupNotices(deps))
+		tenantAuth.POST("/notices/:id/read", handler.MarkNoticeReadByPopup(deps, "tenant"))
+
+		// v0.4.0 数据统计看板：验证趋势图 + 代理业绩排行
+		tenantAuth.GET("/stats/verify_trend", handler.TenantVerifyTrend(deps))
+		tenantAuth.GET("/stats/agent_ranking", handler.TenantAgentRanking(deps))
 
 		// 财务审核（v0.3.2 代理充值/提现审核闭环）
 		tenantAuth.GET("/recharge_requests", handler.TenantListRechargeRequests(deps))
@@ -358,6 +372,8 @@ func Register(container *config.Container) *gin.Engine {
 		// 消息通知
 		agentAuth.GET("/notices", handler.AgentListNotices(deps))
 		agentAuth.POST("/notices/:id/read", handler.AgentReadNotice(deps))
+		// v0.4.0 公告弹窗增强：agent 端首次登录强制弹窗
+		agentAuth.GET("/notices/popup", handler.AgentPopupNotices(deps))
 
 		// v0.4.0 多级代理：下级邀请码 + 下级代理树
 		agentAuth.GET("/invite_codes", handler.AgentListInviteCodes(deps))

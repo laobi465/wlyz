@@ -387,20 +387,21 @@ func (AgentRegistrationOrder) TableName() string { return "agent_registration_or
 // Notice 统一公告表
 type Notice struct {
 	BaseModel
-	Type      string     `gorm:"size:32;index;not null" json:"type"` // platform/developer/app/agent_notify
-	TenantID  *uint64    `gorm:"index" json:"tenant_id"`
-	AppID     *uint64    `gorm:"index" json:"app_id"`
-	Title     string     `gorm:"size:255;not null" json:"title"`
-	Content   string     `gorm:"type:text;not null" json:"content"`
-	IsPinned  bool       `gorm:"not null;default:false" json:"is_pinned"`
-	IsPopup   bool       `gorm:"not null;default:false" json:"is_popup"`
-	ShowBadge bool       `gorm:"not null;default:true" json:"show_badge"`
-	StartAt   time.Time  `gorm:"index;not null" json:"start_at"`
-	EndAt     *time.Time `gorm:"index" json:"end_at"`
-	Status    string     `gorm:"size:32;index;not null;default:draft" json:"status"` // draft/published/offline
-	ViewCount int        `gorm:"not null;default:0" json:"view_count"`
-	Sort      int        `gorm:"not null;default:0" json:"sort"` // 排序权重，越大越靠前
-	CreatedBy uint64     `gorm:"not null" json:"created_by"`
+	Type          string     `gorm:"size:32;index;not null" json:"type"` // platform/developer/app/agent_notify
+	TenantID      *uint64    `gorm:"index" json:"tenant_id"`
+	AppID         *uint64    `gorm:"index" json:"app_id"`
+	Title         string     `gorm:"size:255;not null" json:"title"`
+	Content       string     `gorm:"type:text;not null" json:"content"`
+	ContentFormat string     `gorm:"size:16;not null;default:text" json:"content_format"` // v0.4.0：text=纯文本 / html=富文本
+	IsPinned      bool       `gorm:"not null;default:false" json:"is_pinned"`
+	IsPopup       bool       `gorm:"not null;default:false" json:"is_popup"`
+	ShowBadge     bool       `gorm:"not null;default:true" json:"show_badge"`
+	StartAt       time.Time  `gorm:"index;not null" json:"start_at"`
+	EndAt         *time.Time `gorm:"index" json:"end_at"`
+	Status        string     `gorm:"size:32;index;not null;default:draft" json:"status"` // draft/published/offline
+	ViewCount     int        `gorm:"not null;default:0" json:"view_count"`
+	Sort          int        `gorm:"not null;default:0" json:"sort"` // 排序权重，越大越靠前
+	CreatedBy     uint64     `gorm:"not null" json:"created_by"`
 }
 
 func (Notice) TableName() string { return "notice" }
