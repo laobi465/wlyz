@@ -489,7 +489,59 @@ for _ in {1..30}; do
     fi
     sleep 2
 done
-[[ "${DEPLOY_STATE[server_ok]}" == "false" ]] && warn "后端 server 等待超时，请手动检查：docker compose logs server"
+
+# server 未就绪时的自动诊断与修复（关键：dirty 状态自动清理）
+if [[ "${DEPLOY_STATE[server_ok]}" != "true" ]]; then
+    warn "后端 server 等待超时，开始自动诊断..."
+
+    # 抓取 server 日志
+    SERVER_LOGS=$(docker compose logs --tail=100 server 2>&1 || true)
+
+    # 检测 1：dirty 状态错误
+    if echo "$SERVER_LOGS" | grep -qi "dirty"; then
+        warn "检测到 schema_migrations dirty 状态错误，自动清理..."
+        DIRTY_VERS=$(echo "$SERVER_LOGS" | grep -oE "version=[0-9]+" | head -5 | tr '\n' ' ' || echo "")
+        log "  dirty 版本：${DIRTY_VERS:-未知}"
+
+        # 清理 dirty 记录
+        docker compose exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" "${MYSQL_DATABASE:-keyauth}" \
+            -e "DELETE FROM schema_migrations WHERE dirty=1;" >/dev/null 2>&1 && \
+            log "  ✓ dirty 记录已清理" || warn "  清理失败（可能 mysql 未就绪）"
+
+        # 重启 server
+        log "  重启 server 容器..."
+        docker compose restart server >/dev/null 2>&1
+
+        # 重新等待 server 就绪（最长 60s）
+        log "  重新等待 server 就绪（最长 60s）..."
+        for _ in {1..30}; do
+            if curl -sf http://127.0.0.1:${SERVER_PORT:-8080}/health >/dev/null 2>&1; then
+                log "  ✓ 后端 server 已就绪（dirty 清理后恢复）"
+                DEPLOY_STATE[server_ok]="true"
+                break
+            fi
+            sleep 2
+        done
+    fi
+
+    # 检测 2：配置错误（AES_KEY / JWT_SECRET / MySQL 连接）
+    if [[ "${DEPLOY_STATE[server_ok]}" != "true" ]]; then
+        if echo "$SERVER_LOGS" | grep -qi "AES_KEY\|JWT_SECRET\|连接 MySQL"; then
+            err "后端配置错误，最近日志："
+            echo "$SERVER_LOGS" | grep -iE "FATAL|ERROR|AES_KEY|JWT_SECRET|MySQL" | tail -10
+            err "请检查 .env 配置：vim .env"
+        fi
+    fi
+
+    # 仍未就绪，输出完整日志供用户诊断
+    if [[ "${DEPLOY_STATE[server_ok]}" != "true" ]]; then
+        warn "后端 server 仍未就绪，最近 30 行日志："
+        docker compose logs --tail=30 server 2>&1 || true
+        warn "完整诊断命令："
+        warn "  cd ${PROJECT_DIR} && bash scripts/clean_dirty_migration.sh --show"
+        warn "  docker compose logs --tail=200 server"
+    fi
+fi
 
 # ---------- Step 9: 初始化超管账号 admin/admin123 ----------
 step "Step 9/10: 初始化超管账号 admin/admin123"
