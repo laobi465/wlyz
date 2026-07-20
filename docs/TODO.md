@@ -3,7 +3,7 @@
 格式：`优先级 + 状态 + 条目 + 预计版本 + 备注`
 
 - 优先级：`P0`（紧急）/ `P1`（高）/ `P2`（中）/ `P3`（低）
-- 状态：`[待开始]` `[进行中]` `[已阻塞]` `[已延期]` `[已完成]`
+- 状态：`[待开始]` `[进行中]` `[已阻塞]` `[已延期]` `[无限延期]` `[已完成]`
 
 ---
 
@@ -415,8 +415,8 @@
 - [x] [已完成 2026-07-20] SDK 多语言文档 - v0.5.0（8 个 SDK 各生成 README.en.md：python/nodejs/php/go/java/csharp/cpp/epl，统一结构：标题 + Installation + Quick Start + 9 API Reference + Signature Algorithm + Error Handling + Error Codes + Compliance + License；每个 SDK 嵌入对应签名兼容性说明如 Python OpenSSL 1.1+ 回退 / Go 无回退字节级对齐 / Java JDK 17+ 与 11-16 回退 / C# BouncyCastle 推荐 / C++ EVP_sha512_256 / 易语言 HMAC-SHA256 + crypto.go:165 回退场景；8 个中文 README 顶部加语言切换链接 **中文** | English）
 
 #### 集成扩展
-- [ ] [暂停 2026-07-20] 独角数卡对接 - v0.5.0（用户决策：先推进支付扩展，发卡对接延后）
-- [ ] [暂停 2026-07-20] 蓝米发卡对接 - v0.5.0（用户决策：先推进支付扩展，发卡对接延后）
+- [ ] [无限延期 2026-07-20] 独角数卡对接 - v0.5.0（用户决策：先推进支付扩展，发卡对接延后；2026-07-20 用户决策无限延期）
+- [ ] [无限延期 2026-07-20] 蓝米发卡对接 - v0.5.0（用户决策：先推进支付扩展，发卡对接延后；2026-07-20 用户决策无限延期）
 - [x] [已完成 2026-07-20] USDT-TRC20 加密货币支付 - v0.5.0（v0.5.0 集成扩展批次 3：pkg/payment Provider 抽象 + USDTProvider 实现 + 金额唯一后缀匹配算法（baseUSDT + (orderID%100)/100）+ TronGrid TRC20 交易轮询 + big.Float 精确除法（decimals=6）+ 外部监控 webhook HMAC-SHA256 验签 + usdt:// 二维码协议 + 9 项 pay.usdt.* sys_config + 11 个测试用例全 PASS）
 - [x] [已完成 2026-07-20] 钉钉机器人通知 - v0.5.0（v0.5.0 集成扩展批次 1：notify 包 WebhookProvider 接口 + dingtalkWebhookProvider 实现 + HMAC-SHA256 加签（timestamp+"\n"+secret）+ base64 编码 + url.QueryEscape + markdown 消息类型 + @mobiles/@all 支持 + 5 项 notify.dingtalk.* sys_config + 4 个 HTTP 测试用例 + 1 个加签算法测试 + 1 个 @mobiles 测试）
 - [x] [已完成 2026-07-20] PayPal 海外支付 - v0.5.0（v0.5.0 集成扩展批次 3：PayPalProvider 实现 + OAuth2 client_credentials + access_token 60s 提前过期缓存 + POST /v2/checkout/orders intent=CAPTURE + PayPal-Request-Id 幂等键 + approve 链接提取 + webhook verify-webhook-signature API 验签 + PAYMENT.CAPTURE.COMPLETED 标记 paid + 6 项 pay.paypal.* sys_config + 8 个测试用例全 PASS）
@@ -424,9 +424,9 @@
 - [x] [已完成 2026-07-20] 企业微信机器人通知 - v0.5.0（v0.5.0 集成扩展批次 1：wecomWebhookProvider 实现 + markdown 消息类型 + subject 加粗前缀作为标题 + 2 项 notify.wecom.* sys_config + 2 个 HTTP 测试用例）
 - [x] [已完成 2026-07-20] Telegram Bot 通知 - v0.5.0（v0.5.0 集成扩展批次 1：telegramWebhookProvider 实现 + MarkdownV2 渲染 + escapeTelegramMarkdown 16 字符转义（_*[]()~`>#+-=|{}.!）+ 4096 字符上限自动截断 + "（已截断）"提示 + telegramAPIBase 可测试覆盖 + 3 项 notify.telegram.* sys_config + 3 个 HTTP 测试用例含长消息截断场景）
 
-#### 主题市场（已暂停）
-- [ ] [已延期 2026-07-20] 多套主题模板 - v0.6.0（用户决策：暂停 v0.6.0 主题开发，优先推进高级分析）
-- [ ] [已延期 2026-07-20] 主题编辑器 - v0.6.0（用户决策：暂停 v0.6.0 主题开发，优先推进高级分析）
+#### 主题市场（已无限延期）
+- [ ] [无限延期 2026-07-20] 多套主题模板 - v0.6.0（用户决策：暂停 v0.6.0 主题开发，优先推进高级分析；2026-07-20 用户决策无限延期）
+- [ ] [无限延期 2026-07-20] 主题编辑器 - v0.6.0（用户决策：暂停 v0.6.0 主题开发，优先推进高级分析；2026-07-20 用户决策无限延期）
 
 #### 高级分析
 - [x] [已完成 2026-07-20] 用户行为分析 - v0.6.0（migration 032 user_behavior_profile 表 + 21 项 analysis.* sys_config；analysis 包 behavior.go：AggregateUserBehaviorForDate 按 (end_user_id, stat_date) 聚合 log_verify 反查 app_card.end_user_id + 内存聚合 action/result 计数 + distinct IP/Device + upsert 唯一索引；GetBehaviorOverview KPI 总览 + ListUserBehaviors 分页列表 + GetUserBehaviorDetail 按日序列 + GetBehaviorTrend 全局趋势；15 个测试用例覆盖空数据/无 card_id/卡密未绑/正常/幂等/Overview/List/Detail/Trend 全 PASS）
@@ -444,7 +444,17 @@
 
 ## 已延期项
 
-（暂无）
+### 无限延期（5 项，2026-07-20 用户决策）
+
+以下 5 项任务经用户决策标记为「无限延期」，不再纳入近期版本规划，除非用户后续显式恢复：
+
+| # | 任务 | 原版本 | 延期原因 |
+|---|---|---|---|
+| 1 | 独角数卡对接 | v0.5.0 | 先推进支付扩展，发卡对接延后 → 无限延期 |
+| 2 | 蓝米发卡对接 | v0.5.0 | 先推进支付扩展，发卡对接延后 → 无限延期 |
+| 3 | 多套主题模板 | v0.6.0 | 暂停 v0.6.0 主题开发，优先推进高级分析 → 无限延期 |
+| 4 | 主题编辑器 | v0.6.0 | 暂停 v0.6.0 主题开发，优先推进高级分析 → 无限延期 |
+| 5 | v0.5.0 集成扩展批次 2（发卡对接 2 项） | v0.5.0 | 即上 #1 #2，里程碑层标记进行中 → 实质无限延期 |
 
 ---
 
@@ -502,7 +512,7 @@
 | v0.3.6 | 2026-07-20 | ✅ 已完成（剩余 P1 收尾 + 单元测试 + 客户端 SDK 签名对齐测试） |
 | v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移 + JWT jti 单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 + 全语言 SDK 扩展 + 多级代理体系 + 灰度发布 + 在线更新 + 数据备份恢复 + 监控告警 + 通知系统 + 终端用户体系 + API 开放平台 + 管理员弹窗通知 已完成；14 项迁移全绿） |
 | v0.4.x | 2026-07-20 | ✅ 已完成（v0.4.0 收尾 + Prometheus/Grafana 集成 + 12 项 P0/P1 残留项：S-04/D-15/U-11~14 全部闭环 + 阿里云 SMS 完整签名 + SMTP SSL 包装 + 套餐审核 + 租户安全 + H5 终端用户 4 页 + 帮助中心 + 联系客服） |
-| v0.5.0 | 进行中 | ⏳ 进行中（性能优化批次 4 项已完成：MySQL 读写分离 + Redis 三模式 + snowflake Redis 协调 + 卡密批量生成 577k/s；UX 批次 4 项已完成：多主题切换 + 暗黑模式 + 移动端响应式优化 + 数字滚动动效；国际化批次 2 项已完成：后台 i18n 中英 + SDK 多语言文档；集成扩展批次 1 已完成 3 项：钉钉机器人 / 企业微信机器人 / Telegram Bot 通知（WebhookProvider 抽象 + 3 provider 实现 + migration 030 + 22 个测试全 PASS）；待开始：发卡对接 2 项（独角数卡 / 蓝米发卡）+ 支付扩展 3 项（USDT 加密货币 / PayPal / Stripe）） |
+| v0.5.0 | 进行中 | ⏳ 进行中（性能优化批次 4 项已完成：MySQL 读写分离 + Redis 三模式 + snowflake Redis 协调 + 卡密批量生成 577k/s；UX 批次 4 项已完成：多主题切换 + 暗黑模式 + 移动端响应式优化 + 数字滚动动效；国际化批次 2 项已完成：后台 i18n 中英 + SDK 多语言文档；集成扩展批次 1 已完成 3 项：钉钉机器人 / 企业微信机器人 / Telegram Bot 通知（WebhookProvider 抽象 + 3 provider 实现 + migration 030 + 22 个测试全 PASS）；集成扩展批次 3 已完成 3 项：USDT-TRC20 / PayPal / Stripe 海外支付；**无限延期**：发卡对接 2 项（独角数卡 / 蓝米发卡）—— 2026-07-20 用户决策无限延期） |
 
 ---
 
