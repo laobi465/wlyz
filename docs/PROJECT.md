@@ -143,10 +143,10 @@ SDK 校验签名 → 通过则解锁功能
 | S-11 | 系统监控 | ☐ | 服务器状态、QPS、慢查询（v0.4.x Prometheus） |
 | S-12 | 数据备份 | ☐ | 数据库备份、恢复、导出（v0.4.x） |
 | S-13 | 更新管理 | ☐ | 在线更新、版本回滚（v0.4.x） |
-| S-14 | 管理员管理 | ✅ | 超管账号 + 2FA TOTP + 登录设备管理（v0.3.0） |
+| S-14 | 管理员管理 | ✅ | 超管账号 + 2FA TOTP + 登录设备管理（v0.3.0）+ 安装向导首次配置（v0.3.6 `/install`） |
 | S-15 | 平台总公告管理 | ✅ | 公告 CRUD + 横幅开关 + 公开 API（v0.3.0） |
 | S-16 | 开发者公告管理 | ✅ | 公告 CRUD（v0.3.0） |
-| S-17 | 代理注册管理 | ☐ | 注册订单、收入统计、退款（v0.3.6，待 AgentRegister 实现） |
+| S-17 | 代理注册管理 | ◐ | 注册订单流程已实现（v0.3.6：AgentRegister + processAgentRegisterPaid + 邀请码状态机闭环），收入统计/退款待 v0.4.x |
 
 ### 3.2 开发者控制台（19 个模块）
 
@@ -154,9 +154,9 @@ SDK 校验签名 → 通过则解锁功能
 |---|---|---|---|
 | D-01 | 工作台 | ✅ | 8 数据卡 + 8 快捷入口 + 收入趋势 + 应用 TOP5 + 最近订单（v0.2.6） |
 | D-02 | 应用管理 | ✅ | 应用 CRUD + 密钥生成/轮换（保留旧 SignSecret 7 天）（v0.2.2） |
-| D-03 | 卡密管理 | ✅ | 批量生成 + 状态机 + 封禁/解封/删除（v0.2.2）；CSV 导入导出 ☐（v0.3.6） |
+| D-03 | 卡密管理 | ✅ | 批量生成 + 状态机 + 封禁/解封/删除（v0.2.2）+ CSV 导入导出（v0.3.6） |
 | D-04 | 卡类套餐 | ✅ | 时长卡/次数卡/永久卡/试用卡/功能解锁卡 5 类型 CRUD（v0.2.2） |
-| D-05 | 设备管理 | ✅ | 列表 + 强制下线（v0.3.0）；Redis 心跳清空 ☐（v0.3.6） |
+| D-05 | 设备管理 | ✅ | 列表 + 强制下线（v0.3.0）+ 封禁卡密联动下线（v0.3.6） |
 | D-06 | 用户管理 | ☐ | 终端用户列表、封禁（v0.4.x，终端用户体系未建） |
 | D-07 | 订单管理 | ✅ | 订单列表 + 状态筛选（v0.3.0） |
 | D-08 | 代理管理 | ✅ | 代理 CRUD + 邀请码生成/禁用 + 套餐配额校验（v0.3.0 + v0.3.5） |
@@ -403,13 +403,14 @@ keyauth-saas/
 │   │   ├── internal/
 │   │   │   ├── auth/             # JWT/TOTP/login_lock（v0.2.1）
 │   │   │   ├── config/           # 配置加载 + sys_config 缓存（cache.go）
-│   │   │   ├── handler/          # HTTP 处理器（17 个文件，143 条路由）
+│   │   │   ├── handler/          # HTTP 处理器（18 个文件，148 条路由，v0.3.6 新增 3 条代理注册公开路由）
 │   │   │   │   ├── admin.go / admin_business.go / admin_finance.go  # 超管 3 文件
 │   │   │   │   ├── tenant_business.go / tenant_finance.go / tenant_settle.go  # 开发者 3 文件
 │   │   │   │   ├── agent_business.go  # 代理 1 文件
 │   │   │   │   ├── app.go / card.go / client.go  # 应用/卡密/客户端验证
-│   │   │   │   ├── auth.go / session.go / profile.go / public.go  # 鉴权/会话/账号设置/公开 API
-│   │   │   │   ├── pay.go  # 平台总支付 + 开发者自有易支付占位
+│   │   │   │   ├── auth.go / session.go / profile.go / public.go  # 鉴权/会话/账号设置/公开 API（auth.go 含 v0.3.6 AgentRegister 代理注册付费流程）
+│   │   │   │   ├── install.go  # 安装向导（v0.3.6，首次部署配置）
+│   │   │   │   ├── pay.go  # 平台总支付 + 开发者自有易支付占位（v0.3.6 EpayNotify 前缀分发 + processAgentRegisterPaid）
 │   │   │   │   ├── log_worker.go  # 异步日志 worker（验证 4096 + 操作 2048）
 │   │   │   │   └── deps.go  # 依赖注入容器
 │   │   │   ├── heartbeat/        # 心跳保活（Redis Sorted Set，6 个方法）
@@ -533,6 +534,6 @@ pnpm dev
 
 ---
 
-**文档版本**：0.3.5  
+**文档版本**：0.3.6  
 **最后更新**：2026-07-20  
 **维护者**：KeyAuth SaaS Team

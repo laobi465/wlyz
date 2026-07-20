@@ -5,8 +5,11 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,7 +19,10 @@ import (
 	"github.com/your-org/keyauth-saas/apps/server/internal/auth"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
+	"github.com/your-org/keyauth-saas/apps/server/internal/quota"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/crypto"
+	"github.com/your-org/keyauth-saas/apps/server/pkg/epay"
+	"github.com/your-org/keyauth-saas/apps/server/pkg/snowflake"
 )
 
 // ============== 公共 DTO ==============
@@ -438,12 +444,222 @@ func TenantRegister(deps *Deps) gin.HandlerFunc {
 	}
 }
 
-// ============== 代理注册（v0.3.0 完整版，v0.2.0 仅占位）==============
+// ============== 代理注册（v0.3.6 完整版）==============
+// 流程（方案 B：先支付后建 Agent，避免引入 pending_payment 状态破坏 AgentLogin 不变量）：
+//  1. 校验邀请码（active + 未达 max_uses + 未过期）
+//  2. 校验用户名唯一性
+//  3. quota.CheckMaxAgents 校验套餐上限（第一道防线）
+//  4. 读 sys_config agent.register.fee 注册费
+//  5. 创建 AgentRegistrationOrder（PayStatus=pending，AgentID=nil 占位）
+//  6. 调易支付 BuildSubmitURL 返回 pay_url
+//  7. 支付回调 EpayNotify 按订单号前缀 REG 分发到 processAgentRegisterPaid 真正建 Agent
 
+// agentRegisterReq 代理注册请求体
+type agentRegisterReq struct {
+	InviteCode string `json:"invite_code" binding:"required,min=4,max=32"`
+	Username   string `json:"username" binding:"required,min=3,max=64"`
+	Password   string `json:"password" binding:"required,min=8,max=64"`
+	Phone      string `json:"phone" binding:"omitempty,max=32"`
+	PayType    string `json:"pay_type" binding:"required,oneof=alipay wxpay qqpay"`
+}
+
+// AgentRegister POST /api/v1/public/auth/agent/register
+// 返回 pay_url，前端跳转易支付完成支付
 func AgentRegister(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// TODO(v0.3.0): 邀请码校验 + 支付注册费 + 创建代理账号
-		middleware.Fail(c, http.StatusNotImplemented, 1006, "代理注册流程 v0.3.0 交付")
+		var req agentRegisterReq
+		if err := c.ShouldBindJSON(&req); err != nil {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "参数错误: "+err.Error())
+			return
+		}
+
+		ctx := c.Request.Context()
+
+		// 1. 校验平台支付总开关
+		if !deps.CfgCache.GetBool(ctx, "pay.platform.enabled", true) {
+			middleware.Fail(c, http.StatusForbidden, 1007, "平台支付未启用，无法完成代理注册")
+			return
+		}
+
+		// 2. 校验邀请码
+		var ic model.AgentInviteCode
+		if err := deps.DB.Where("code = ?", req.InviteCode).First(&ic).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				middleware.Fail(c, http.StatusBadRequest, 1008, "邀请码不存在")
+				return
+			}
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询邀请码失败: "+err.Error())
+			return
+		}
+		if ic.Status != "active" {
+			middleware.Fail(c, http.StatusBadRequest, 1008, "邀请码已失效（状态: "+ic.Status+"）")
+			return
+		}
+		if ic.UsedCount >= ic.MaxUses {
+			middleware.Fail(c, http.StatusBadRequest, 1008, "邀请码使用次数已用完")
+			return
+		}
+		if ic.ExpiresAt.Before(time.Now()) {
+			middleware.Fail(c, http.StatusBadRequest, 1008, "邀请码已过期")
+			return
+		}
+
+		// 3. 校验用户名在所属租户内唯一
+		var exists int64
+		deps.DB.Model(&model.Agent{}).Where("tenant_id = ? AND username = ?", ic.TenantID, req.Username).Count(&exists)
+		if exists > 0 {
+			middleware.Fail(c, http.StatusBadRequest, 1009, "用户名已被占用")
+			return
+		}
+
+		// 4. 校验套餐代理数上限（quota.CheckMaxAgents 第一道防线）
+		if err := quota.CheckMaxAgents(deps.DB, ic.TenantID); err != nil {
+			var qErr *quota.ExceededError
+			if errors.As(err, &qErr) {
+				if qErr.Limit == 0 {
+					middleware.Fail(c, http.StatusForbidden, 1007, "当前套餐不支持招募代理，请联系开发者升级套餐")
+				} else {
+					middleware.Fail(c, http.StatusForbidden, 1007,
+						"开发者代理数已达上限 "+strconv.Itoa(qErr.Limit)+" 个，请联系开发者")
+				}
+			} else {
+				middleware.Fail(c, http.StatusForbidden, 1007, err.Error())
+			}
+			return
+		}
+
+		// 5. 读注册费（铁律 05：从 sys_config 读取，不硬编码）
+		fee := deps.CfgCache.GetFloat64(ctx, "agent.register.fee", 99.00)
+		if fee <= 0 {
+			middleware.Fail(c, http.StatusForbidden, 1007, "代理注册费未配置或为 0，请联系平台管理员")
+			return
+		}
+
+		// 6. 加载易支付配置
+		epayCfg, err := loadPlatformPayConfig(deps)
+		if err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "支付配置加载失败: "+err.Error())
+			return
+		}
+
+		// 7. 生成订单号（前缀 REG 与卡密购买 ORD 区分，回调按前缀分发）
+		orderNo := snowflake.OrderNo("REG")
+
+		// 7.1 计算密码 bcrypt 哈希（cost=12）并缓存到 Redis，等支付回调 processAgentRegisterPaid 取用
+		//     铁律 04：DB 不存明文密码也不存哈希到 AgentRegistrationOrder（订单表只存账号元信息）
+		pwdHash, err := crypto.HashPassword(req.Password)
+		if err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "密码加密失败: "+err.Error())
+			return
+		}
+		if err := cacheAgentRegisterPassword(deps, orderNo, pwdHash); err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5003, "密码缓存失败: "+err.Error())
+			return
+		}
+
+		// 8. 创建 AgentRegistrationOrder（pending，AgentID=nil 占位）
+		order := &model.AgentRegistrationOrder{
+			OrderNo:      orderNo,
+			InviteCodeID: ic.ID,
+			TenantID:     ic.TenantID,
+			AgentID:      nil, // 支付回调时回填
+			Username:     req.Username,
+			Phone:        req.Phone,
+			Amount:       fee,
+			PayChannel:   "epay_" + req.PayType,
+			PayStatus:    "pending",
+			ClientIP:     c.ClientIP(),
+		}
+		if err := deps.DB.Create(order).Error; err != nil {
+			// 订单创建失败：清理 Redis 密码缓存避免泄漏
+			deps.Redis.Del(ctx, "agent_register:pwd:"+orderNo)
+			middleware.Fail(c, http.StatusInternalServerError, 5003, "创建订单失败: "+err.Error())
+			return
+		}
+
+		// 9. 构造易支付跳转 URL
+		namePrefix := deps.CfgCache.GetString(ctx, "pay.platform.order_name_prefix", "KeyAuth代理注册")
+		moneyStr := strconv.FormatFloat(fee, 'f', 2, 64)
+		payURL, err := epay.BuildSubmitURL(epayCfg, &epay.OrderParams{
+			OutTradeNo: orderNo,
+			Name:       fmt.Sprintf("%s·%s", namePrefix, req.Username),
+			Money:      moneyStr,
+			PayType:    req.PayType,
+			NotifyURL:  resolveNotifyURL(deps, c),
+			ReturnURL:  resolveReturnURL(deps, c),
+			ClientIP:   c.ClientIP(),
+		})
+		if err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5004, "构造支付 URL 失败: "+err.Error())
+			return
+		}
+
+		middleware.Success(c, gin.H{
+			"order_no": orderNo,
+			"pay_url":  payURL,
+			"amount":   fee,
+			"message":  "请在新页面完成支付，支付成功后代理账号将自动创建",
+		})
+	}
+}
+
+// AgentRegisterOrderStatus GET /api/v1/public/auth/agent/register/order/:order_no
+// 前端支付完成跳回后查询订单状态，判断注册是否成功
+func AgentRegisterOrderStatus(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		orderNo := c.Param("order_no")
+		if orderNo == "" {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "订单号不能为空")
+			return
+		}
+
+		var order model.AgentRegistrationOrder
+		if err := deps.DB.Where("order_no = ?", orderNo).First(&order).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				middleware.Fail(c, http.StatusNotFound, 1010, "订单不存在")
+				return
+			}
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询订单失败: "+err.Error())
+			return
+		}
+
+		resp := gin.H{
+			"order_no":   order.OrderNo,
+			"pay_status": order.PayStatus,
+			"amount":     order.Amount,
+			"username":   order.Username,
+			"created_at": order.CreatedAt,
+			"paid_at":    order.PaidAt,
+		}
+		if order.AgentID != nil {
+			resp["agent_id"] = *order.AgentID
+		}
+		middleware.Success(c, resp)
+	}
+}
+
+// AgentRegisterConfig GET /api/v1/public/auth/agent/register/config
+// 公开返回代理注册所需配置（注册费 + 支付方式 + 平台支付开关），供注册页未登录时读取
+// 铁律 05：所有可变参数走 sys_config；铁律 06：不返回敏感配置（如 gateway_url/pid/key）
+func AgentRegisterConfig(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		fee := deps.CfgCache.GetFloat64(ctx, "agent.register.fee", 99.00)
+		payEnabled := deps.CfgCache.GetBool(ctx, "pay.platform.enabled", true)
+
+		// 支付方式列表（JSON 数组字符串 → 解析）
+		methodsJSON := deps.CfgCache.GetString(ctx, "pay.platform.methods", `["alipay","wxpay","qqpay"]`)
+		var methods []string
+		if err := json.Unmarshal([]byte(methodsJSON), &methods); err != nil || len(methods) == 0 {
+			methods = []string{"alipay", "wxpay", "qqpay"}
+		}
+
+		middleware.Success(c, gin.H{
+			"register_fee":    fee,
+			"pay_enabled":     payEnabled,
+			"pay_methods":     methods,
+			"order_expire_seconds": deps.CfgCache.GetInt64(ctx, "pay.order_expire_seconds", 1800),
+		})
 	}
 }
 

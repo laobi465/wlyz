@@ -54,7 +54,16 @@ docs/                       # 四份核心文档
 
 ## 五、当前进度
 
-**v0.3.5（最新，2026-07-19）已完成**：
+**v0.3.6（进行中，2026-07-20）**：
+
+已新增完成（v0.3.6）：
+- ✅ 卡密 CSV 导入导出（card.go `TenantExportCardsCSV` / `TenantImportCardsCSV` + Cards.vue 导出/导入对话框 + 路由 + API）
+- ✅ 设备强制下线（card.go `TenantBanCard` 联动 `heartbeat.Remove` 清 Redis 心跳 + DB 标记 banned）
+- ✅ 安装向导（install.go `InstallStatus` / `Install` + Install.vue 4 步向导 + 路由，替代原 seed 占位 hash + 后置脚本）
+- ✅ 代理注册付费流程（方案 B 先支付后建 Agent：auth.go `AgentRegister` / `AgentRegisterConfig` / `AgentRegisterOrderStatus` + pay.go `dispatchPaidOrder` 前缀分发 + `processAgentRegisterPaid` 事务建 Agent + 邀请码状态机闭环 + Register.vue 落地 3 处 TODO + 修复 install.go 配置键名 bug `agent.register_fee` → `agent.register.fee`）
+- ✅ 文档全量同步对齐 v0.3.5 实际状态（README/PROMPT/PROJECT/SPEC/TODO/CHANGELOG 六份联动更新）
+
+v0.3.5 已完成（基线）：
 - ✅ 后端 Go 项目结构（main / config / model / middleware / handler / router / quota / migration / heartbeat）
 - ✅ 26 张基础表 + 4 张扩展表（log_login_failed / refresh_token_device / tenant_balance_log / tenant_withdraw）共 30 个 GORM struct，7 套 migration（001~007）
 - ✅ 后端业务 API 全量实现：17 个 handler 文件，143 条路由，三角色 dashboard/profile/CRUD/2FA/登录设备全部真实实现，无 501 占位
@@ -68,12 +77,10 @@ docs/                       # 四份核心文档
 - ✅ H5 公共 API（PublicAppInfo + PublicCardTypes，购卡闭环）
 - ✅ Docker Compose + 宝塔部署 + RSA-4096 密钥生成独立脚本
 
-**v0.3.6（待开始）剩余 P1 收尾**：
-- ⏳ 卡密 CSV 导入导出
-- ⏳ 设备强制下线（清 Redis 心跳）
-- ⏳ 安装向导页面（/install）
-- ⏳ 代理注册付费流程（前后端均仍为 TODO 占位：auth.go:443 AgentRegister + Register.vue）
+**v0.3.6 剩余待开始**：
 - ⏳ 开发者自有易支付（pay.go:528 EpayTenantNotify 仍返回 "fail"）
+- ⏳ 双层支付模式切换逻辑
+- ⏳ 套餐 allow_custom_pay 字段生效
 - ⏳ 客户端 SDK（Python / Node.js / PHP 三语言）
 - ⏳ 单元测试 + 集成测试
 
@@ -138,8 +145,8 @@ bash scripts/reset_admin_password.sh NewPass@2026
 本项目中以下内容已标注「待核实」（铁律 06）：
 - `pkg/crypto/crypto.go` 中 HMAC-SHA256 使用 `sha512.New512_256` 变体，需验证与客户端 SDK 一致性
 - `pkg/snowflake/snowflake.go` 中 `twepoch = 1767225600000`（2026-01-01 UTC）
-- `migrations/002_seed_data.up.sql` 中默认超管密码哈希为占位，部署后必须重置
+- `migrations/002_seed_data.up.sql` 中默认超管密码哈希为占位，部署后通过 `/install` 向导重置（v0.3.6 替代原"占位 hash + 后置脚本"方案）
 - `scripts/reset_admin_password.sh` 中后端 `--reset-admin-password` subcommand 需在 main.go 实现
-- `apps/server/internal/handler/auth.go:443` `AgentRegister` 仍为 501 占位（v0.3.6 交付）
 - `apps/server/internal/handler/pay.go:528` `EpayTenantNotify` 仍返回 "fail"（v0.3.6 交付）
-- `apps/admin/src/views/agent/Register.vue` 三处 TODO 占位（v0.3.6 交付）
+
+> v0.3.6 已修复：原 `card.go:422` 设备强制下线 TODO 已实现（联动 heartbeat.Remove）；卡密 CSV 导入导出已实现；原 `auth.go:443` AgentRegister 501 占位已实现（方案 B 先支付后建 Agent）；Register.vue 三处 TODO 已落地（读配置+调起支付+查询订单状态）；install.go 配置键名 bug 已修复（`agent.register_fee` → `agent.register.fee` 与 seed 002 对齐）。

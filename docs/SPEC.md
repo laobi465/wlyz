@@ -159,7 +159,7 @@ internal/handler/
 ├── profile.go          # 三角色统一账号设置（ProfileMe + UpdateProfile + 2FA + LoginDevices）
 ├── public.go           # H5 公共 API（PublicAppInfo + PublicCardTypes，v0.3.5）
 ├── app.go              # 应用 CRUD + 密钥轮换
-├── card.go             # 卡类 + 卡密生成/封禁/解封/删除
+├── card.go             # 卡类 + 卡密生成/封禁/解封/删除 + CSV 导入导出（v0.3.6）+ 封禁联动设备下线（v0.3.6）
 ├── client.go           # 客户端验证 API（9 个端点）
 ├── pay.go              # 平台总支付 + EpayTenantNotify（v0.3.6 待实现）
 ├── admin.go            # 超管：sys_config CRUD + TestPayConfig
@@ -726,7 +726,229 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 - **异步处理**：日志写入、通知发送用消息队列
 - **CDN**：静态资源走 CDN
 
-### 7.3 慢查询监控
+### 7.3 v0.3.6 新增接口规范
+
+#### 卡密 CSV 导出
+- 路由：`GET /api/v1/tenant/cards/export`
+- 鉴权：tenant 角色 + Authorization Header
+- 查询参数：`app_id` / `status` / `batch_no` / `keyword`（与列表 API 一致）
+- 响应：`Content-Type: text/csv; charset=utf-8` + UTF-8 BOM + `Content-Disposition: attachment`
+- 条数上限：从 `sys_config.card.export.max_rows` 读取，默认 10000，最大 100000（兜底防拖垮服务）
+- 字段顺序：ID,AppID,CardTypeID,CardKey,Checksum,Status,BatchNo,Prefix,GroupTag,DurationSeconds,UsedCount,MaxUses,ActivatedAt,ExpiresAt,LastVerifyAt,CreatedBy,CreatorType,OrderID,BannedAt,BannedReason,CreatedAt
+
+#### 卡密 CSV 导入
+- 路由：`POST /api/v1/tenant/cards/import`
+- 鉴权：tenant 角色
+- 请求体：JSON（前端解析 CSV 后传明文数组）
+  ```json
+  {
+    "app_id": 1,
+    "card_type_id": 1,
+    "prefix": "VIP",
+    "group_tag": "",
+    "duration_seconds": 0,
+    "max_uses": 0,
+    "cards": ["XXX-YYYY-ZZZZ", "..."]
+  }
+  ```
+- 条数上限：从 `sys_config.card.import.max_rows` 读取，默认 5000，最大 50000
+- 行为：
+  - 未传 `duration_seconds` / `max_uses` / `prefix` 时取卡类默认值
+  - 套餐配额校验（quota.CheckMaxCards）
+  - 卡密明文去重 + 空值过滤
+  - 事务批量入库，重复 hash（SHA-512）跳过并记失败明细
+  - 批次号前缀 `I`（Import）+ 日期 + 用户 ID 后 6 位
+- 响应：`{ batch_no, success_count, failed_count, empty_count, dup_count, failed[] }`
+- 操作日志：自动写入 `log_operation`（module=card, action=import_csv）
+
+#### 封禁卡密联动设备下线
+- 触发：`POST /api/v1/tenant/cards/:id/ban` 成功后
+- 行为：
+  1. 查询 `app_device` 中 `card_id = ? AND tenant_id = ? AND status = 'active'` 的所有设备
+  2. 循环调 `heartbeat.Remove(ctx, rdb, appID, deviceID)` 清 Redis ZSET + Hash
+  3. DB 批量更新 `app_device.status = 'banned'` + `last_heartbeat_at = NULL`
+- 容错：Redis 清理失败不阻塞封禁主流程（卡密已 banned，下次 verify 会因 card.status 拒绝）
+
+#### 安装向导（首次部署用）
+
+**铁律 06 重点**：通过 `sys_admin.password_hash` 是否含占位串 `PLACEHOLDER_BCRYPT_HASH` 判定 installed 状态，禁止用 `count(*) > 0` 判定（seed 已插入 1 行占位 admin）。
+
+##### GET /api/v1/install/status
+- 鉴权：无（公开接口，仅首次部署阶段可访问）
+- 路由：`v1.GET("/install/status")`
+- 行为：
+  1. 调 `checkInstalled(db)`：查 `sys_admin` id=1，若不存在返回 `installed=false`；若 `password_hash` 含 `PLACEHOLDER_BCRYPT_HASH` 返回 `installed=false`，否则 `installed=true`
+  2. 已安装时返回当前超管用户名 + 平台域名；未安装时返回占位字段
+- 响应（未安装）：
+  ```json
+  {
+    "code": 0,
+    "data": {
+      "installed": false,
+      "admin_name": "",
+      "domain": "",
+      "server_time": "2026-07-20T10:00:00Z"
+    }
+  }
+  ```
+- 响应（已安装）：
+  ```json
+  {
+    "code": 0,
+    "data": {
+      "installed": true,
+      "admin_name": "admin",
+      "domain": "https://example.com",
+      "server_time": "2026-07-20T10:00:00Z"
+    }
+  }
+  ```
+
+##### POST /api/v1/install
+- 鉴权：无（仅首次部署可用，handler 内二次校验 installed 状态）
+- 路由：`v1.POST("/install")`
+- 请求体：
+  ```json
+  {
+    "admin_username": "admin",
+    "admin_password": "StrongPwd@2026",
+    "admin_email": "admin@example.com",
+    "admin_phone": "13800138000",
+    "platform_domain": "https://example.com",
+    "platform_name": "KeyAuth SaaS",
+    "platform_notify_email": "notify@example.com",
+    "agent_register_fee": 100.00,
+    "platform_commission_rate": 5.00
+  }
+  ```
+- 参数校验：
+  - `admin_username`：3-64 字符，字母数字下划线
+  - `admin_password`：8-64 字符，至少含字母+数字
+  - `admin_email`：标准邮箱格式
+  - `agent_register_fee`：≥ 0
+  - `platform_commission_rate`：0-100
+- 行为（事务）：
+  1. 二次校验 `checkInstalled(db)`，已安装则返回 `400 已安装，禁止重复初始化`
+  2. `crypto.HashPassword(password)` 计算 bcrypt cost=12 哈希
+  3. 事务更新 `sys_admin` id=1：`username` + `password_hash` + `email` + `phone`
+  4. 事务 upsert 6 个 `sys_config` 项：
+     - `platform.domain` = 请求 `platform_domain`
+     - `platform.name` = 请求 `platform_name`
+     - `platform.notify_email` = 请求 `platform_notify_email`
+     - `agent.register_fee` = 请求 `agent_register_fee`
+     - `pay.platform_commission_rate` = 请求 `platform_commission_rate`
+     - `platform.installed_at` = 当前 RFC3339 时间戳
+  5. 事务提交后调 `deps.CfgCache.InvalidateAll(ctx)` 刷新 Redis 配置缓存
+  6. `RecordOperation` 写入操作日志（detail 不含密码明文）
+- 响应：
+  ```json
+  {
+    "code": 0,
+    "data": {
+      "installed": true,
+      "admin_name": "admin",
+      "installed_at": "2026-07-20T10:00:00Z",
+      "message": "安装完成，请使用新账号登录"
+    }
+  }
+  ```
+- 前端流程：4 步向导（环境检测 → 超管账号 → 平台配置 → 完成），路由 `/install`，`meta.public = true` 不走鉴权
+
+#### 代理注册付费流程（方案 B：先支付后建 Agent）
+
+**设计原则**：避免引入 `pending_payment` 状态破坏 `AgentLogin` 现有 `status != "active"` 不变量。代理行仅在支付回调事务内创建且 `Status="active"`，可直接登录。
+
+**关键设计**：
+- 订单号前缀 `REG`（代理注册）与 `ORD`（卡密购买）区分，`EpayNotify` 通过 `dispatchPaidOrder` 按前缀分发
+- 密码 bcrypt 哈希短期缓存到 Redis（`agent_register:pwd:{order_no}`，TTL=`pay.order_expire_seconds` 默认 1800s），DB 不存明文也不存哈希
+- 注册费不进 `PlatformSettlement`（直接归平台，与卡密抽成解耦）
+
+##### GET /api/v1/public/auth/agent/register/config
+- 鉴权：无（公开接口，供注册页未登录时读取）
+- 行为：从 `sys_config` 读取 `agent.register.fee` + `pay.platform.enabled` + `pay.platform.methods` + `pay.order_expire_seconds`
+- 响应：
+  ```json
+  {
+    "code": 0,
+    "data": {
+      "register_fee": 99.00,
+      "pay_enabled": true,
+      "pay_methods": ["alipay", "wxpay", "qqpay"],
+      "order_expire_seconds": 1800
+    }
+  }
+  ```
+- 安全：不返回敏感字段（`gateway_url` / `pid` / `key_encrypted`）
+
+##### POST /api/v1/public/auth/agent/register
+- 鉴权：无（公开接口）
+- 请求体：
+  ```json
+  {
+    "invite_code": "ABCD1234EFGH5678",
+    "username": "agent001",
+    "password": "StrongPwd@2026",
+    "phone": "13800138000",
+    "pay_type": "alipay"
+  }
+  ```
+- 行为：
+  1. 校验平台支付总开关 `pay.platform.enabled`
+  2. 校验邀请码：`status=active` + `used_count < max_uses` + `expires_at > now`
+  3. 校验用户名在所属租户内唯一
+  4. `quota.CheckMaxAgents` 校验套餐代理数上限（第一道防线）
+  5. 读 `agent.register.fee` 注册费（默认 99.00）
+  6. bcrypt 哈希密码（cost=12），缓存到 Redis（`agent_register:pwd:{order_no}`）
+  7. INSERT `AgentRegistrationOrder{OrderNo: REG+snowflake, PayStatus: pending, AgentID: nil}`
+  8. `epay.BuildSubmitURL` 构造支付 URL
+- 响应：
+  ```json
+  {
+    "code": 0,
+    "data": {
+      "order_no": "REG1767225600000123",
+      "pay_url": "https://pay.example.com/submit.php?pid=...&sign=...",
+      "amount": 99.00,
+      "message": "请在新页面完成支付，支付成功后代理账号将自动创建"
+    }
+  }
+  ```
+
+##### GET /api/v1/public/auth/agent/register/order/:order_no
+- 鉴权：无（公开接口）
+- 行为：查 `AgentRegistrationOrder` 表，返回订单状态 + 已支付时附 `agent_id`
+- 响应：
+  ```json
+  {
+    "code": 0,
+    "data": {
+      "order_no": "REG1767225600000123",
+      "pay_status": "paid",
+      "amount": 99.00,
+      "username": "agent001",
+      "created_at": "2026-07-20T10:00:00Z",
+      "paid_at": "2026-07-20T10:01:30Z",
+      "agent_id": 42
+    }
+  }
+  ```
+
+##### 支付回调处理（EpayNotify 内部分发）
+- 触发：`POST /api/v1/pay/notify/epay`，验签通过 + Redis 防重入后调 `dispatchPaidOrder(notify)`
+- 路由：按订单号前缀分发
+  - `ORD*` → `processPaidOrder`（现有卡密购买流程，保持不变）
+  - `REG*` → `processAgentRegisterPaid`（v0.3.6 新增）
+- `processAgentRegisterPaid` 事务内：
+  1. 校验订单状态/金额（防伪造）
+  2. 幂等保护（已 paid 直接返回）
+  3. 事务内重复 `quota` 校验防 TOCTOU（套餐上限 + 用户名重复）
+  4. INSERT `Agent{Status: "active", CommissionRate: 邀请码.DefaultCommissionRate, CommissionMode: "percentage"}`
+  5. 回填 `AgentRegistrationOrder.AgentID` + `PayStatus=paid` + `PaidAt` + `PayTradeNo`
+  6. 邀请码 `used_count++`，达 `max_uses` 时 `status=exhausted` + 写 `used_by_agent_id`（补齐旧逻辑漏洞）
+  7. 删除 Redis 中的密码哈希缓存（已用过，安全清理）
+- 前端流程：3 步向导（填写邀请码 → 支付注册费 → 完成注册），路由 `/agent/register`（meta.public=true），新窗口跳转支付页面，用户支付后点「查询状态」按钮轮询订单
+
+### 7.4 慢查询监控
 
 - 慢查询阈值：200ms
 - 慢查询日志：单独文件，便于分析
@@ -822,6 +1044,6 @@ ENTRYPOINT ["./keyauth-api"]
 
 ---
 
-**文档版本**：0.3.5  
+**文档版本**：0.3.6  
 **最后更新**：2026-07-20  
 **维护者**：KeyAuth SaaS Team

@@ -14,7 +14,7 @@
       </el-steps>
 
       <div class="step-content">
-        <!-- Step 1: 邀请码 -->
+        <!-- Step 1: 邀请码 + 账号 -->
         <div v-if="activeStep === 0">
           <el-form ref="inviteFormRef" :model="inviteForm" :rules="inviteRules" label-position="top">
             <el-form-item label="开发者邀请码" prop="invite_code">
@@ -29,17 +29,20 @@
             <el-form-item label="确认密码" prop="confirm_password">
               <el-input v-model="inviteForm.confirm_password" type="password" show-password placeholder="再次输入密码" :prefix-icon="Lock" />
             </el-form-item>
-            <el-form-item label="联系方式" prop="contact">
-              <el-input v-model="inviteForm.contact" placeholder="QQ/邮箱/手机号" :prefix-icon="Phone" />
+            <el-form-item label="联系方式" prop="phone">
+              <el-input v-model="inviteForm.phone" placeholder="QQ/邮箱/手机号（可选）" :prefix-icon="Phone" />
             </el-form-item>
             <el-alert
-              type="warning"
+              v-if="!configLoading"
+              :type="config.pay_enabled ? 'warning' : 'error'"
               :closable="false"
-              title="注册需支付代理注册费（金额从 sys_config agent.register.fee 读取）"
+              :title="config.pay_enabled
+                ? `注册需支付代理注册费 ¥${config.register_fee.toFixed(2)}（从 sys_config agent.register.fee 读取）`
+                : '平台支付未启用，无法完成代理注册，请联系平台管理员'"
               style="margin-bottom: 16px;"
             />
-            <el-button type="primary" class="next-btn" :loading="loading" @click="verifyInviteCode">
-              下一步：支付注册费
+            <el-button type="primary" class="next-btn" :loading="loading" :disabled="!config.pay_enabled" @click="submitRegister">
+              下一步：前往支付
             </el-button>
           </el-form>
         </div>
@@ -52,13 +55,25 @@
               <span class="value">¥ {{ registerFee.toFixed(2) }}</span>
             </div>
             <el-divider />
-            <p class="pay-tip">请选择支付方式完成支付，支付成功后自动进入下一步</p>
+            <p class="pay-tip">请选择支付方式，点击下方按钮跳转到支付页面完成付款</p>
             <div class="pay-methods">
-              <el-button v-for="m in payMethods" :key="m.value" :type="selectedMethod === m.value ? 'primary' : 'default'" @click="selectedMethod = m.value">
+              <el-button
+                v-for="m in payMethods"
+                :key="m.value"
+                :type="selectedMethod === m.value ? 'primary' : 'default'"
+                @click="selectedMethod = (m.value as 'alipay' | 'wxpay' | 'qqpay')"
+              >
                 {{ m.label }}
               </el-button>
             </div>
-            <el-button type="primary" class="next-btn" :loading="loading" @click="startPay">前往支付</el-button>
+            <el-alert
+              type="info"
+              :closable="false"
+              title="支付成功后代理账号将自动创建，请勿关闭本页面"
+              style="margin-bottom: 16px;"
+            />
+            <el-button type="primary" class="next-btn" @click="goToPay">前往支付页面</el-button>
+            <el-button text @click="pollOrderStatus">我已完成支付，查询状态</el-button>
             <el-button text @click="activeStep = 0">返回上一步</el-button>
           </el-card>
         </div>
@@ -84,11 +99,16 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, type FormInstance } from 'element-plus'
 import { Promotion, User, Lock, Phone } from '@element-plus/icons-vue'
-import { useSysConfigStore } from '@/stores/sysConfig'
+import {
+  agentRegisterConfigApi,
+  agentRegisterApi,
+  agentRegisterOrderStatusApi,
+  type AgentRegisterConfig
+} from '@/api/agent'
 
-const sysConfig = useSysConfigStore()
 const activeStep = ref(0)
 const loading = ref(false)
+const configLoading = ref(true)
 
 const inviteFormRef = ref<FormInstance>()
 const inviteForm = reactive({
@@ -96,15 +116,18 @@ const inviteForm = reactive({
   username: '',
   password: '',
   confirm_password: '',
-  contact: ''
+  phone: ''
 })
 
 const inviteRules = {
   invite_code: [{ required: true, message: '请输入邀请码', trigger: 'blur' }],
-  username: [{ required: true, message: '请输入账号', trigger: 'blur' }],
+  username: [
+    { required: true, message: '请输入账号', trigger: 'blur' },
+    { min: 3, max: 64, message: '账号长度 3-64 字符', trigger: 'blur' }
+  ],
   password: [
     { required: true, message: '请输入密码', trigger: 'blur' },
-    { min: 8, message: '密码至少 8 位', trigger: 'blur' }
+    { min: 8, max: 64, message: '密码 8-64 位', trigger: 'blur' }
   ],
   confirm_password: [
     { required: true, message: '请确认密码', trigger: 'blur' },
@@ -118,45 +141,116 @@ const inviteRules = {
   ]
 }
 
-// 注册费从 sys_config 读取（铁律 05：禁止硬编码）
+// 配置（铁律 05：从 sys_config 后台读取，不硬编码）
+const config = reactive<AgentRegisterConfig>({
+  register_fee: 99.00,
+  pay_enabled: true,
+  pay_methods: ['alipay', 'wxpay', 'qqpay'],
+  order_expire_seconds: 1800
+})
+
+// 注册费与支付方式由后端 AgentRegisterConfig 接口统一返回
 const registerFee = ref(99.00)
-// 支付方式从 sys_config pay.platform.methods 读取
 const payMethods = ref([
   { label: '支付宝', value: 'alipay' },
   { label: '微信支付', value: 'wxpay' },
   { label: 'QQ 支付', value: 'qqpay' }
 ])
-const selectedMethod = ref('alipay')
+const selectedMethod = ref<'alipay' | 'wxpay' | 'qqpay'>('alipay')
+
+// 当前注册订单号（Step 1 提交后回填，Step 2 查询用）
+const currentOrderNo = ref('')
+// 支付 URL（Step 1 提交后回填，Step 2 跳转用）
+const currentPayURL = ref('')
+
+// 支付方式标签映射
+const payMethodLabel = (v: string): string => {
+  if (v === 'alipay') return '支付宝'
+  if (v === 'wxpay') return '微信支付'
+  if (v === 'qqpay') return 'QQ 支付'
+  return v
+}
 
 onMounted(async () => {
-  await sysConfig.load()
-  // TODO: 从 sys_config 真实读取注册费与支付方式
-  // registerFee.value = await getSysConfigValue('agent.register.fee', 99.00)
+  configLoading.value = true
+  try {
+    const data = await agentRegisterConfigApi()
+    config.register_fee = data.register_fee
+    config.pay_enabled = data.pay_enabled
+    config.pay_methods = data.pay_methods
+    config.order_expire_seconds = data.order_expire_seconds
+    registerFee.value = data.register_fee
+    // 按后端配置重建支付方式列表（铁律 04：不硬编码支付方式）
+    payMethods.value = data.pay_methods.map((v: string) => ({
+      label: payMethodLabel(v),
+      value: v
+    }))
+    if (payMethods.value.length > 0) {
+      selectedMethod.value = payMethods.value[0].value as 'alipay' | 'wxpay' | 'qqpay'
+    }
+  } catch (e: any) {
+    // 铁律 06：不编造数据，使用默认值并提示
+    ElMessage.warning('注册配置加载失败，使用默认值')
+  } finally {
+    configLoading.value = false
+  }
 })
 
-const verifyInviteCode = async () => {
+// Step 1 提交：调 AgentRegister 创建预支付订单 + 返回 pay_url
+const submitRegister = async () => {
   if (!inviteFormRef.value) return
   await inviteFormRef.value.validate(async (valid) => {
     if (!valid) return
     loading.value = true
     try {
-      // TODO: 调用后端校验邀请码 + 创建预支付订单
-      // await request.post('/agent/register/verify', inviteForm)
-      ElMessage.error('邀请码校验接口待实现')
-      return
+      const resp = await agentRegisterApi({
+        invite_code: inviteForm.invite_code,
+        username: inviteForm.username,
+        password: inviteForm.password,
+        phone: inviteForm.phone || undefined,
+        pay_type: selectedMethod.value
+      })
+      currentOrderNo.value = resp.order_no
+      currentPayURL.value = resp.pay_url
+      registerFee.value = resp.amount
+      activeStep.value = 1
+      ElMessage.success('订单已创建，请前往支付')
+    } catch (e: any) {
+      // 错误信息由 http 拦截器统一处理
     } finally {
       loading.value = false
     }
   })
 }
 
-const startPay = async () => {
+// Step 2 跳转到支付页面（新窗口，避免丢失原页面状态）
+const goToPay = () => {
+  if (!currentPayURL.value) {
+    ElMessage.error('支付 URL 为空，请返回上一步重新提交')
+    return
+  }
+  window.open(currentPayURL.value, '_blank')
+}
+
+// Step 2 查询订单状态（用户支付完成跳回后点击）
+const pollOrderStatus = async () => {
+  if (!currentOrderNo.value) {
+    ElMessage.error('订单号为空')
+    return
+  }
   loading.value = true
   try {
-    // TODO: 调用后端发起支付，跳转到易支付网关
-    // const resp = await request.post('/agent/register/pay', { ...inviteForm, method: selectedMethod.value })
-    // window.location.href = resp.pay_url
-    ElMessage.error('支付接口待实现')
+    const order = await agentRegisterOrderStatusApi(currentOrderNo.value)
+    if (order.pay_status === 'paid' && order.agent_id) {
+      ElMessage.success('支付成功，代理账号已创建')
+      activeStep.value = 2
+    } else if (order.pay_status === 'pending') {
+      ElMessage.warning('订单尚未支付，请在新打开的页面完成支付后再次查询')
+    } else {
+      ElMessage.error('订单状态异常：' + order.pay_status)
+    }
+  } catch (e: any) {
+    // 错误信息由 http 拦截器统一处理
   } finally {
     loading.value = false
   }

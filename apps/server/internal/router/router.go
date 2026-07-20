@@ -159,6 +159,8 @@ func Register(container *config.Container) *gin.Engine {
 
 		// 卡密管理
 		tenantAuth.GET("/cards", handler.TenantListCards(deps))
+		tenantAuth.GET("/cards/export", handler.TenantExportCardsCSV(deps))   // v0.3.6
+		tenantAuth.POST("/cards/import", handler.TenantImportCardsCSV(deps))  // v0.3.6
 		tenantAuth.GET("/cards/:id", handler.TenantGetCard(deps))
 		tenantAuth.POST("/cards/generate", handler.TenantGenerateCards(deps))
 		tenantAuth.POST("/cards/:id/ban", handler.TenantBanCard(deps))
@@ -276,6 +278,8 @@ func Register(container *config.Container) *gin.Engine {
 		publicGroup.POST("/auth/tenant/login", handler.TenantLogin(deps))
 		publicGroup.POST("/auth/agent/login", handler.AgentLogin(deps))
 		publicGroup.POST("/auth/agent/register", handler.AgentRegister(deps))
+		publicGroup.GET("/auth/agent/register/config", handler.AgentRegisterConfig(deps))               // v0.3.6
+		publicGroup.GET("/auth/agent/register/order/:order_no", handler.AgentRegisterOrderStatus(deps)) // v0.3.6
 		publicGroup.POST("/auth/refresh", handler.RefreshToken(deps)) // 三角色共用
 		publicGroup.GET("/notices/platform", handler.PublicPlatformNotices(deps))
 
@@ -283,6 +287,10 @@ func Register(container *config.Container) *gin.Engine {
 		publicGroup.GET("/apps/info", handler.PublicAppInfo(deps))    // 按 app_key 查应用公开信息
 		publicGroup.GET("/card_types", handler.PublicCardTypes(deps)) // 按 app_id 查可购卡类列表
 	}
+
+	// ----- 安装向导（无需鉴权，仅首次部署可用，v0.3.6） -----
+	v1.GET("/install/status", handler.InstallStatus(deps))
+	v1.POST("/install", handler.Install(deps))
 
 	// ----- 支付回调（无鉴权，靠签名校验） -----
 	payGroup := v1.Group("/pay")

@@ -1,6 +1,7 @@
 // 代理控制台 API
-// 对应后端路由：/api/v1/agent/*
+// 对应后端路由：/api/v1/agent/* + /api/v1/public/auth/agent/register/*
 // v0.3.1 已交付：dashboard / me / card_types / cards / orders / balance_logs / withdraw / recharge / notices
+// v0.3.6 新增：registerConfig / register / registerOrderStatus
 import { request } from './http'
 import type { CardStatus } from './cards'
 
@@ -220,4 +221,57 @@ export const listAgentNoticesApi = (params: { page?: number; page_size?: number;
 /** 标记通知为已读（POST /agent/notices/:id/read）—— v0.3.1 已实现 */
 export const readAgentNoticeApi = (id: number) => {
   return request.post(`/agent/notices/${id}/read`, {})
+}
+
+// ============== 代理注册（v0.3.6 新增） ==============
+
+/** 代理注册所需配置（未登录可读，不含敏感字段） */
+export interface AgentRegisterConfig {
+  register_fee: number
+  pay_enabled: boolean
+  pay_methods: string[] // ['alipay','wxpay','qqpay']
+  order_expire_seconds: number
+}
+
+/** 代理注册订单状态 */
+export type AgentRegisterOrderStatus = 'pending' | 'paid' | 'closed' | 'refunded'
+
+/** 代理注册订单详情 */
+export interface AgentRegisterOrder {
+  order_no: string
+  pay_status: AgentRegisterOrderStatus
+  amount: number
+  username: string
+  created_at: string
+  paid_at: string | null
+  agent_id?: number
+}
+
+/** 代理注册返回（含支付跳转 URL） */
+export interface AgentRegisterResult {
+  order_no: string
+  pay_url: string
+  amount: number
+  message: string
+}
+
+/** 读取代理注册配置（公开接口，未登录可调） */
+export const agentRegisterConfigApi = () => {
+  return request.get<AgentRegisterConfig>('/public/auth/agent/register/config')
+}
+
+/** 发起代理注册（创建预支付订单 + 返回 pay_url） */
+export const agentRegisterApi = (data: {
+  invite_code: string
+  username: string
+  password: string
+  phone?: string
+  pay_type: 'alipay' | 'wxpay' | 'qqpay'
+}) => {
+  return request.post<AgentRegisterResult>('/public/auth/agent/register', data)
+}
+
+/** 查询代理注册订单状态（支付完成跳回后调） */
+export const agentRegisterOrderStatusApi = (orderNo: string) => {
+  return request.get<AgentRegisterOrder>(`/public/auth/agent/register/order/${orderNo}`)
 }

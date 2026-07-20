@@ -336,8 +336,10 @@ func EpayNotify(deps *Deps) gin.HandlerFunc {
 			return
 		}
 
-		// 4. 处理订单（事务内完成：状态校验 + 自动发卡 + 抽成记录）
-		if err := processPaidOrder(deps, notify); err != nil {
+			// 4. 处理订单（按订单号前缀分发，v0.3.6 新增 REG 代理注册分支）
+		//    ORD → 卡密购买（processPaidOrder）
+		//    REG → 代理注册（processAgentRegisterPaid）
+		if err := dispatchPaidOrder(deps, notify); err != nil {
 			// 处理失败：释放锁以便重试
 			deps.Redis.Del(c.Request.Context(), lockKey)
 			c.String(200, "fail")
@@ -345,6 +347,19 @@ func EpayNotify(deps *Deps) gin.HandlerFunc {
 		}
 
 		c.String(200, "success")
+	}
+}
+
+// dispatchPaidOrder 按订单号前缀分发到对应业务处理器
+// 铁律 04：避免硬编码业务分发，集中在此路由
+func dispatchPaidOrder(deps *Deps, notify *epay.NotifyParams) error {
+	switch {
+	case strings.HasPrefix(notify.OutTradeNo, "REG"):
+		return processAgentRegisterPaid(deps, notify)
+	case strings.HasPrefix(notify.OutTradeNo, "ORD"):
+		return processPaidOrder(deps, notify)
+	default:
+		return fmt.Errorf("未知订单前缀: %s", notify.OutTradeNo)
 	}
 }
 
@@ -493,6 +508,149 @@ func processPaidOrder(deps *Deps, notify *epay.NotifyParams) error {
 	})
 
 	return txErr
+}
+
+// processAgentRegisterPaid 处理代理注册支付成功（v0.3.6 新增）
+// 流程（事务内，方案 B：先支付后建 Agent）：
+//  1. 查 AgentRegistrationOrder，校验金额 + 状态（pending → paid）
+//  2. 查邀请码 + 套餐，事务内重复 quota 校验防 TOCTOU
+//  3. 计算 bcrypt 哈希，INSERT Agent{Status: active, CommissionRate: 邀请码.DefaultCommissionRate}
+//  4. 回填 AgentRegistrationOrder.AgentID + PayStatus=paid + PaidAt + PayTradeNo
+//  5. 邀请码 used_count++，达 max_uses 时 status=exhausted，写 used_by_agent_id
+//  6. 注册费不进 PlatformSettlement（直接归平台，与卡密抽成解耦）
+func processAgentRegisterPaid(deps *Deps, notify *epay.NotifyParams) error {
+	// 1. 查订单
+	var order model.AgentRegistrationOrder
+	if err := deps.DB.Where("order_no = ?", notify.OutTradeNo).First(&order).Error; err != nil {
+		return fmt.Errorf("代理注册订单不存在: %w", err)
+	}
+
+	// 2. 校验金额
+	expectedMoney := strconv.FormatFloat(order.Amount, 'f', 2, 64)
+	if notify.Money != expectedMoney {
+		return fmt.Errorf("代理注册订单金额不匹配: 期望 %s，实际 %s", expectedMoney, notify.Money)
+	}
+
+	// 3. 幂等校验
+	if order.PayStatus == "paid" {
+		return nil
+	}
+	if order.PayStatus != "pending" {
+		return fmt.Errorf("代理注册订单状态异常: %s", order.PayStatus)
+	}
+
+	// 4. 查邀请码（含默认佣金比例）
+	var ic model.AgentInviteCode
+	if err := deps.DB.First(&ic, order.InviteCodeID).Error; err != nil {
+		return fmt.Errorf("邀请码不存在: %w", err)
+	}
+
+	// 5. 查开发者 + 套餐（事务内重复 quota 校验防 TOCTOU）
+	var tenant model.SysTenant
+	if err := deps.DB.First(&tenant, order.TenantID).Error; err != nil {
+		return fmt.Errorf("开发者不存在: %w", err)
+	}
+	var pkg model.SysPackage
+	if err := deps.DB.First(&pkg, tenant.PackageID).Error; err != nil {
+		return fmt.Errorf("套餐不存在: %w", err)
+	}
+
+	// 6. 计算密码 bcrypt 哈希（cost=12）
+	// 注意：密码明文存在订单创建时的会话里，但 AgentRegistrationOrder 未存（铁律 04：不存明文密码）
+	//       因此这里需要从订单 ClientIP + 时间戳反推不行——解决方案：在 AgentRegister handler 创建订单时，
+	//       把密码哈希缓存到 Redis（key=agent_register:pwd:{order_no}，TTL 30min），支付成功后取出
+	ctx := context.Background()
+	pwdHashKey := "agent_register:pwd:" + order.OrderNo
+	storedHash, err := deps.Redis.Get(ctx, pwdHashKey).Result()
+	if err == redis.Nil {
+		return fmt.Errorf("密码哈希缓存已过期，请联系开发者重新发起注册")
+	}
+	if err != nil {
+		return fmt.Errorf("读取密码哈希缓存失败: %w", err)
+	}
+
+	// 7. 事务：建 Agent + 回填订单 + 邀请码闭环
+	now := time.Now()
+	txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
+		// 7.1 事务内重复 quota 校验（防 TOCTOU）
+		var agentCount int64
+		if err := tx.Model(&model.Agent{}).Where("tenant_id = ?", order.TenantID).Count(&agentCount).Error; err != nil {
+			return fmt.Errorf("查询代理数失败: %w", err)
+		}
+		if pkg.MaxAgents <= 0 || int(agentCount) >= pkg.MaxAgents {
+			return fmt.Errorf("开发者代理数已达上限 %d，注册失败", pkg.MaxAgents)
+		}
+
+		// 7.2 重复用户名校验（防并发）
+		var nameExists int64
+		tx.Model(&model.Agent{}).Where("tenant_id = ? AND username = ?", order.TenantID, order.Username).Count(&nameExists)
+		if nameExists > 0 {
+			return fmt.Errorf("用户名 %s 已被占用", order.Username)
+		}
+
+		// 7.3 INSERT Agent（Status=active，可直接登录）
+		agent := &model.Agent{
+			TenantID:        order.TenantID,
+			Username:        order.Username,
+			PasswordHash:    storedHash,
+			Phone:           order.Phone,
+			Status:          "active",
+			Balance:         0,
+			CommissionRate:  ic.DefaultCommissionRate,
+			CommissionMode:  "percentage",
+			LastLoginAt:     nil,
+			LastLoginIP:     "",
+		}
+		if err := tx.Create(agent).Error; err != nil {
+			return fmt.Errorf("创建代理账号失败: %w", err)
+		}
+
+		// 7.4 回填 AgentRegistrationOrder
+		if err := tx.Model(&order).Updates(map[string]interface{}{
+			"agent_id":      agent.ID,
+			"pay_status":    "paid",
+			"pay_trade_no":  notify.TradeNo,
+			"paid_at":       now,
+		}).Error; err != nil {
+			return fmt.Errorf("回填订单失败: %w", err)
+		}
+
+		// 7.5 邀请码状态机闭环：used_count++，达 max_uses 时置 exhausted
+		newUsedCount := ic.UsedCount + 1
+		updates := map[string]interface{}{
+			"used_count":      newUsedCount,
+			"used_by_agent_id": agent.ID,
+		}
+		if newUsedCount >= ic.MaxUses {
+			updates["status"] = "exhausted"
+		}
+		if err := tx.Model(&ic).Updates(updates).Error; err != nil {
+			return fmt.Errorf("更新邀请码状态失败: %w", err)
+		}
+
+		return nil
+	})
+
+	if txErr != nil {
+		return txErr
+	}
+
+	// 8. 删除 Redis 中的密码哈希缓存（已用过，安全清理）
+	deps.Redis.Del(ctx, pwdHashKey)
+
+	// 9. 审计追溯：AgentRegistrationOrder 自身已记录订单号/username/tenant_id/amount/agent_id/paid_at，
+	//    邀请码 used_by_agent_id 也已写入，无需额外日志（避免回调上下文缺 OperatorID 等字段写入失败）
+
+	return nil
+}
+
+// cacheAgentRegisterPassword 临时缓存代理注册密码哈希到 Redis
+// TTL 30min（与 pay.order_expire_seconds 配置项联动可调）
+// 铁律 04：不存明文密码到 DB，仅短期缓存 bcrypt 哈希等支付回调使用
+func cacheAgentRegisterPassword(deps *Deps, orderNo, pwdHash string) error {
+	ctx := context.Background()
+	ttl := time.Duration(deps.CfgCache.GetInt64(ctx, "pay.order_expire_seconds", 1800)) * time.Second
+	return deps.Redis.Set(ctx, "agent_register:pwd:"+orderNo, pwdHash, ttl).Err()
 }
 
 // ============== EpayReturn 同步跳转 ==============

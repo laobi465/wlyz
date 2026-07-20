@@ -11,6 +11,102 @@
 
 ## [0.3.6] - 2026-07-20
 
+### [新增] 卡密封禁联动设备强制下线（#1）
+
+#### 后端
+- [新增] `apps/server/internal/handler/card.go` `TenantBanCard` 在卡密封禁后联动下线所有绑定设备：调 `heartbeat.Remove` 清 Redis 心跳 + DB 标记 `app_device.status='banned'` + `last_heartbeat_at=NULL`
+- [修复] 移除 `card.go:422` 的 `TODO(v0.3.0): 同时下线该卡密绑定的设备（清 Redis 心跳）` 占位
+- [新增] card.go 导入 `internal/heartbeat` 包
+
+#### 铁律遵守
+- 铁律 05：`heartbeat.Remove` 内部用 appID/deviceID 拼 Redis Key，无硬编码
+- 铁律 06：Redis 清理失败不阻塞封禁主流程（卡密已 banned，下次 verify 会因 card.status 拒绝）
+
+### [新增] 卡密 CSV 导入导出（#2）
+
+#### 后端
+- [新增] `apps/server/internal/handler/card.go` `TenantExportCardsCSV` 导出 CSV（支持 app_id/status/batch_no/keyword 过滤，最多 10000 条，UTF-8 BOM）
+- [新增] `apps/server/internal/handler/card.go` `TenantImportCardsCSV` 导入 CSV（前端解析后传 JSON 数组，事务批量入库，重复 hash 跳过并记失败明细）
+- [新增] card.go 辅助函数 `ptrTimeFmt` `min`
+- [新增] `apps/server/internal/router/router.go` 注册 `GET /api/v1/tenant/cards/export` + `POST /api/v1/tenant/cards/import`（注意：在 `cards/:id` 之前注册避免路由冲突）
+
+#### 前端
+- [新增] `apps/admin/src/api/cards.ts` `exportCardsApi`（用 axios blob 下载，带 Authorization Header 避免暴露 token）+ `importCardsApi` + `ImportCardsResult` 类型
+- [修改] `apps/admin/src/views/tenant/Cards.vue` 新增「导出 CSV」「导入 CSV」按钮 + 导入对话框（应用/卡类/前缀/分组/文件上传）+ 导入结果对话框（成功/失败/空行/重复统计 + 失败明细）
+
+#### 铁律遵守
+- 铁律 04：CSV 导出为真实数据，无硬编码假数据；前端用 blob 下载，token 不暴露在 URL/日志
+- 铁律 05：导出条数上限 `card.export.max_rows`（默认 10000）+ 导入条数上限 `card.import.max_rows`（默认 5000）从 sys_config 读取，禁硬编码
+- 铁律 06：导入失败明细返回前端，禁只报"成功"假象；事务回滚保护
+
+### [新增] 安装向导页面 `/install`（#3）
+
+#### 后端
+- [新增] `apps/server/internal/handler/install.go` `InstallStatus`（GET /api/v1/install/status）：通过 `sys_admin.password_hash` 是否含 `PLACEHOLDER_BCRYPT_HASH` 占位串判定 installed 状态，避免用 `count(*)` 误判（seed 已插入 1 行占位）
+- [新增] `install.go` `Install`（POST /api/v1/install）：接收超管账号密码 + 平台基础配置，事务写入：
+  - 更新 `sys_admin` id=1 占位行 → 真实 bcrypt 哈希（cost=12）+ 真实 username/email/phone
+  - upsert `sys_config` 平台基础项（`platform.domain` / `platform.name` / `platform.notify_email` / `agent.register_fee` / `pay.platform_commission_rate` / `platform.installed_at`）
+  - 二次校验已安装状态拒绝重入
+  - 调 `CfgCache.InvalidateAll` 刷新 Redis 缓存
+  - 异步记录操作日志（不含密码）
+- [新增] `install.go` 辅助函数 `checkInstalled` / `upsertConfig`
+- [新增] `apps/server/internal/router/router.go` 注册 `v1.GET("/install/status")` + `v1.POST("/install")`（无需鉴权，仅首次部署可用）
+
+#### 前端
+- [新增] `apps/admin/src/api/http.ts` `installStatusApi` / `installApi` + `InstallStatus` / `InstallPayload` / `InstallResult` 类型（直接调 http 实例，绕过 token 拦截器）
+- [新增] `apps/admin/src/views/Install.vue` 4 步向导（环境检测 → 超管账号 → 平台配置 → 完成）+ `el-steps` 进度条 + 表单校验（密码确认一致性、邮箱格式）+ `el-result` 成功提示
+- [新增] `apps/admin/src/router/index.ts` `/install` 路由（public，无需登录）
+
+#### 铁律遵守
+- 铁律 04：超管密码不硬编码，由安装表单传入；bcrypt cost=12 哈希后入库
+- 铁律 05：所有平台配置写入 `sys_config` 表 + Redis 缓存，不写入代码或 .env
+- 铁律 06：已安装检测用占位串而非 `count(*)`，避免 seed 数据导致误判；二次校验防并发安装
+
+### [新增] 代理注册付费流程（#4）
+
+#### 设计方案
+采用**方案 B：先支付后建 Agent**，避免引入 `pending_payment` 状态破坏 `AgentLogin` 现有 `status != "active"` 不变量。代理行仅在支付回调事务内创建且 `Status="active"`，可直接登录。
+
+#### 后端
+- [新增] `apps/server/internal/handler/auth.go` `AgentRegister`（POST /api/v1/public/auth/agent/register）：
+  - 校验邀请码（`status=active` + `used_count < max_uses` + `expires_at > now`）
+  - 校验用户名在所属租户内唯一
+  - `quota.CheckMaxAgents` 校验套餐代理数上限（第一道防线）
+  - 读 `sys_config` `agent.register.fee` 注册费（默认 99.00）
+  - bcrypt 哈希密码（cost=12），缓存到 Redis（`agent_register:pwd:{order_no}`，TTL=`pay.order_expire_seconds` 默认 1800s）
+  - 创建 `AgentRegistrationOrder`（订单号前缀 `REG`，`PayStatus=pending`，`AgentID=nil` 占位）
+  - 调 `epay.BuildSubmitURL` 返回 `pay_url`
+- [新增] `auth.go` `AgentRegisterConfig`（GET /api/v1/public/auth/agent/register/config）：公开返回注册费 + 支付方式 + 平台支付开关，不返回敏感字段（gateway_url/pid/key_encrypted）
+- [新增] `auth.go` `AgentRegisterOrderStatus`（GET /api/v1/public/auth/agent/register/order/:order_no）：前端支付完成跳回后查询订单状态
+- [改造] `apps/server/internal/handler/pay.go` `EpayNotify` 引入 `dispatchPaidOrder` 按订单号前缀分发：
+  - `ORD` → 现有 `processPaidOrder`（卡密购买）
+  - `REG` → 新 `processAgentRegisterPaid`（代理注册）
+- [新增] `pay.go` `processAgentRegisterPaid` 事务内：
+  - 校验订单状态/金额（防伪造）
+  - 幂等保护（已 paid 直接返回）
+  - 事务内重复 `quota` 校验防 TOCTOU（套餐上限 + 用户名重复）
+  - INSERT `Agent{Status: "active", CommissionRate: 邀请码.DefaultCommissionRate, CommissionMode: "percentage"}`
+  - 回填 `AgentRegistrationOrder.AgentID` + `PayStatus=paid` + `PaidAt` + `PayTradeNo`
+  - 邀请码 `used_count++`，达 `max_uses` 时 `status=exhausted` + 写 `used_by_agent_id`（补齐 exhausted 状态从未被写入的逻辑漏洞）
+  - 删除 Redis 中的密码哈希缓存（已用过，安全清理）
+  - 注册费不进 `PlatformSettlement`（直接归平台，与卡密抽成解耦）
+- [新增] `pay.go` `cacheAgentRegisterPassword` 辅助函数（铁律 04：DB 不存明文密码也不存哈希到订单表，仅短期缓存 bcrypt 哈希等回调使用）
+- [修复] `apps/server/internal/handler/install.go` 配置键名 bug：`agent.register_fee` → `agent.register.fee`（与 `migrations/002_seed_data.up.sql` 保持一致，下划线改点号）；`pay.platform_commission_rate` → `pay.platform.commission_rate`
+- [新增] `apps/server/internal/router/router.go` 注册 3 个公开路由：`POST /auth/agent/register` + `GET /auth/agent/register/config` + `GET /auth/agent/register/order/:order_no`（无需鉴权）
+
+#### 前端
+- [新增] `apps/admin/src/api/agent.ts` 三个注册相关 API + 类型：`agentRegisterConfigApi` / `agentRegisterApi` / `agentRegisterOrderStatusApi` + `AgentRegisterConfig` / `AgentRegisterResult` / `AgentRegisterOrder` 类型
+- [改造] `apps/admin/src/views/agent/Register.vue` 落地原 3 处 TODO：
+  - `onMounted` 调 `agentRegisterConfigApi` 读 `register_fee` + `pay_methods` + `pay_enabled`，按后端配置重建支付方式列表（铁律 04：不硬编码支付方式）
+  - Step 1 提交调 `agentRegisterApi` 创建预支付订单 + 返回 `pay_url`，缓存订单号 + pay_url 到本地
+  - Step 2 「前往支付页面」用 `window.open(payURL, '_blank')` 新窗口跳转避免丢失原页面状态；「我已完成支付，查询状态」按钮调 `agentRegisterOrderStatusApi` 轮询订单状态
+  - 当 `pay_enabled=false` 时禁用提交按钮 + 显示红色告警
+
+#### 铁律遵守
+- 铁律 04：密码明文不入库，仅短期缓存 bcrypt 哈希到 Redis；订单号前缀 `REG` 与 `ORD` 区分业务；支付方式不硬编码，从 `pay.platform.methods` 读取
+- 铁律 05：注册费从 `agent.register.fee` 读取；订单过期时间从 `pay.order_expire_seconds` 读取；商品名前缀从 `pay.platform.order_name_prefix` 读取
+- 铁律 06：事务内重复 quota 校验防 TOCTOU；邀请码状态机闭环（达 max_uses 时置 exhausted，补齐旧逻辑漏洞）；二次用户名校验防并发；AgentRegisterConfig 不返回敏感字段
+
 ### [文档] 四份核心文档 + README + PROMPT 全量同步对齐 v0.3.5 实际状态
 
 本次发布为纯文档同步，按 `web-project-flow` skill 的 `references/09-docs-lifecycle.md` 规范联动更新，消除多份文档与代码实际状态不一致的矛盾。配套 `web-project-flow` skill 已全局安装。

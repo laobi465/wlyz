@@ -1,6 +1,6 @@
 // 卡类与卡密管理 API
 // 对应后端路由：/api/v1/tenant/card_types/*, /api/v1/tenant/cards/*
-import { request } from './http'
+import http, { request } from './http'
 
 export type CardTypeKind = 'duration' | 'count' | 'permanent' | 'trial' | 'feature'
 
@@ -111,4 +111,41 @@ export const unbanCardApi = (id: number) => {
 
 export const deleteCardApi = (id: number) => {
   return request.delete(`/tenant/cards/${id}`)
+}
+
+// ============== 卡密 CSV 导出/导入（v0.3.6） ==============
+
+export const exportCardsApi = (params: {
+  app_id?: number
+  status?: CardStatus
+  batch_no?: string
+  keyword?: string
+}) => {
+  // 用 axios blob 下载（带 Authorization Header，避免 token 暴露在 URL/日志）
+  // 响应拦截器返回 data，blob 模式下 data 即 Blob
+  return http.get<Blob>('/tenant/cards/export', {
+    params,
+    responseType: 'blob'
+  }) as unknown as Promise<Blob>
+}
+
+export interface ImportCardsResult {
+  batch_no: string
+  success_count: number
+  failed_count: number
+  empty_count: number
+  dup_count: number
+  failed: Array<{ row: number; card_key: string; reason: string }>
+}
+
+export const importCardsApi = (data: {
+  app_id: number
+  card_type_id: number
+  prefix?: string
+  group_tag?: string
+  duration_seconds?: number
+  max_uses?: number
+  cards: string[]
+}) => {
+  return request.post<ImportCardsResult>('/tenant/cards/import', data)
 }

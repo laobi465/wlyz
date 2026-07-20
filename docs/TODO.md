@@ -127,9 +127,9 @@
 - [x] [已完成] 开发者生成邀请码（D-08） - v0.3.0
 - [x] [已完成] 邀请码 CRUD + 状态机（active/disabled/exhausted/expired） - v0.3.0
 - [x] [已完成] 代理注册页（REG-01，3 步流程）前端骨架 - v0.2.4
-- [ ] [待开始] 代理注册费支付（走平台总支付，auth.go:443 AgentRegister 仍为 501 占位） - v0.3.6
-- [ ] [待开始] 代理账号自动创建 + 关联开发者 - v0.3.6
-- [ ] [待开始] 超管后台代理注册管理（S-17） - v0.3.6
+- [x] [已完成 2026-07-20] 代理注册费支付（走平台总支付，AgentRegister 创建 REG 订单 + 返回 pay_url） - v0.3.6
+- [x] [已完成 2026-07-20] 代理账号自动创建 + 关联开发者（processAgentRegisterPaid 事务内建 Agent + 回填 AgentID + 邀请码 used_count++） - v0.3.6
+- [ ] [待开始] 超管后台代理注册管理（S-17，含退款/收入统计） - v0.3.6
 
 #### 代理购买卡密
 - [x] [已完成] 代理充值申请（P-09） - v0.3.0（v0.3.1 AgentRecharge + v0.3.2 审核闭环）
@@ -470,7 +470,7 @@
 | v0.3.3 | 2026-07-19 | ✅ 已完成（日志系统：异步 Worker + 三表独立查询 + CSV 导出 + 前端 3 Tab 升级） |
 | v0.3.4 | 2026-07-19 | ✅ 已完成（结算与对账闭环：开发者 balance/frozen_balance + tenant_balance_log + tenant_withdraw + 批量结算 + 对账报表 + 双审核页面） |
 | v0.3.5 | 2026-07-19 | ✅ 已完成（P0 修复：RSA 脚本 / 数据库迁移 / H5 公共 API / 套餐配额） |
-| v0.3.6 | 待定 | [进行中] 剩余 P1 收尾（文档同步 + 卡密 CSV + 设备强制下线 + 安装向导 + 代理注册付费 + 开发者自有易支付 + SDK 三语言） |
+| v0.3.6 | 待定 | [进行中] 剩余 P1 收尾（文档同步 + 卡密 CSV + 设备强制下线 + 安装向导 + 代理注册付费 ✓ + 开发者自有易支付 + SDK 三语言） |
 | v0.4.0 | 待定 | [待开始] 三期商业化 |
 
 ---
@@ -504,16 +504,16 @@
 ### 待完成项（约 19 项）
 
 **v0.3.6 剩余 P1 收尾（约 10 项）**：
-- 卡密 CSV 导入导出
-- 设备强制下线（清 Redis 心跳，card.go:422 TODO）
-- 安装向导页面（/install）
-- 代理注册付费流程（auth.go:443 AgentRegister + Register.vue 三处 TODO）
-- 开发者自有易支付回调实现（pay.go:528 EpayTenantNotify）
-- 双层支付模式切换逻辑
-- 套餐 allow_custom_pay 字段生效
-- 客户端 SDK（Python / Node.js / PHP 三语言）
-- 单元测试 + 集成测试
-- v0.3.6 文档同步（本次）
+- [x] [已完成 2026-07-20] 卡密 CSV 导入导出（card.go 新增 TenantExportCardsCSV/TenantImportCardsCSV + 前端 Cards.vue 导出/导入对话框）
+- [x] [已完成 2026-07-20] 设备强制下线（card.go TenantBanCard 联动 heartbeat.Remove 清 Redis 心跳 + DB 标记 banned）
+- [x] [已完成 2026-07-20] 安装向导页面（/install，后端 install.go InstallStatus/Install + 前端 Install.vue 4 步向导 + 路由）
+- [x] [已完成 2026-07-20] 代理注册付费流程（AgentRegister 创建 REG 订单 + processAgentRegisterPaid 事务建 Agent + 邀请码状态机闭环 + Register.vue 落地 3 处 TODO + 修 install.go 配置键名 bug）
+- [ ] [待开始] 开发者自有易支付回调实现（pay.go:528 EpayTenantNotify）
+- [ ] [待开始] 双层支付模式切换逻辑
+- [ ] [待开始] 套餐 allow_custom_pay 字段生效
+- [ ] [待开始] 客户端 SDK（Python / Node.js / PHP 三语言）
+- [ ] [待开始] 单元测试 + 集成测试
+- [x] [已完成 2026-07-20] v0.3.6 文档同步
 
 **v0.4.x 三期商业化（约 9 项）**：
 - 多级代理（二级 + 三级 + 跨级佣金）
@@ -528,6 +528,6 @@
 
 ---
 
-**文档版本**：0.3.5  
+**文档版本**：0.3.6  
 **最后更新**：2026-07-20  
 **维护者**：KeyAuth SaaS Team

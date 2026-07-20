@@ -151,3 +151,40 @@ export const request = {
     return http.delete<any, T>(url, { params, ...config })
   }
 }
+
+// ============== 安装向导（v0.3.6，无需 token） ==============
+// 铁律 04：直接调 http 实例，绕过 request 拦截器的 token 注入
+
+export interface InstallStatus {
+  installed: boolean
+  admin_name: string
+  domain: string
+  server_time: string
+}
+
+export interface InstallPayload {
+  admin_username: string
+  admin_password: string
+  admin_email?: string
+  admin_phone?: string
+  platform_domain?: string
+  platform_name?: string
+  notify_email?: string
+  agent_register_fee?: string
+  platform_commission?: string
+}
+
+export interface InstallResult {
+  installed: boolean
+  admin_name: string
+  installed_at: string
+  message: string
+}
+
+export const installStatusApi = () => {
+  return http.get<any, InstallStatus>('/install/status')
+}
+
+export const installApi = (data: InstallPayload) => {
+  return http.post<any, InstallResult>('/install', data)
+}

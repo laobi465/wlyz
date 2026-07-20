@@ -31,6 +31,14 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '登录', public: true }
   },
 
+  // 安装向导（v0.3.6，首次部署用）
+  {
+    path: '/install',
+    name: 'Install',
+    component: lazy(() => import('@/views/Install.vue')),
+    meta: { title: '安装向导', public: true }
+  },
+
   // 开发者注册
   {
     path: '/register/tenant',
