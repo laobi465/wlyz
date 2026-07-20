@@ -59,15 +59,33 @@ http.interceptors.response.use(
       if (data.code === 0 || data.code === 200) {
         return data.data ?? data
       }
-      // 业务错误
-      ElMessage.error(data.message || `请求失败：${data.code}`)
-      return Promise.reject(new Error(data.message || 'biz error'))
+      // 业务错误：构造带 code 的错误对象，便于调用方按 code 分支处理
+      // （例如登录时 1007 = 需要 2FA，前端据此显示 TOTP 输入框）
+      const bizErr: any = new Error(data.message || 'biz error')
+      bizErr.code = data.code
+      bizErr.message = data.message
+      // 2FA 相关错误码不弹全局错误提示（由调用方处理）
+      if (data.code !== 1007) {
+        ElMessage.error(data.message || `请求失败：${data.code}`)
+      }
+      return Promise.reject(bizErr)
     }
     return data
   },
   async (err) => {
     const originalRequest = err.config as InternalAxiosRequestConfig & { _retry?: boolean }
     const status = err.response?.status
+
+    // 登录/注册接口的 401/403：直接把后端 code+message 抛给调用方，不触发 refresh / 登出
+    // （例如 1007 = 需要 2FA，1008 = 未绑定 2FA，1xxx = 账号锁定等）
+    if ((status === 401 || status === 403) && /\/public\/auth\/(admin|tenant|agent)\/(login|register)/.test(originalRequest.url || '')) {
+      const respData = err.response?.data
+      const bizErr: any = new Error(respData?.message || '登录失败')
+      bizErr.code = respData?.code
+      bizErr.message = respData?.message
+      bizErr.status = status
+      return Promise.reject(bizErr)
+    }
 
     if (status === 401) {
       // H5 终端用户请求：使用 enduser store 处理续期/登出

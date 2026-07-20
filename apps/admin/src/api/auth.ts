@@ -78,10 +78,13 @@ export const refreshTokenApi = (refreshToken: string) => {
 
 /** 当前用户信息 */
 export const currentUserApi = (role: UserRole) => {
-  return request.get(`/api/v1/${role}/auth/me`)
+  // 注意：axios baseURL 已是 /api/v1，这里不要再加 /api/v1 前缀（否则双重前缀 → 404）
+  return request.get(`/${role}/auth/me`)
 }
 
-/** 登出（黑名单 refresh_token） */
-export const logoutApi = (role: UserRole) => {
-  return request.post(`/api/v1/${role}/auth/logout`, {})
+/** 登出（黑名单 refresh_token）
+ *  注意：后端 Logout 要求 body 传 refresh_token（binding:"required"）
+ */
+export const logoutApi = (role: UserRole, refreshToken: string) => {
+  return request.post(`/${role}/auth/logout`, { refresh_token: refreshToken })
 }

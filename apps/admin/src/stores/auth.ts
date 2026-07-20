@@ -113,9 +113,9 @@ export const useAuthStore = defineStore('auth', {
         clearTimeout(this._refreshTimer)
         this._refreshTimer = null
       }
-      if (this.accessToken && this.role) {
+      if (this.accessToken && this.role && this.refreshToken) {
         try {
-          await logoutApi(this.role)
+          await logoutApi(this.role, this.refreshToken)
         } catch {
           // 静默失败：本地态仍要清空
         }

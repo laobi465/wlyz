@@ -8,7 +8,8 @@ import type { CardStatus } from './cards'
 // ============== 类型定义 ==============
 
 export interface AgentProfile {
-  id: number
+  // 后端 agentProfile.AgentID 的 json tag 是 "agent_id"
+  agent_id: number
   username: string
   tenant_id: number
   tenant_name?: string

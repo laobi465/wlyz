@@ -99,7 +99,9 @@ export const listLoginDevicesApi = (role: UserRole) => {
   return request.get<{ list: LoginDevice[] }>(`/${role}/auth/devices`)
 }
 
-/** 踢指定设备下线（DELETE /{role}/auth/devices/:id）—— v0.3.1 已实现 */
+/** 踢指定设备下线
+ *  后端路由：POST /{role}/auth/devices/:id/kick（注意是 POST 不是 DELETE，路径有 /kick 后缀）
+ */
 export const kickDeviceApi = (role: UserRole, id: number) => {
-  return request.delete(`/${role}/auth/devices/${id}`)
+  return request.post(`/${role}/auth/devices/${id}/kick`, {})
 }

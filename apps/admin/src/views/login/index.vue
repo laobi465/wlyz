@@ -134,16 +134,11 @@ const handleLogin = async () => {
     try {
       const resp = await loginApi(activeRole.value, {
         username: form.username,
-        password: form.password
+        password: form.password,
+        // 单阶段 2FA：如果用户已输入 totp_code，一起提交
+        // 后端 doLogin 逻辑：已绑定 2FA 的账号必须传 totp_code，否则返回 1007
+        ...(totpCode.value ? { totp_code: totpCode.value } : {})
       })
-
-      // 二阶段：后端要求 2FA
-      if (resp.totp_required && resp.temp_token) {
-        tempToken.value = resp.temp_token
-        totpRequired.value = true
-        ElMessage.info(t('login.totpRequired'))
-        return
-      }
 
       // 登录成功
       auth.setAuth({
@@ -160,7 +155,13 @@ const handleLogin = async () => {
       const redirect = (route.query.redirect as string) || auth.homePath
       router.replace(redirect)
     } catch (e: any) {
-      // 错误已由 http 拦截器处理
+      // 后端返回 1007 = 动态验证码错误或已过期（账号已绑定 2FA 但未传 totp_code）
+      // 显示 TOTP 输入框，让用户输入后重新提交（不需要 temp_token，单阶段流程）
+      if (e?.code === 1007 && !totpRequired.value) {
+        totpRequired.value = true
+        ElMessage.info(t('login.totpRequired'))
+      }
+      // 其他错误已由 http 拦截器处理
     } finally {
       loading.value = false
     }
@@ -172,33 +173,8 @@ const handleTotpVerify = async () => {
     ElMessage.warning(t('login.totpInvalid'))
     return
   }
-  loading.value = true
-  try {
-    const resp = await loginApi(activeRole.value, {
-      username: form.username,
-      password: form.password,
-      temp_token: tempToken.value,
-      totp_code: totpCode.value
-    })
-
-    auth.setAuth({
-      access_token: resp.access_token,
-      refresh_token: resp.refresh_token,
-      role: activeRole.value,
-      userId: resp.user?.id,
-      username: resp.user?.username,
-      tenantId: resp.user?.tenant_id,
-      expires_at: resp.expires_at
-    })
-    ElMessage.success(t('login.success'))
-
-    const redirect = (route.query.redirect as string) || auth.homePath
-    router.replace(redirect)
-  } catch {
-    // 错误已由 http 拦截器处理
-  } finally {
-    loading.value = false
-  }
+  // 单阶段：直接调 handleLogin，它会带上 totp_code 重新提交
+  await handleLogin()
 }
 
 const cancelTotp = () => {

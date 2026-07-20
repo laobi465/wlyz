@@ -49,11 +49,19 @@ type refreshReq struct {
 }
 
 type loginResp struct {
-	TokenPair   *auth.TokenPair `json:"token_pair"`
-	User        userInfo        `json:"user"`
-	Require2FA  bool            `json:"require_2fa"`   // true 表示需要二次验证，TokenPair 为空
-	TOTPSecret  string          `json:"totp_secret,omitempty"`  // 仅首次绑定 2FA 时返回
-	OTPAUTHURL  string          `json:"otpauth_url,omitempty"`  // 仅首次绑定 2FA 时返回
+	// 扁平 token 字段（与前端契约一致：apps/admin/src/api/auth.ts LoginResp）
+	// 注意：expires_at 是绝对 Unix 时间戳（秒），不是相对秒数 expires_in
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresAt    int64  `json:"expires_at"` // access token 过期绝对时间戳（秒）
+	RefreshAt    int64  `json:"refresh_at"` // refresh token 过期绝对时间戳（秒）
+	TokenType    string `json:"token_type"`
+	User         userInfo `json:"user"`
+	// 2FA 相关（与前端 totp_required 对齐）
+	Require2FA bool   `json:"totp_required"` // true 表示需要二次验证，token 字段为空
+	TOTPSecret string `json:"totp_secret,omitempty"`
+	OTPAUTHURL string `json:"otpauth_url,omitempty"`
+	TempToken  string `json:"temp_token,omitempty"` // 2FA 二阶段临时令牌
 }
 
 type userInfo struct {
@@ -269,7 +277,11 @@ func doLogin(
 	_ = auth.ClearLoginFailure(ctx, deps.Redis, role, req.Username)
 
 	middleware.Success(c, loginResp{
-		TokenPair: tokenPair,
+		AccessToken:  tokenPair.AccessToken,
+		RefreshToken: tokenPair.RefreshToken,
+		ExpiresAt:    time.Now().Unix() + tokenPair.ExpiresIn,
+		RefreshAt:    time.Now().Unix() + tokenPair.RefreshIn,
+		TokenType:    tokenPair.TokenType,
 		User: userInfo{
 			ID:       id,
 			Username: req.Username,
@@ -465,7 +477,11 @@ func TenantRegister(deps *Deps) gin.HandlerFunc {
 		c.Request.Header.Get("User-Agent"), params.RefreshTTL)
 
 		middleware.Success(c, gin.H{
-			"token_pair": tokenPair,
+			"access_token":  tokenPair.AccessToken,
+			"refresh_token": tokenPair.RefreshToken,
+			"expires_at":    time.Now().Unix() + tokenPair.ExpiresIn,
+			"refresh_at":    time.Now().Unix() + tokenPair.RefreshIn,
+			"token_type":    tokenPair.TokenType,
 			"user": userInfo{
 				ID:       tenant.ID,
 				Username: tenant.Username,
@@ -473,9 +489,9 @@ func TenantRegister(deps *Deps) gin.HandlerFunc {
 				TenantID: tenant.ID,
 				Status:   tenant.Status,
 			},
-			"package_id":  packageID,
-			"trial_days":  trialDays,
-			"expires_at":  expiresAt,
+			"package_id":       packageID,
+			"trial_days":       trialDays,
+			"subscription_expires_at": expiresAt, // 租户订阅过期时间（区别于 token 过期）
 		})
 	}
 }
@@ -768,7 +784,13 @@ func RefreshToken(deps *Deps) gin.HandlerFunc {
 			_ = revokeSessionByJTI(deps, claims.Role, claims.UserID, claims.ID)
 		}
 
-		middleware.Success(c, gin.H{"token_pair": tokenPair})
+		middleware.Success(c, gin.H{
+			"access_token":  tokenPair.AccessToken,
+			"refresh_token": tokenPair.RefreshToken,
+			"expires_at":    time.Now().Unix() + tokenPair.ExpiresIn,
+			"refresh_at":    time.Now().Unix() + tokenPair.RefreshIn,
+			"token_type":    tokenPair.TokenType,
+		})
 	}
 }
 

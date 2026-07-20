@@ -194,9 +194,11 @@ export interface TenantInviteCode {
   created_at: string
 }
 
-/** 邀请码列表（GET /tenant/invite_codes）—— v0.3.1 已实现 */
+/** 邀请码列表（GET /tenant/agents/invite_codes）—— v0.3.1 已实现
+ *  修复：后端实际路径是 /tenant/agents/invite_codes（在 agents 子组下），不是 /tenant/invite_codes
+ */
 export const listTenantInviteCodesApi = (params: { page?: number; page_size?: number; status?: string }) => {
-  return request.get<{ list: TenantInviteCode[]; total: number }>('/tenant/invite_codes', params)
+  return request.get<{ list: TenantInviteCode[]; total: number }>('/tenant/agents/invite_codes', params)
 }
 
 /** 生成邀请码（POST /tenant/agents/invite_codes）—— v0.3.1 已实现 */
@@ -204,9 +206,11 @@ export const genTenantInviteCodeApi = (data: { count?: number; expire_days?: num
   return request.post<{ codes: TenantInviteCode[] }>('/tenant/agents/invite_codes', data)
 }
 
-/** 禁用邀请码（POST /tenant/invite_codes/:id/disable）—— v0.3.1 已实现 */
+/** 禁用邀请码（POST /tenant/agents/invite_codes/:id/disable）—— v0.3.1 已实现
+ *  修复：后端实际路径是 /tenant/agents/invite_codes/:id/disable
+ */
 export const disableTenantInviteCodeApi = (id: number) => {
-  return request.post(`/tenant/invite_codes/${id}/disable`, {})
+  return request.post(`/tenant/agents/invite_codes/${id}/disable`, {})
 }
 
 // ============== 支付配置 ==============
@@ -237,9 +241,11 @@ export const saveTenantPayConfigApi = (data: { channel: string; config: Record<s
   return request.post<TenantPayConfig>('/tenant/pay_config', data)
 }
 
-/** 测试开发者支付配置（POST /tenant/pay_config/:id/test）—— v0.3.1 已实现 */
-export const testTenantPayConfigApi = (id: number) => {
-  return request.post<{ success: boolean; message: string }>(`/tenant/pay_config/${id}/test`, {})
+/** 测试开发者支付配置（POST /tenant/pay_config/test）
+ *  修复：后端实际路径是 /tenant/pay_config/test（无 :id 参数，channel 通过 body 传）
+ */
+export const testTenantPayConfigApi = (channel: string) => {
+  return request.post<{ success: boolean; message: string }>('/tenant/pay_config/test', { channel })
 }
 
 // ============== 公告（开发者发布给代理/H5） ==============

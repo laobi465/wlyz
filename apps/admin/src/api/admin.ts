@@ -327,9 +327,11 @@ export interface IpBlacklistItem {
   created_at: string
 }
 
-/** 安全看板（GET /admin/security）—— v0.3.1 已实现 */
+/** 安全看板（GET /admin/security/stats）
+ *  修复：后端实际路径是 /admin/security/stats（不是 /admin/security）
+ */
 export const adminSecurityStatsApi = () => {
-  return request.get<AdminSecurityStats>('/admin/security')
+  return request.get<AdminSecurityStats>('/admin/security/stats')
 }
 
 /** IP 黑名单列表（GET /admin/security/ip_blacklist）—— v0.3.1 已实现 */

@@ -390,7 +390,8 @@ func TenantGetCard(deps *Deps) gin.HandlerFunc {
 // ============== 卡密封禁/解封 ==============
 
 type banCardReq struct {
-	Reason string `json:"reason" binding:"required,max=255"`
+	// reason 改为可选（omitempty），前端可能不传 reason
+	Reason string `json:"reason" binding:"omitempty,max=255"`
 }
 
 // TenantBanCard 封禁卡密

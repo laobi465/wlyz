@@ -228,7 +228,7 @@ const submit = async () => {
 const test = async (row: any) => {
   testingId.value = row.id
   try {
-    const resp = await testTenantPayConfigApi(row.id)
+    const resp = await testTenantPayConfigApi(row.channel)
     if (resp.success) {
       ElMessage.success(resp.message || '测试成功')
     } else {

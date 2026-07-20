@@ -203,12 +203,8 @@ const handleCommand = async (cmd: string) => {
     if (props.onLogout) {
       await props.onLogout()
     } else {
-      // 默认行为：尝试调用后端登出（失败也强制清除本地态）
-      try {
-        const { logoutApi } = await import('@/api/auth')
-        await logoutApi(props.routePrefix.slice(1) as 'admin' | 'tenant' | 'agent')
-      } catch { /* 静默 */ }
-      auth.logout()
+      // 默认行为：调用 auth.logout()（内部会调 logoutApi 并传 refresh_token）
+      await auth.logout()
       router.push('/login')
     }
   } else if (cmd === 'profile') {
