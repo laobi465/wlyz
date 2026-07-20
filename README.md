@@ -2,23 +2,70 @@
 
 > 面向开发者的多租户卡密验证 SaaS 平台
 
-[![Version](https://img.shields.io/badge/version-0.4.0-blue.svg)](docs/CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.6.0-blue.svg)](docs/CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Proprietary-red.svg)](#许可证)
 [![Go](https://img.shields.io/badge/Go-1.22+-00ADD8.svg)](https://golang.org)
 [![Vue](https://img.shields.io/badge/Vue-3.4+-42b883.svg)](https://vuejs.org)
+[![Deploy](https://img.shields.io/badge/deploy-one--click-success.svg)](#一键部署)
 
 ## 项目简介
 
 KeyAuth SaaS 是一个多租户卡密验证 SaaS 平台，借鉴布丁卡密的安全设计理念，为软件开发者提供：
 
 - **在线验证 + 一机一卡**：HMAC-SHA256 签名 + RSA-4096 响应签名 + 硬件指纹绑定
-- **多层支付体系**：平台总支付（默认）+ 开发者自定义易支付（按套餐开通）
+- **多层支付体系**：平台总支付（默认）+ 开发者自定义易支付（按套餐开通）+ 海外支付（USDT/PayPal/Stripe）
 - **三级公告系统**：平台公告 / 开发者公告 / 应用公告 同时显示
-- **代理分销体系**：开发者邀请码 + 注册费 + 佣金分成（按比例/按差价）
+- **代理分销体系**：开发者邀请码 + 注册费 + 多级佣金分成（按比例/按差价/跨级分润）
 - **后台可视化配置**：所有可变参数走 `sys_config` 表，无需重启即时生效
 - **响应式 H5 全栈**：管理后台 / 开发者控制台 / 代理中心 / 官网 / 终端用户 H5 全部响应式适配
+- **高级分析体系**：用户行为画像 + 卡密使用画像 + 风险用户识别 + 24h 异常模式检测 + 自动封禁候选
 
-## 当前版本（v0.4.0 进行中，v0.3.6 已完成）
+## 一键部署
+
+> 全新服务器？只需 SSH 连接后执行下面这一行命令，脚本会自动完成：检测系统 → 安装宝塔（若未装）→ 安装 Docker（若未装）→ 拉取源码 → 生成密钥 → 构建启动。
+
+### 远程一行命令（推荐，适合全新服务器）
+
+```bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/laobi465/wlyz/main/scripts/one_click_deploy.sh)"
+```
+
+### 先下载后执行（适合需审查脚本或网络不稳定）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/laobi465/wlyz/main/scripts/one_click_deploy.sh -o one_click_deploy.sh
+sudo bash one_click_deploy.sh
+```
+
+### 已 clone 项目内执行
+
+```bash
+sudo bash scripts/one_click_deploy.sh
+```
+
+**脚本执行流程（约 8-15 分钟）**：
+
+| 步骤 | 操作 | 说明 |
+|---|---|---|
+| 1 | 检测操作系统 | 自动识别 CentOS/Ubuntu/Debian 系 |
+| 2 | 安装基础工具 | curl / wget / openssl / git |
+| 3 | 检测/安装宝塔面板 | 未装则拉取宝塔官方脚本自动安装 |
+| 4 | 检测/安装 Docker | 优先用宝塔脚本，回退 Docker 官方脚本（阿里云镜像） |
+| 5 | 拉取/更新项目源码 | git clone 到 `/www/wwwroot/keyauth` |
+| 6 | 生成 RSA-4096 密钥对 | 响应签名用，现场生成不进仓库 |
+| 7 | 生成 `.env` 配置 | 自动填充强随机密钥（MySQL/Redis/AES/JWT） |
+| 8 | `docker compose up -d --build` | 构建 mysql/redis/server/admin |
+| 9 | 等待就绪并输出访问信息 | 含宝塔面板入口、后台地址、运维命令 |
+
+**部署完成后必做**：
+1. 执行 `bash scripts/reset_admin_password.sh` 重置超管密码
+2. 宝塔面板「安全」关闭 MySQL/Redis 公网端口
+3. 宝塔面板「网站」绑定域名 + 申请 SSL 证书
+4. 登录后台「系统配置 > 支付」配置易支付参数
+
+> 脚本严格遵守三铁律：禁硬编码（密钥现场生成）/ 配置走 sys_config / 反幻觉（脚本含详细日志和错误处理）。完整说明见 [scripts/one_click_deploy.sh](scripts/one_click_deploy.sh)。
+
+## 当前版本（v0.6.0 进行中）
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
@@ -117,7 +164,8 @@ keyauth-saas/
 │   └── TODO.md
 ├── keys/                          # RSA 密钥对挂载点
 ├── scripts/
-│   ├── baota_deploy.sh            # 宝塔面板一键部署
+│   ├── one_click_deploy.sh        # SSH 一键自动化部署（推荐）
+│   ├── baota_deploy.sh            # 宝塔面板手动部署
 │   └── reset_admin_password.sh    # 重置超管密码
 ├── Dockerfile                     # 后端镜像
 ├── Dockerfile.admin               # 前端镜像
@@ -128,6 +176,18 @@ keyauth-saas/
 
 ## 快速开始
 
+### 方式 A：一键部署（强烈推荐）
+
+见上方「一键部署」章节，远程一行命令搞定全部：
+
+```bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/laobi465/wlyz/main/scripts/one_click_deploy.sh)"
+```
+
+### 方式 B：手动部署（已装好宝塔 + Docker）
+
+适合已有环境、需精细控制每一步的用户。
+
 ### 1. 准备环境
 
 - Linux 服务器（推荐 Ubuntu 22.04 / CentOS 7+）
@@ -137,7 +197,7 @@ keyauth-saas/
 ### 2. 拉取代码
 
 ```bash
-git clone <repo-url> keyauth-saas
+git clone https://github.com/laobi465/wlyz.git keyauth-saas
 cd keyauth-saas
 ```
 

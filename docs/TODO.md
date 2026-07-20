@@ -108,6 +108,7 @@
 - [x] [已完成] Docker healthcheck - v0.2.0
 - [x] [已完成] 部署文档（Docker Compose + 宝塔两种方式） - v0.2.0
 - [x] [已完成 2026-07-20] 安装向导页面（/install） - v0.3.6（前端 Install.vue 4 步向导：环境检测 → 超管账号 → 平台配置 → 完成；后端 install.go InstallStatus/Install；路由 /install public）
+- [x] [已完成 2026-07-20] SSH 一键自动化部署脚本 - v0.6.0（scripts/one_click_deploy.sh：9 步流程 = OS 检测 → 基础工具 → 宝塔官方脚本自动安装 → Docker 自动安装 → git clone → RSA 密钥生成 → .env 强随机密钥自动填充 → docker compose up -d --build → 等待就绪并输出访问信息；远程一行命令执行 `sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/laobi465/wlyz/main/scripts/one_click_deploy.sh)"`；支持本地项目内执行 + 远程执行 + 已装宝塔复用三种模式；bash -n 语法检查通过）
 
 ---
 
