@@ -1,8 +1,8 @@
 <!--
   H5Layout 终端用户 H5 布局
   - 移动优先设计
-  - 顶部 Logo + 底部导航
-  - 不需要登录态
+  - 顶部 Logo + 用户入口 + 底部导航（含「我的」）
+  - 不需要登录态（未登录显示「登录」按钮，已登录显示头像）
 -->
 <template>
   <div class="h5-layout">
@@ -10,6 +10,17 @@
       <div class="brand" @click="router.push('/h5')">
         <img src="@/assets/logo.svg" alt="logo" />
         <span>{{ sysConfig.platformName || 'KeyAuth' }}</span>
+      </div>
+      <div class="header-right">
+        <template v-if="endUserStore.isLoggedIn">
+          <div class="user-entry" @click="router.push('/h5/profile')">
+            <el-avatar v-if="endUserStore.user?.avatar" :src="endUserStore.user.avatar" :size="28" />
+            <el-avatar v-else :size="28">{{ avatarPlaceholder }}</el-avatar>
+          </div>
+        </template>
+        <template v-else>
+          <el-button text type="primary" @click="router.push('/h5/login')">登录</el-button>
+        </template>
       </div>
     </header>
 
@@ -30,22 +41,45 @@
         <el-icon><Search /></el-icon>
         <span>查卡</span>
       </router-link>
+      <router-link to="/h5/profile" class="tab-item" :class="{ active: isProfileActive }">
+        <el-icon><User /></el-icon>
+        <span>我的</span>
+      </router-link>
     </nav>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { HomeFilled, Search } from '@element-plus/icons-vue'
+import { HomeFilled, Search, User } from '@element-plus/icons-vue'
 import { useSysConfigStore } from '@/stores/sysConfig'
+import { useEndUserStore } from '@/stores/enduser'
 
 const route = useRoute()
 const router = useRouter()
 const sysConfig = useSysConfigStore()
+const endUserStore = useEndUserStore()
+
+const avatarPlaceholder = computed(() => {
+  const name = endUserStore.user?.nickname || endUserStore.user?.username || '?'
+  return name.charAt(0).toUpperCase()
+})
+
+// 「我的」tab 高亮：profile 及其子页面（my-cards/sessions/edit-profile/change-password）
+const isProfileActive = computed(() => {
+  return (
+    route.path === '/h5/profile' ||
+    route.path.startsWith('/h5/my-cards') ||
+    route.path.startsWith('/h5/sessions') ||
+    route.path.startsWith('/h5/edit-profile') ||
+    route.path.startsWith('/h5/change-password')
+  )
+})
 
 onMounted(() => {
   sysConfig.load()
+  endUserStore.restore()
 })
 </script>
 
@@ -68,6 +102,7 @@ onMounted(() => {
   height: 48px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   padding: 0 $spacing-md;
   position: sticky;
   top: 0;
@@ -83,6 +118,18 @@ onMounted(() => {
       font-size: 16px;
       font-weight: 600;
       color: $color-text-primary;
+    }
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+
+    .user-entry {
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      padding: 2px;
     }
   }
 }

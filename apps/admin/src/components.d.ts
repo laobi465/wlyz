@@ -57,6 +57,7 @@ declare module 'vue' {
     ResponsiveTable: typeof import('./components/ResponsiveTable.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    UpdateNotifier: typeof import('./components/UpdateNotifier.vue')['default']
   }
   export interface ComponentCustomProperties {
     vLoading: typeof import('element-plus/es')['ElLoadingDirective']

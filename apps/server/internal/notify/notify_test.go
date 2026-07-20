@@ -899,3 +899,233 @@ func TestDialSMTPClient_EncryptionBranch(t *testing.T) {
 	}
 	assert.Contains(t, err.Error(), "smtp dial")
 }
+
+// ============== 17. NotifyAgentsByTenant（v0.4.x 收尾项 D） ==============
+
+// setupNotifyAgentsTestDB 启动 SQLite 内存库 + AutoMigrate 通知/代理/公告相关表
+// 与 setupTestDB 区别：额外迁移 Agent / Notice / NoticeTarget（NotifyAgentsByTenant 需要）
+func setupNotifyAgentsTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:notify_agents_test_%d?mode=memory&cache=shared", time.Now().UnixNano())), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&model.NotifyTemplate{},
+		&model.NotifyLog{},
+		&model.SysConfig{},
+		&model.Agent{},
+		&model.Notice{},
+		&model.NoticeTarget{},
+	))
+	db.Exec("DELETE FROM notify_template")
+	db.Exec("DELETE FROM notify_log")
+	db.Exec("DELETE FROM sys_config")
+	db.Exec("DELETE FROM agent")
+	db.Exec("DELETE FROM notice")
+	db.Exec("DELETE FROM notice_target")
+	return db
+}
+
+// seedAgentForNotify 创建测试代理（仅设置通知相关字段）
+func seedAgentForNotify(t *testing.T, db *gorm.DB, id, tenantID uint64, username, status string) {
+	t.Helper()
+	require.NoError(t, db.Create(&model.Agent{
+		BaseModel: model.BaseModel{ID: id},
+		TenantID:  tenantID,
+		Username:  username,
+		Status:    status,
+	}).Error)
+}
+
+// seedPayModeChangedTemplate 创建 pay_mode_changed 平台模板
+func seedPayModeChangedTemplate(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	require.NoError(t, db.Create(&model.NotifyTemplate{
+		Code:      TemplatePayModeChanged,
+		Name:      "支付方式变更通知",
+		Channel:   ChannelInApp,
+		Subject:   "",
+		Content:   "开发者 {{tenant_name}} 的支付通道 {{channel}} 已{{action}}（{{time}}），请知悉。如有疑问请联系开发者。",
+		Variables: `["tenant_name","channel","action","time"]`,
+		TenantID:  0,
+		Status:    TemplateStatusEnabled,
+	}).Error)
+}
+
+// TestNotifyAgentsByTenant_DisabledByConfig 配置开关=0 时跳过通知（铁律 04）
+func TestNotifyAgentsByTenant_DisabledByConfig(t *testing.T) {
+	db := setupNotifyAgentsTestDB(t)
+	require.NoError(t, db.Create(&model.SysConfig{
+		ConfigKey:   CfgKeyPayModeChangedEnabled,
+		ConfigValue: "0",
+		ConfigType:  "bool",
+		ConfigGroup: "notify",
+	}).Error)
+	seedAgentForNotify(t, db, 1001, 5001, "agent-A", "active")
+
+	variables := map[string]interface{}{
+		"tenant_name": "dev-A",
+		"channel":     "epay",
+		"action":      "enabled",
+		"time":        "2026-07-20 10:00:00",
+	}
+	require.NoError(t, NotifyAgentsByTenant(context.Background(), db, 5001, variables))
+
+	var noticeCount, targetCount, logCount int64
+	db.Model(&model.Notice{}).Count(&noticeCount)
+	db.Model(&model.NoticeTarget{}).Count(&targetCount)
+	db.Model(&model.NotifyLog{}).Count(&logCount)
+	assert.Equal(t, int64(0), noticeCount, "配置关闭时不应创建 Notice")
+	assert.Equal(t, int64(0), targetCount, "配置关闭时不应创建 NoticeTarget")
+	assert.Equal(t, int64(0), logCount, "配置关闭时不应创建 NotifyLog")
+}
+
+// TestNotifyAgentsByTenant_NoAgents 无启用代理时跳过
+func TestNotifyAgentsByTenant_NoAgents(t *testing.T) {
+	db := setupNotifyAgentsTestDB(t)
+
+	variables := map[string]interface{}{
+		"tenant_name": "dev-A",
+		"channel":     "epay",
+		"action":      "enabled",
+		"time":        "2026-07-20 10:00:00",
+	}
+	require.NoError(t, NotifyAgentsByTenant(context.Background(), db, 5001, variables))
+
+	var noticeCount, logCount int64
+	db.Model(&model.Notice{}).Count(&noticeCount)
+	db.Model(&model.NotifyLog{}).Count(&logCount)
+	assert.Equal(t, int64(0), noticeCount)
+	assert.Equal(t, int64(0), logCount)
+}
+
+// TestNotifyAgentsByTenant_Success 有启用代理时创建完整通知链路
+// 验证：① 仅 active 代理收到通知 ② 跨租户代理不被通知 ③ Notice/NoticeTarget/NotifyLog 字段正确
+func TestNotifyAgentsByTenant_Success(t *testing.T) {
+	db := setupNotifyAgentsTestDB(t)
+	seedPayModeChangedTemplate(t, db)
+	seedAgentForNotify(t, db, 1001, 5001, "agent-A", "active")
+	seedAgentForNotify(t, db, 1002, 5001, "agent-B", "active")
+	seedAgentForNotify(t, db, 1003, 5001, "agent-C", "disabled") // 不应通知
+	seedAgentForNotify(t, db, 1004, 5002, "agent-D", "active")   // 其他租户，不应通知
+
+	variables := map[string]interface{}{
+		"tenant_name": "dev-A",
+		"channel":     "epay",
+		"action":      "enabled",
+		"time":        "2026-07-20 10:00:00",
+	}
+	require.NoError(t, NotifyAgentsByTenant(context.Background(), db, 5001, variables))
+
+	// 验证 Notice
+	var notice model.Notice
+	require.NoError(t, db.First(&notice).Error)
+	assert.Equal(t, "agent_notify", notice.Type)
+	assert.Equal(t, "published", notice.Status)
+	assert.True(t, notice.ShowBadge)
+	assert.False(t, notice.IsPinned)
+	assert.False(t, notice.IsPopup)
+	assert.Equal(t, "支付方式变更通知 - epay", notice.Title)
+	assert.Contains(t, notice.Content, "dev-A")
+	assert.Contains(t, notice.Content, "epay")
+	assert.Contains(t, notice.Content, "enabled")
+	assert.Contains(t, notice.Content, "2026-07-20 10:00:00")
+	require.NotNil(t, notice.TenantID)
+	assert.Equal(t, uint64(5001), *notice.TenantID)
+	assert.Equal(t, uint64(0), notice.CreatedBy, "CreatedBy=0 表示系统创建")
+
+	// 验证 NoticeTarget
+	var target model.NoticeTarget
+	require.NoError(t, db.First(&target).Error)
+	assert.Equal(t, notice.ID, target.NoticeID)
+	assert.Equal(t, "all_agents", target.TargetType)
+	require.NotNil(t, target.TargetID)
+	assert.Equal(t, uint64(5001), *target.TargetID)
+
+	// 验证 notify_log：应为 2 条（仅 active 代理）
+	var logs []model.NotifyLog
+	require.NoError(t, db.Find(&logs).Error)
+	assert.Len(t, logs, 2, "应仅为 2 个 active 代理生成日志")
+
+	recipientSet := map[string]bool{}
+	for _, log := range logs {
+		assert.Equal(t, ChannelInApp, log.Channel)
+		assert.Equal(t, TemplatePayModeChanged, log.TemplateCode)
+		assert.Equal(t, LogStatusSent, log.Status)
+		assert.Equal(t, PriorityHigh, log.Priority)
+		assert.Equal(t, uint64(5001), log.TenantID)
+		assert.Contains(t, log.Content, "dev-A")
+		assert.Contains(t, log.Content, "epay")
+		assert.Contains(t, log.Content, "enabled")
+		assert.NotNil(t, log.SentAt)
+		recipientSet[log.Recipient] = true
+	}
+	assert.True(t, recipientSet["1001"], "应包含 agent-A (ID=1001)")
+	assert.True(t, recipientSet["1002"], "应包含 agent-B (ID=1002)")
+	assert.False(t, recipientSet["1003"], "不应包含 disabled 代理 (ID=1003)")
+	assert.False(t, recipientSet["1004"], "不应包含其他租户代理 (ID=1004)")
+}
+
+// TestNotifyAgentsByTenant_ConfigNotSet 配置未设置时视为启用（默认行为，与 migration 默认 '1' 一致）
+func TestNotifyAgentsByTenant_ConfigNotSet(t *testing.T) {
+	db := setupNotifyAgentsTestDB(t)
+	// 不写入配置（模拟未迁移或配置丢失）
+	seedAgentForNotify(t, db, 1001, 5001, "agent-A", "active")
+
+	variables := map[string]interface{}{
+		"tenant_name": "dev-A",
+		"channel":     "epay",
+		"action":      "disabled",
+		"time":        "2026-07-20 10:00:00",
+	}
+	require.NoError(t, NotifyAgentsByTenant(context.Background(), db, 5001, variables))
+
+	var logCount int64
+	db.Model(&model.NotifyLog{}).Count(&logCount)
+	assert.Equal(t, int64(1), logCount, "配置未设置时应默认启用，生成 1 条日志")
+}
+
+// TestNotifyAgentsByTenant_NoTemplate 模板不存在时使用兜底文案
+func TestNotifyAgentsByTenant_NoTemplate(t *testing.T) {
+	db := setupNotifyAgentsTestDB(t)
+	// 不创建模板
+	seedAgentForNotify(t, db, 1001, 5001, "agent-A", "active")
+
+	variables := map[string]interface{}{
+		"tenant_name": "dev-A",
+		"channel":     "epay",
+		"action":      "enabled",
+		"time":        "2026-07-20 10:00:00",
+	}
+	require.NoError(t, NotifyAgentsByTenant(context.Background(), db, 5001, variables))
+
+	var log model.NotifyLog
+	require.NoError(t, db.First(&log).Error)
+	// 兜底文案应包含 time 和提示语
+	assert.Contains(t, log.Content, "2026-07-20 10:00:00")
+	assert.Contains(t, log.Content, "如有疑问请联系开发者")
+	assert.Equal(t, "支付方式变更通知", log.Subject)
+}
+
+// TestNotifyAgentsByTenant_EmptyVariables 空变量时仍能创建通知（变量缺失保留占位符）
+func TestNotifyAgentsByTenant_EmptyVariables(t *testing.T) {
+	db := setupNotifyAgentsTestDB(t)
+	seedPayModeChangedTemplate(t, db)
+	seedAgentForNotify(t, db, 1001, 5001, "agent-A", "active")
+
+	// 传入空 variables map
+	require.NoError(t, NotifyAgentsByTenant(context.Background(), db, 5001, map[string]interface{}{}))
+
+	var log model.NotifyLog
+	require.NoError(t, db.First(&log).Error)
+	// 模板渲染：未提供的变量保留 {{var}} 占位符
+	assert.Contains(t, log.Content, "{{tenant_name}}")
+	assert.Contains(t, log.Content, "{{channel}}")
+}
+
+// TestCfgKeyPayModeChangedEnabled 常量值校验（铁律 06：常量值固定）
+func TestCfgKeyPayModeChangedEnabled(t *testing.T) {
+	assert.Equal(t, "notify.pay_mode_changed.enabled", CfgKeyPayModeChangedEnabled)
+	assert.Equal(t, "pay_mode_changed", TemplatePayModeChanged)
+}

@@ -4,6 +4,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -17,9 +18,11 @@ import (
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/grayscale"
 	"github.com/your-org/keyauth-saas/apps/server/internal/heartbeat"
+	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 	"github.com/your-org/keyauth-saas/apps/server/internal/multilevel"
+	"github.com/your-org/keyauth-saas/apps/server/internal/notify"
 	"github.com/your-org/keyauth-saas/apps/server/internal/quota"
 )
 
@@ -1228,6 +1231,7 @@ type savePayConfigReq struct {
 // TenantSavePayConfig 保存支付配置
 // POST /tenant/pay_config
 // 按 (tenant_id, channel) upsert，key 加密入库
+// v0.4.x 收尾项 D：enabled 状态变更时通知该开发者名下所有代理（站内信 + 公告）
 func TenantSavePayConfig(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := getTenantID(c)
@@ -1251,7 +1255,10 @@ func TenantSavePayConfig(deps *Deps) gin.HandlerFunc {
 		enabled := req.Status == "active"
 
 		// 按 (tenant_id, channel) upsert
+		// v0.4.x 收尾项 D：先记录旧 enabled 状态，upsert 后比较以决定是否通知代理
 		var cfg model.TenantPayConfig
+		oldEnabled := false
+		found := false
 		result := deps.DB.Where("tenant_id = ? AND channel = ?", tenantID, req.Channel).First(&cfg)
 		if result.Error == gorm.ErrRecordNotFound {
 			cfg = model.TenantPayConfig{
@@ -1272,6 +1279,8 @@ func TenantSavePayConfig(deps *Deps) gin.HandlerFunc {
 			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败: "+result.Error.Error())
 			return
 		} else {
+			oldEnabled = cfg.Enabled
+			found = true
 			updates := map[string]interface{}{
 				"enabled":       enabled,
 				"gateway_url":   req.Config.APIURL,
@@ -1286,7 +1295,46 @@ func TenantSavePayConfig(deps *Deps) gin.HandlerFunc {
 			}
 		}
 
+		// v0.4.x 收尾项 D：检测 enabled 状态变更，通知该开发者名下所有代理
+		// 新建记录（!found）或 enabled 状态变化时触发通知；通知失败不阻塞主流程
+		if !found || oldEnabled != enabled {
+			notifyPayModeChanged(deps, c.Request.Context(), tenantID, req.Channel, enabled)
+		}
+
 		middleware.Success(c, gin.H{"id": cfg.ID, "channel": req.Channel, "saved": true})
+	}
+}
+
+// notifyPayModeChanged 通知开发者名下所有代理支付通道状态已变更
+// 通知失败仅记录日志，不阻塞主流程
+// 严格遵循铁律 04：开发者名优先用 company，其次 username（sys_tenant 无 name 字段）
+func notifyPayModeChanged(deps *Deps, ctx context.Context, tenantID uint64, channel string, enabled bool) {
+	var tenant model.SysTenant
+	if err := deps.DB.First(&tenant, tenantID).Error; err != nil {
+		logger.Error("pay_mode_changed: query tenant failed",
+			"err", err, "tenant_id", tenantID, "channel", channel)
+		return
+	}
+	tenantName := tenant.Company
+	if tenantName == "" {
+		tenantName = tenant.Username
+	}
+
+	action := "enabled"
+	if !enabled {
+		action = "disabled"
+	}
+
+	variables := map[string]interface{}{
+		"tenant_name": tenantName,
+		"channel":     channel,
+		"action":      action,
+		"time":        time.Now().Format("2006-01-02 15:04:05"),
+	}
+
+	if err := notify.NotifyAgentsByTenant(ctx, deps.DB, tenantID, variables); err != nil {
+		logger.Error("pay_mode_changed: notify agents failed",
+			"err", err, "tenant_id", tenantID, "channel", channel)
 	}
 }
 

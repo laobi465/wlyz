@@ -2,6 +2,7 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import NProgress from 'nprogress'
 import 'nprogress/nprogress.css'
 import { useAuthStore } from '@/stores/auth'
+import { useEndUserStore } from '@/stores/enduser'
 
 NProgress.configure({ showSpinner: false })
 
@@ -56,7 +57,16 @@ const routes: RouteRecordRaw[] = [
       { path: '', name: 'H5Home', component: lazy(() => import('@/views/h5/Home.vue')), meta: { title: '购卡', public: true } },
       { path: 'pay/:orderNo', name: 'H5PayResult', component: lazy(() => import('@/views/h5/PayResult.vue')), meta: { title: '支付结果', public: true } },
       { path: 'query', name: 'H5Query', component: lazy(() => import('@/views/h5/Query.vue')), meta: { title: '卡密查询', public: true } },
-      { path: 'card/:cardKey', name: 'H5CardDetail', component: lazy(() => import('@/views/h5/CardDetail.vue')), meta: { title: '卡密详情', public: true } }
+      { path: 'card/:cardKey', name: 'H5CardDetail', component: lazy(() => import('@/views/h5/CardDetail.vue')), meta: { title: '卡密详情', public: true } },
+      // v0.4.0 收尾项 C：H5 终端用户中心
+      { path: 'login', name: 'H5Login', component: lazy(() => import('@/views/h5/Login.vue')), meta: { title: '登录', public: true, guestOnly: true } },
+      { path: 'register', name: 'H5Register', component: lazy(() => import('@/views/h5/Register.vue')), meta: { title: '注册', public: true, guestOnly: true } },
+      { path: 'reset-password', name: 'H5ResetPassword', component: lazy(() => import('@/views/h5/ResetPassword.vue')), meta: { title: '重置密码', public: true, guestOnly: true } },
+      { path: 'profile', name: 'H5Profile', component: lazy(() => import('@/views/h5/Profile.vue')), meta: { title: '我的', role: 'enduser' } },
+      { path: 'my-cards', name: 'H5MyCards', component: lazy(() => import('@/views/h5/MyCards.vue')), meta: { title: '我的卡密', role: 'enduser' } },
+      { path: 'sessions', name: 'H5Sessions', component: lazy(() => import('@/views/h5/Sessions.vue')), meta: { title: '会话管理', role: 'enduser' } },
+      { path: 'edit-profile', name: 'H5EditProfile', component: lazy(() => import('@/views/h5/EditProfile.vue')), meta: { title: '编辑资料', role: 'enduser' } },
+      { path: 'change-password', name: 'H5ChangePassword', component: lazy(() => import('@/views/h5/ChangePassword.vue')), meta: { title: '修改密码', role: 'enduser' } }
     ]
   },
 
@@ -150,6 +160,27 @@ router.beforeEach((to, _from, next) => {
   const auth = useAuthStore()
 
   if (to.meta.public) {
+    // H5 guestOnly 页面（登录/注册/重置密码）：已登录则跳 profile
+    if (to.meta.guestOnly && to.path.startsWith('/h5')) {
+      const endUserStore = useEndUserStore()
+      endUserStore.restore()
+      if (endUserStore.isLoggedIn) {
+        next({ name: 'H5Profile' })
+        return
+      }
+    }
+    next()
+    return
+  }
+
+  // H5 终端用户角色（enduser）：独立鉴权，不与三角色混淆
+  if (to.meta.role === 'enduser') {
+    const endUserStore = useEndUserStore()
+    endUserStore.restore()
+    if (!endUserStore.isLoggedIn) {
+      next({ name: 'H5Login', query: { redirect: to.fullPath } })
+      return
+    }
     next()
     return
   }

@@ -93,8 +93,8 @@
 #### 终端用户 H5
 - [x] [已完成] H5 布局 + 购卡首页 + 支付结果 + 卡密查询 + 卡密详情 - v0.2.4
 - [x] [已完成 2026-07-20] 终端用户体系后端（H5 注册/登录/绑卡/单点踢出） - v0.4.0（migration 015 end_user + end_user_card + end_user_token 表 + ALTER app_card.end_user_id + 10 项 enduser.* 配置；Manager.Register/Login/RefreshToken/Logout/RevokeSession/RevokeAllSessions/ListSessions/BindCard/UnbindCard/ListMyCards/GetCardDetail/GetProfile/UpdateProfile/ChangePassword/ResetPassword；H5EndUserAuth 中间件 HMAC-SHA256 签名校验 + 常量时间比较防时序攻击；bcrypt cost=12 密码哈希；refresh token SHA-512 哈希存储 + jti 单点踢出；19 个端点：5 公开 + 10 H5 + 4 admin）
-- [ ] [待开始] H5 用户登录/注册前端页面（接入新后端 API） - v0.4.x
-- [ ] [待开始] H5 个人中心前端页面（卡密绑定/会话管理/密码修改） - v0.4.x
+- [x] [已完成 2026-07-20] H5 用户登录/注册前端页面（接入新后端 API） - v0.4.x（apps/admin/src/views/h5/{Login,Register,ResetPassword}.vue + api/enduser.ts + stores/enduser.ts；登录调 /public/enduser/login + 注册调 /public/enduser/register + 验证码 60s 倒计时 + 找回密码）
+- [x] [已完成 2026-07-20] H5 个人中心前端页面（卡密绑定/会话管理/密码修改） - v0.4.x（apps/admin/src/views/h5/{Profile,MyCards,Sessions,EditProfile,ChangePassword}.vue；H5Layout 新增「我的」tab + 路由守卫 enduser 角色判定 + guestOnly 已登录跳转；http.ts 按路径前缀分流 H5/三角色 token + 401 续期链路）
 
 #### 安全防护（基础）
 - [x] [已完成] Nginx 限流配置（gateway.conf） - v0.2.0
@@ -123,7 +123,7 @@
 - [x] [已完成 2026-07-20] 双层支付模式切换逻辑 - v0.3.6（TOP/ORD 前缀分发）
 - [x] [已完成 2026-07-20] 开发者自有支付下单/回调接口 - v0.3.6（EpayTenantNotify 完整实现 + processTenantOwnPaidOrder 事务 + loadTenantPayConfig 解密）
 - [ ] [待开始] 开发自有支付附加月费订单 - v0.4.x
-- [ ] [待开始] 切换支付方式时通知所有代理（站内信+横幅+弹窗） - v0.4.x
+- [x] [已完成 2026-07-20] 切换支付方式时通知所有代理（站内信+横幅+弹窗） - v0.4.x（notify.go 新增 TemplatePayModeChanged 常量 + CfgKeyPayModeChangedEnabled 配置开关 + NotifyAgentsByTenant 辅助函数：查启用代理 → 创建 Notice + NoticeTarget(all_agents) + 批量 notify_log；tenant_business.go TenantSavePayConfig 检测 enabled 状态变更触发通知；migration 022 新增 pay_mode_changed 模板 + 配置开关；7 个测试覆盖开关/无代理/完整链路/跨租户隔离/模板兜底）
 
 #### 代理注册付费流程
 - [x] [已完成] 开发者生成邀请码（D-08） - v0.3.0

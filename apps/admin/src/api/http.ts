@@ -1,6 +1,8 @@
 import axios, { type AxiosInstance, type AxiosRequestConfig, type InternalAxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
+import { useEndUserStore } from '@/stores/enduser'
+import { endUserRefreshApi } from './enduser'
 
 const apiBase = import.meta.env.VITE_API_BASE || '/api/v1'
 
@@ -10,12 +12,26 @@ const http: AxiosInstance = axios.create({
   headers: { 'Content-Type': 'application/json' }
 })
 
-// 请求拦截：注入 Bearer token
+// H5 终端用户请求路径前缀（与三角色鉴权隔离）
+const isH5Request = (url?: string): boolean => {
+  if (!url) return false
+  return url.startsWith('/h5/') || url.startsWith('/public/enduser/')
+}
+
+// 请求拦截：注入 Bearer token（H5 端用 enduser store，其余用三角色 auth store）
 http.interceptors.request.use(
   (config) => {
-    const auth = useAuthStore()
-    if (auth.accessToken) {
-      config.headers.Authorization = `Bearer ${auth.accessToken}`
+    if (isH5Request(config.url)) {
+      const endUserStore = useEndUserStore()
+      endUserStore.restore()
+      if (endUserStore.accessToken) {
+        config.headers.Authorization = `Bearer ${endUserStore.accessToken}`
+      }
+    } else {
+      const auth = useAuthStore()
+      if (auth.accessToken) {
+        config.headers.Authorization = `Bearer ${auth.accessToken}`
+      }
     }
     return config
   },
@@ -54,6 +70,54 @@ http.interceptors.response.use(
     const status = err.response?.status
 
     if (status === 401) {
+      // H5 终端用户请求：使用 enduser store 处理续期/登出
+      if (isH5Request(originalRequest.url)) {
+        const endUserStore = useEndUserStore()
+        endUserStore.restore()
+
+        // refresh 接口本身 401：直接清空登录态
+        if (originalRequest.url?.includes('/public/enduser/refresh')) {
+          endUserStore.clear()
+          redirectToH5Login()
+          return Promise.reject(err)
+        }
+
+        // 已重试过：登出
+        if (originalRequest._retry) {
+          endUserStore.clear()
+          redirectToH5Login()
+          return Promise.reject(err)
+        }
+
+        // 没有 refresh token：直接登出
+        if (!endUserStore.refreshToken) {
+          endUserStore.clear()
+          redirectToH5Login()
+          return Promise.reject(err)
+        }
+
+        // 标记重试
+        originalRequest._retry = true
+
+        try {
+          const resp = await endUserRefreshApi(endUserStore.refreshToken)
+          // 持久化新的 token（保留原 user 信息和 appKey）
+          endUserStore.setLogin({
+            access_token: resp.access_token,
+            refresh_token: resp.refresh_token,
+            expires_at: resp.expires_at,
+            user: (endUserStore.user ?? null) as any
+          })
+          originalRequest.headers.Authorization = `Bearer ${resp.access_token}`
+          return http(originalRequest)
+        } catch (refreshErr) {
+          endUserStore.clear()
+          redirectToH5Login()
+          return Promise.reject(refreshErr)
+        }
+      }
+
+      // 三角色请求：走原有 refresh 流程
       const auth = useAuthStore()
 
       // 如果是 refresh 接口本身 401，直接登出
@@ -131,6 +195,13 @@ function redirectToLogin() {
   if (location.pathname !== '/login') {
     ElMessage.error('登录已过期，请重新登录')
     location.href = '/login?redirect=' + encodeURIComponent(location.pathname)
+  }
+}
+
+function redirectToH5Login() {
+  if (!location.pathname.startsWith('/h5/login')) {
+    ElMessage.error('登录已过期，请重新登录')
+    location.href = '/h5/login?redirect=' + encodeURIComponent(location.pathname)
   }
 }
 

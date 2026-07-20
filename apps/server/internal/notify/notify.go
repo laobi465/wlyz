@@ -83,6 +83,12 @@ const (
 	TemplateVerifyCodeEmail  = "verify_code_email"
 	TemplateOrderPaid        = "order_paid"
 	TemplateAgentCommission  = "agent_commission"
+	TemplatePayModeChanged   = "pay_mode_changed" // v0.4.x 收尾项 D：开发者切换支付配置时通知代理
+)
+
+// 配置键常量（v0.4.x 收尾项 D）
+const (
+	CfgKeyPayModeChangedEnabled = "notify.pay_mode_changed.enabled"
 )
 
 // TemplateStatus 模板状态
@@ -798,4 +804,116 @@ func ParseVariables(varsJSON string) []string {
 // ValidateChannel 校验渠道
 func ValidateChannel(channel string) bool {
 	return channel == ChannelSMS || channel == ChannelEmail || channel == ChannelInApp
+}
+
+// ============== 12. v0.4.x 收尾项 D：支付方式变更通知代理 ==============
+
+// NotifyAgentsByTenant 给指定开发者名下所有启用代理发送支付方式变更通知
+// 流程：① 读 sys_config 开关 ② 查启用代理 ③ 渲染模板 ④ 创建 Notice ⑤ 创建 NoticeTarget ⑥ 批量创建 notify_log
+//
+// 创建产物：
+//   - 1 条 Notice（type=agent_notify, status=published, show_badge=true）
+//   - 1 条 NoticeTarget（target_type=all_agents, target_id=tenantID）
+//   - N 条 notify_log（每个代理一条，channel=inapp, status=sent, priority=high）
+//
+// 通知失败不阻塞主流程，调用方应自行处理返回的 error（通常仅记录日志）。
+// 严格遵循铁律 04：配置开关 notify.pay_mode_changed.enabled 走 sys_config，无硬编码
+func NotifyAgentsByTenant(ctx context.Context, db *gorm.DB, tenantID uint64, variables map[string]interface{}) error {
+	// 1. 读配置开关 notify.pay_mode_changed.enabled
+	//    显式 "0" 才跳过；未配置或其它值均视为启用（与 migration 默认 '1' 一致）
+	var cfgValue string
+	db.Raw("SELECT config_value FROM sys_config WHERE config_key = ? LIMIT 1", CfgKeyPayModeChangedEnabled).Scan(&cfgValue)
+	if cfgValue == "0" {
+		return nil
+	}
+
+	// 2. 查询该开发者名下所有启用代理
+	var agents []model.Agent
+	if err := db.Where("tenant_id = ? AND status = ?", tenantID, "active").Find(&agents).Error; err != nil {
+		return err
+	}
+	if len(agents) == 0 {
+		return nil
+	}
+
+	// 3. 提取变量（用于 Notice 标题/正文渲染）
+	tenantName := ""
+	if v, ok := variables["tenant_name"].(string); ok {
+		tenantName = v
+	}
+	channelStr := ""
+	if v, ok := variables["channel"].(string); ok {
+		channelStr = v
+	}
+	actionStr := ""
+	if v, ok := variables["action"].(string); ok {
+		actionStr = v
+	}
+	timeStr := ""
+	if v, ok := variables["time"].(string); ok {
+		timeStr = v
+	}
+
+	// 4. 渲染通知正文（优先用 notify_template 平台模板，找不到则用兜底文案）
+	subject := "支付方式变更通知"
+	content := fmt.Sprintf("开发者 %s 的支付通道 %s 已%s，请知悉。", tenantName, channelStr, actionStr)
+	if timeStr != "" {
+		content = fmt.Sprintf("开发者 %s 的支付通道 %s 已%s（%s），请知悉。如有疑问请联系开发者。", tenantName, channelStr, actionStr, timeStr)
+	}
+	var tmpl model.NotifyTemplate
+	if err := db.Where("code = ? AND channel = ? AND tenant_id = 0 AND status = ?", TemplatePayModeChanged, ChannelInApp, TemplateStatusEnabled).First(&tmpl).Error; err == nil {
+		subject = Render(tmpl.Subject, variables)
+		content = Render(tmpl.Content, variables)
+	}
+
+	// 5. 创建 Notice 记录（type=agent_notify, status=published, show_badge=true）
+	notice := model.Notice{
+		Type:          "agent_notify",
+		TenantID:      &tenantID,
+		Title:         fmt.Sprintf("支付方式变更通知 - %s", channelStr),
+		Content:       content,
+		ContentFormat: "text",
+		IsPinned:      false,
+		IsPopup:       false,
+		ShowBadge:     true,
+		StartAt:       time.Now(),
+		Status:        "published",
+		CreatedBy:     0, // 系统创建
+	}
+	if err := db.Create(&notice).Error; err != nil {
+		return err
+	}
+
+	// 6. 创建 NoticeTarget（target_type=all_agents, target_id=tenantID）
+	target := model.NoticeTarget{
+		NoticeID:   notice.ID,
+		TargetType: "all_agents",
+		TargetID:   &tenantID,
+	}
+	if err := db.Create(&target).Error; err != nil {
+		return err
+	}
+
+	// 7. 批量创建 notify_log（每个代理一条，channel=inapp, status=sent, priority=high）
+	logs := make([]model.NotifyLog, 0, len(agents))
+	now := time.Now()
+	for _, agent := range agents {
+		logs = append(logs, model.NotifyLog{
+			TenantID:     tenantID,
+			Channel:      ChannelInApp,
+			Recipient:    fmt.Sprintf("%d", agent.ID),
+			TemplateCode: TemplatePayModeChanged,
+			Subject:      subject,
+			Content:      content,
+			Status:       LogStatusSent,
+			Priority:     PriorityHigh,
+			SentAt:       &now,
+			CreatedAt:    now,
+		})
+	}
+	if err := db.CreateInBatches(logs, 100).Error; err != nil {
+		return err
+	}
+
+	return nil
 }
