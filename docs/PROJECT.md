@@ -130,132 +130,135 @@ SDK 校验签名 → 通过则解锁功能
 
 | 编号 | 模块 | 已实现 | 说明 |
 |---|---|---|---|
-| S-01 | 平台看板 | ☐ | 全局统计、趋势图 |
-| S-02 | 租户管理 | ☐ | 开发者 CRUD、审核、套餐分配 |
-| S-03 | 套餐管理 | ☐ | 套餐 CRUD、应用数/卡密数/代理数上限、支付权限、抽成比例 |
-| S-04 | 应用审核 | ☐ | 应用上架审核、违规下架 |
-| S-05 | 代理全局视图 | ☐ | 跨租户代理统计 |
-| S-06 | 平台总支付配置 | ☐ | 易支付网关/商户号/密钥、抽成比例、结算周期 |
-| S-07 | 系统配置 | ☐ | sys_config 全局参数、代理注册配置 |
-| S-08 | 通知模板 | ☐ | 短信/邮件/站内信模板 |
-| S-09 | 安全防护 | ☐ | 全局 IP 黑名单、CC 防护、敏感词 |
-| S-10 | 操作日志 | ☐ | 全平台操作审计 |
-| S-11 | 系统监控 | ☐ | 服务器状态、QPS、慢查询 |
-| S-12 | 数据备份 | ☐ | 数据库备份、恢复、导出 |
-| S-13 | 更新管理 | ☐ | 在线更新、版本回滚 |
-| S-14 | 管理员管理 | ☐ | 超管账号、角色权限、2FA |
-| S-15 | 平台总公告管理 | ☐ | 公告 CRUD、置顶、强制弹窗 |
-| S-16 | 开发者公告管理 | ☐ | 公告 CRUD、置顶 |
-| S-17 | 代理注册管理 | ☐ | 注册订单、收入统计、退款 |
+| S-01 | 平台看板 | ✅ | 8 数据卡 + 待办列表 + 收入趋势 + 最近开发者/订单表（v0.2.6） |
+| S-02 | 租户管理 | ✅ | 开发者 CRUD + 状态/套餐分配（v0.3.0） |
+| S-03 | 套餐管理 | ✅ | 套餐 CRUD + 应用数/卡密数/代理数上限 + 抽成比例（v0.3.0） |
+| S-04 | 应用审核 | ☐ | 应用上架审核、违规下架（v0.4.x） |
+| S-05 | 代理全局视图 | ✅ | 跨租户代理列表 + 状态/封禁（v0.3.0） |
+| S-06 | 平台总支付配置 | ✅ | sys_config 易支付网关/商户号/密钥 + 抽成比例 + TestPayConfig（v0.2.3） |
+| S-07 | 系统配置 | ✅ | sys_config 全局参数 CRUD + Redis 缓存（v0.2.0） |
+| S-08 | 通知模板 | ☐ | 短信/邮件/站内信模板（v0.4.x） |
+| S-09 | 安全防护 | ✅ | 全局 IP 黑名单 + 登录失败日志 + 安全中心统计（v0.3.1） |
+| S-10 | 操作日志 | ✅ | 三表独立查询（操作/验证/登录失败）+ CSV 导出（v0.3.3） |
+| S-11 | 系统监控 | ☐ | 服务器状态、QPS、慢查询（v0.4.x Prometheus） |
+| S-12 | 数据备份 | ☐ | 数据库备份、恢复、导出（v0.4.x） |
+| S-13 | 更新管理 | ☐ | 在线更新、版本回滚（v0.4.x） |
+| S-14 | 管理员管理 | ✅ | 超管账号 + 2FA TOTP + 登录设备管理（v0.3.0） |
+| S-15 | 平台总公告管理 | ✅ | 公告 CRUD + 横幅开关 + 公开 API（v0.3.0） |
+| S-16 | 开发者公告管理 | ✅ | 公告 CRUD（v0.3.0） |
+| S-17 | 代理注册管理 | ☐ | 注册订单、收入统计、退款（v0.3.6，待 AgentRegister 实现） |
 
 ### 3.2 开发者控制台（19 个模块）
 
 | 编号 | 模块 | 已实现 | 说明 |
 |---|---|---|---|
-| D-01 | 工作台 | ☐ | 数据看板 + 公告显示区（平台公告 + 开发者公告） |
-| D-02 | 应用管理 | ☐ | 应用 CRUD、密钥轮换 |
-| D-03 | 卡密管理 | ☐ | 批量生成、导入导出、封禁 |
-| D-04 | 卡类套餐 | ☐ | 时长卡/次数卡/永久卡/试用卡/功能解锁卡 |
-| D-05 | 设备管理 | ☐ | 在线状态、强制下线、解绑、封禁 |
-| D-06 | 用户管理 | ☐ | 终端用户列表、封禁 |
-| D-07 | 订单管理 | ☐ | 订单列表、退款、导出 |
-| D-08 | 代理管理 | ☐ | 代理 CRUD、邀请码生成、授权范围 |
-| D-09 | 云变量 | ☐ | 变量 CRUD、按应用分组 |
-| D-10 | 公告管理 | ☐ | 应用公告、平台公告 |
-| D-11 | 版本管理 | ☐ | 版本号、最低版本、下载地址、强制更新 |
-| D-12 | 验证日志 | ☐ | 验证/激活/心跳记录 |
-| D-13 | 操作日志 | ☐ | 后台操作记录 |
-| D-14 | 财务统计 | ☐ | 收入统计、代理业绩、佣金结算打款 |
-| D-15 | 安全设置 | ☐ | IP 黑名单、频率限制 |
-| D-16 | SDK 下载 | ☐ | 各语言 SDK 包 + 文档 |
-| D-17 | 开发者设置 | ☐ | 资料、密码、2FA、API Token |
-| D-18 | 支付配置 | ☐ | 双层模式切换（平台总支付 / 自有易支付） |
-| D-19 | 代理充值审核 | ☐ | 审核代理充值申请 |
+| D-01 | 工作台 | ✅ | 8 数据卡 + 8 快捷入口 + 收入趋势 + 应用 TOP5 + 最近订单（v0.2.6） |
+| D-02 | 应用管理 | ✅ | 应用 CRUD + 密钥生成/轮换（保留旧 SignSecret 7 天）（v0.2.2） |
+| D-03 | 卡密管理 | ✅ | 批量生成 + 状态机 + 封禁/解封/删除（v0.2.2）；CSV 导入导出 ☐（v0.3.6） |
+| D-04 | 卡类套餐 | ✅ | 时长卡/次数卡/永久卡/试用卡/功能解锁卡 5 类型 CRUD（v0.2.2） |
+| D-05 | 设备管理 | ✅ | 列表 + 强制下线（v0.3.0）；Redis 心跳清空 ☐（v0.3.6） |
+| D-06 | 用户管理 | ☐ | 终端用户列表、封禁（v0.4.x，终端用户体系未建） |
+| D-07 | 订单管理 | ✅ | 订单列表 + 状态筛选（v0.3.0） |
+| D-08 | 代理管理 | ✅ | 代理 CRUD + 邀请码生成/禁用 + 套餐配额校验（v0.3.0 + v0.3.5） |
+| D-09 | 云变量 | ✅ | 变量 CRUD + 客户端 get_var 接口（v0.3.0） |
+| D-10 | 公告管理 | ✅ | 应用公告 CRUD（v0.3.0） |
+| D-11 | 版本管理 | ✅ | 版本号/最低版本/下载地址/强制更新 CRUD + 客户端 version 接口（v0.3.0） |
+| D-12 | 验证日志 | ✅ | log_verify 按月分区 + 异步 worker（v0.3.3） |
+| D-13 | 操作日志 | ✅ | log_operation + 切面 RecordOperation（v0.3.3） |
+| D-14 | 财务统计 | ✅ | 结算记录 + 余额流水 + 提现申请 + 提现审核（v0.3.2 + v0.3.4） |
+| D-15 | 安全设置 | ☐ | IP 黑名单、频率限制（v0.4.x，目前仅超管侧） |
+| D-16 | SDK 下载 | ☐ | 各语言 SDK 包 + 文档（v0.3.6） |
+| D-17 | 开发者设置 | ✅ | 资料 + 公司信息 + 密码 + 2FA + 登录设备（v0.3.0） |
+| D-18 | 支付配置 | ☐ | 双层模式切换（平台总支付 / 自有易支付）（v0.3.6，pay_config CRUD 已有但切换逻辑未接） |
+| D-19 | 代理充值审核 | ✅ | 充值申请列表 + 批准/驳回 + 实际到账金额调整（v0.3.2） |
 
 ### 3.3 代理商控制台（10 个模块）
 
 | 编号 | 模块 | 已实现 | 说明 |
 |---|---|---|---|
-| P-01 | 工作台 | ☐ | 销售数据、库存、佣金概览 + 平台公告 |
-| P-02 | 卡密库存 | ☐ | 可售套餐、生成卡密（扣余额） |
-| P-03 | 卡密管理 | ☐ | 自己生成的卡密列表 |
-| P-04 | 销售订单 | ☐ | 自售订单 |
-| P-05 | 佣金结算 | ☐ | 佣金明细、提现申请、打款记录 |
-| P-06 | 独立门户 | ☐ | 代理专属购卡页（可绑子域名） |
-| P-07 | 代理设置 | ☐ | 资料、密码、收款方式 |
-| P-08 | 公告中心 | ☐ | 平台总公告 + 所属开发者应用公告 |
-| P-09 | 余额充值 | ☐ | 向开发者充值余额 |
-| P-10 | 实时购卡 | ☐ | 扫码购卡（备用方式） |
+| P-01 | 工作台 | ✅ | 4 数据卡 + 4 快捷入口 + 最近订单（v0.2.5） |
+| P-02 | 卡密库存 | ✅ | 可售卡类 + 余额扣款生成卡密 + 佣金计算（v0.2.5 + v0.3.0 事务化） |
+| P-03 | 卡密管理 | ✅ | 自己生成的卡密列表（v0.2.5） |
+| P-04 | 销售订单 | ✅ | 自售订单 + 状态筛选 + 分页（v0.2.5） |
+| P-05 | 佣金结算 | ✅ | 佣金明细 + 提现申请 + 双模式（percentage/diff）（v0.2.5） |
+| P-06 | 独立门户 | ☐ | 代理专属购卡页 + 子域名绑定（v0.4.x） |
+| P-07 | 代理设置 | ✅ | 资料 + 提现账户 + 密码 + 2FA + 登录设备（v0.2.6 + v0.3.1） |
+| P-08 | 公告中心 | ✅ | 平台 + 开发者通知列表 + 已读标记（v0.2.7） |
+| P-09 | 余额充值 | ✅ | 充值申请 + 支付方式 + 凭证上传 + 待审核闭环（v0.3.1 + v0.3.2） |
+| P-10 | 实时购卡 | ☐ | 扫码购卡（备用方式）（v0.4.x） |
 
 ### 3.4 终端用户 H5（14 个页面）
 
-| 编号 | 页面 | 已实现 |
-|---|---|---|
-| U-01 | 首页 | ☐ |
-| U-02 | 应用详情页 | ☐ |
-| U-03 | 购卡结算页 | ☐ |
-| U-04 | 支付结果页 | ☐ |
-| U-05 | 我的卡密 | ☐ |
-| U-06 | 卡密详情 | ☐ |
-| U-07 | 查卡页 | ☐ |
-| U-08 | 在线激活页 | ☐ |
-| U-09 | 用户登录/注册 | ☐ |
-| U-10 | 用户中心 | ☐ |
-| U-11 | 订单列表 | ☐ |
-| U-12 | 公告详情 | ☐ |
-| U-13 | 帮助中心 | ☐ |
-| U-14 | 联系客服 | ☐ |
+| 编号 | 页面 | 已实现 | 说明 |
+|---|---|---|---|
+| U-01 | 首页 | ✅ | H5 购卡首页（v0.2.4 + v0.3.5 接入公共 API） |
+| U-02 | 应用详情页 | ✅ | PublicAppInfo 渲染（v0.3.5） |
+| U-03 | 购卡结算页 | ✅ | PublicCardTypes + CreatePayOrder（v0.2.3 + v0.3.5） |
+| U-04 | 支付结果页 | ✅ | GetPayOrder + 卡密明文展示（v0.2.4 + v0.3.5） |
+| U-05 | 我的卡密 | ☐ | 终端用户体系未建（v0.4.x） |
+| U-06 | 卡密详情 | ✅ | 卡密查询 + 详情（v0.2.4） |
+| U-07 | 查卡页 | ✅ | 按 card_key 查询（v0.2.4） |
+| U-08 | 在线激活页 | ☐ | 终端用户体系未建（v0.4.x） |
+| U-09 | 用户登录/注册 | ☐ | 终端用户体系未建（v0.4.x） |
+| U-10 | 用户中心 | ☐ | 终端用户体系未建（v0.4.x） |
+| U-11 | 订单列表 | ☐ | 终端用户体系未建（v0.4.x） |
+| U-12 | 公告详情 | ☐ | v0.4.x |
+| U-13 | 帮助中心 | ☐ | v0.4.x |
+| U-14 | 联系客服 | ☐ | v0.4.x |
 
 ### 3.5 客户端 SDK
 
 | 语言 | 包名 | 已实现 |
 |---|---|---|
-| Python | `keyauth-py` | ☐ |
-| Node.js | `keyauth-node` | ☐ |
-| Java | `keyauth-java` | ☐ |
-| C# | `keyauth-csharp` | ☐ |
-| Go | `keyauth-go` | ☐ |
-| PHP | `keyauth-php` | ☐ |
-| C/C++ | `keyauth-cpp` | ☐ |
-| 易语言 | 模块源码 | ☐ |
+| Python | `keyauth-py` | ☐（v0.3.6） |
+| Node.js | `keyauth-node` | ☐（v0.3.6） |
+| Java | `keyauth-java` | ☐（v0.4.0） |
+| C# | `keyauth-csharp` | ☐（v0.4.0） |
+| Go | `keyauth-go` | ☐（v0.4.0） |
+| PHP | `keyauth-php` | ☐（v0.3.6） |
+| C/C++ | `keyauth-cpp` | ☐（v0.4.0） |
+| 易语言 | 模块源码 | ☐（v0.4.0） |
 
 ---
 
 ## 4. 数据库设计
 
-### 4.1 表清单（共 26 张表）
+### 4.1 表清单（共 30 张表，对应 30 个 GORM struct）
 
-| 分类 | 表名 | 说明 |
-|---|---|---|
-| 平台 | `sys_admin` | 超管账号 |
-| 平台 | `sys_config` | 系统配置（铁律 05） |
-| 平台 | `sys_tenant` | 租户（开发者） |
-| 平台 | `sys_tenant_quota` | 租户套餐配额 |
-| 平台 | `sys_package` | 平台套餐定义 |
-| 平台 | `tenant_pay_config` | 租户自有易支付配置 |
-| 应用 | `app` | 开发者应用 |
-| 应用 | `app_card_type` | 卡类套餐 |
-| 应用 | `app_card` | 卡密 |
-| 应用 | `app_device` | 设备绑定 |
-| 应用 | `app_user` | 终端用户 |
-| 应用 | `app_order` | 订单 |
-| 应用 | `app_cloud_var` | 云变量 |
-| 应用 | `app_notice` | 应用公告（合并到 notice） |
-| 应用 | `app_version` | 应用版本 |
-| 代理 | `agent` | 代理商账号 |
-| 代理 | `agent_quota` | 代理可售范围 |
-| 代理 | `agent_balance_log` | 代理余额流水 |
-| 代理 | `agent_commission` | 佣金结算记录 |
-| 代理 | `agent_withdraw` | 代理提现记录 |
-| 代理 | `agent_invite_code` | 代理邀请码 |
-| 代理 | `agent_registration_order` | 代理注册订单 |
-| 公告 | `notice` | 统一公告表 |
-| 公告 | `notice_target` | 公告精准投递 |
-| 公告 | `notice_read` | 公告已读记录 |
-| 安全 | `sec_ip_blacklist` | IP 黑名单 |
-| 安全 | `sec_request_log` | 请求日志 |
-| 日志 | `log_verify` | 验证日志（按月分区） |
-| 日志 | `log_operation` | 后台操作日志 |
+| 分类 | 表名 | 说明 | 引入版本 |
+|---|---|---|---|
+| 平台 | `sys_admin` | 超管账号 | v0.2.0 |
+| 平台 | `sys_config` | 系统配置（铁律 05） | v0.2.0 |
+| 平台 | `sys_tenant` | 租户（开发者），含 balance/frozen_balance（v0.3.4） | v0.2.0 |
+| 平台 | `sys_package` | 平台套餐定义 | v0.2.0 |
+| 平台 | `tenant_pay_config` | 租户自有易支付配置 | v0.2.0 |
+| 应用 | `app` | 开发者应用 | v0.2.0 |
+| 应用 | `app_card_type` | 卡类套餐 | v0.2.0 |
+| 应用 | `app_card` | 卡密 | v0.2.0 |
+| 应用 | `app_device` | 设备绑定 | v0.2.0 |
+| 应用 | `app_order` | 订单 | v0.2.0 |
+| 应用 | `app_cloud_var` | 云变量 | v0.2.0 |
+| 应用 | `app_version` | 应用版本 | v0.2.0 |
+| 代理 | `agent` | 代理商账号 | v0.2.0 |
+| 代理 | `agent_invite_code` | 代理邀请码 | v0.2.0 |
+| 代理 | `agent_balance_log` | 代理余额流水 | v0.2.0 |
+| 代理 | `agent_withdraw` | 代理提现记录 | v0.2.0 |
+| 代理 | `agent_commission` | 佣金结算记录 | v0.2.0 |
+| 代理 | `agent_registration_order` | 代理注册订单 | v0.2.0 |
+| 公告 | `notice` | 统一公告表 | v0.2.0 |
+| 公告 | `notice_target` | 公告精准投递 | v0.2.0 |
+| 公告 | `notice_read` | 公告已读记录 | v0.2.0 |
+| 安全 | `sec_ip_blacklist` | IP 黑名单 | v0.2.0 |
+| 日志 | `log_verify` | 验证日志（按月分区） | v0.2.0 |
+| 日志 | `log_operation` | 后台操作日志 | v0.2.0 |
+| 平台 | `platform_settlement` | 平台抽成结算记录 | v0.2.3 |
+| 安全 | `log_login_failed` | 登录失败日志（异步 worker 写入） | v0.3.1 |
+| 安全 | `refresh_token_device` | 登录设备记录（用于 ListLoginDevices + KickDevice） | v0.3.1 |
+| 平台 | `tenant_balance_log` | 开发者余额流水（settle/withdraw/refund/adjust） | v0.3.4 |
+| 平台 | `tenant_withdraw` | 开发者提现申请 | v0.3.4 |
+| 系统 | `schema_migrations` | 轻量级迁移机制版本跟踪（dirty 状态） | v0.3.5 |
+
+> migration 文件：`apps/server/migrations/` 共 7 套（001 ~ 007），由 `internal/migration/migrator.go` 在 `InitContainer` 阶段自动执行。
 
 ### 4.2 Redis 缓存键设计
 
@@ -265,15 +268,15 @@ SDK 校验签名 → 通过则解锁功能
 | `pay:config:tenant:{tenant_id}` | 10min | 租户支付配置缓存 |
 | `card:verify:{card_key_hash}` | 60s | 卡密验证结果缓存 |
 | `device:online:{device_id}` | 180s | 设备在线状态 |
-| `heartbeat:{card_id}` | 180s | 心跳计数 |
+| `heartbeat:{card_id}` | 180s | 心跳计数（Sorted Set） |
 | `rate:verify:{ip}` | 60s | IP 限流计数 |
 | `rate:login:{card_key}` | 60s | 卡密登录防爆破 |
-| `session:tenant:{token}` | 24h | 租户会话 |
-| `session:agent:{token}` | 24h | 代理会话 |
-| `session:admin:{token}` | 24h | 超管会话 |
 | `lock:card:{card_id}` | 5s | 卡密操作分布式锁 |
 | `nonce:{nonce}` | 5min | Nonce 防重放 |
 | `pay:notify:lock:{order_no}` | 10s | 回调防重入锁 |
+| `2fa:setup:{user_id}` | 10min | 2FA setup 中转（待 verify 前临时存 totp_secret） |
+| `2fa:backup:{user_id}` | persistent | 2FA 备用码（持久化） |
+| `login:fail:{username}` | 15min | 登录失败次数（达阈值锁定账号） |
 
 ---
 
@@ -396,100 +399,86 @@ keyauth-saas/
 ├── apps/
 │   ├── server/                    # Go 后端
 │   │   ├── cmd/
-│   │   │   └── main.go           # 程序入口
+│   │   │   └── main.go           # 程序入口（含 StartVerifyLogWorker + StartOperationLogWorker）
 │   │   ├── internal/
-│   │   │   ├── config/           # 配置加载
-│   │   │   ├── middleware/       # 中间件
-│   │   │   │   ├── auth.go       # JWT 认证
-│   │   │   │   ├── tenant.go     # 租户隔离
-│   │   │   │   ├── signature.go  # HMAC 验签
-│   │   │   │   ├── ratelimit.go  # 限流
-│   │   │   │   └── logger.go     # 日志
-│   │   │   ├── model/            # 数据模型
-│   │   │   ├── repository/       # 数据访问层
-│   │   │   ├── service/          # 业务逻辑层
-│   │   │   │   ├── auth/
-│   │   │   │   ├── tenant/
-│   │   │   │   ├── app/
-│   │   │   │   ├── card/
-│   │   │   │   ├── device/
-│   │   │   │   ├── verify/       # 客户端验证 API
-│   │   │   │   ├── pay/          # 支付（平台总支付 + 自有易支付）
-│   │   │   │   ├── agent/        # 代理体系
-│   │   │   │   ├── notice/       # 公告
-│   │   │   │   └── stats/        # 统计
-│   │   │   ├── handler/          # HTTP 处理器
-│   │   │   └── router/           # 路由
+│   │   │   ├── auth/             # JWT/TOTP/login_lock（v0.2.1）
+│   │   │   ├── config/           # 配置加载 + sys_config 缓存（cache.go）
+│   │   │   ├── handler/          # HTTP 处理器（17 个文件，143 条路由）
+│   │   │   │   ├── admin.go / admin_business.go / admin_finance.go  # 超管 3 文件
+│   │   │   │   ├── tenant_business.go / tenant_finance.go / tenant_settle.go  # 开发者 3 文件
+│   │   │   │   ├── agent_business.go  # 代理 1 文件
+│   │   │   │   ├── app.go / card.go / client.go  # 应用/卡密/客户端验证
+│   │   │   │   ├── auth.go / session.go / profile.go / public.go  # 鉴权/会话/账号设置/公开 API
+│   │   │   │   ├── pay.go  # 平台总支付 + 开发者自有易支付占位
+│   │   │   │   ├── log_worker.go  # 异步日志 worker（验证 4096 + 操作 2048）
+│   │   │   │   └── deps.go  # 依赖注入容器
+│   │   │   ├── heartbeat/        # 心跳保活（Redis Sorted Set，6 个方法）
+│   │   │   ├── middleware/       # 中间件（auth/tenant/signature/ratelimit/response/time）
+│   │   │   ├── migration/        # 轻量级 SQL 文件迁移（v0.3.5）
+│   │   │   ├── model/            # 30 个 GORM struct
+│   │   │   ├── quota/            # 套餐配额检查（CheckMaxApps/MaxCards/MaxAgents/MaxDevices，v0.3.5）
+│   │   │   └── router/           # 路由注册
+│   │   ├── migrations/           # 7 套 SQL 迁移（001 ~ 007）
 │   │   ├── pkg/
-│   │   │   ├── crypto/           # 加密工具（AES/RSA/HMAC/bcrypt）
-│   │   │   ├── jwt/              # JWT 工具
-│   │   │   ├── snowflake/        # 雪花算法
-│   │   │   └── securerandom/     # 安全随机数
-│   │   ├── migrations/           # 数据库迁移
-│   │   └── go.mod
+│   │   │   ├── crypto/           # AES-256-GCM + RSA-4096 + HMAC-SHA256 + bcrypt + 卡密生成
+│   │   │   ├── epay/             # 彩虹易支付工具包
+│   │   │   └── snowflake/        # 雪花算法订单号
+│   │   ├── go.mod
+│   │   └── go.sum
 │   │
-│   ├── admin/                     # Vue3 管理后台（超管/开发者/代理）
-│   │   ├── src/
-│   │   │   ├── api/
-│   │   │   ├── components/
-│   │   │   ├── layouts/
-│   │   │   │   ├── AdminLayout.vue     # 超管布局
-│   │   │   │   ├── TenantLayout.vue    # 开发者布局
-│   │   │   │   └── AgentLayout.vue     # 代理布局
-│   │   │   ├── views/
-│   │   │   │   ├── admin/              # 超管页面（S-01 ~ S-17）
-│   │   │   │   ├── tenant/             # 开发者页面（D-01 ~ D-19）
-│   │   │   │   └── agent/              # 代理页面（P-01 ~ P-10）
-│   │   │   ├── router/
-│   │   │   ├── stores/
-│   │   │   └── utils/
-│   │   └── package.json
-│   │
-│   └── h5/                        # 终端用户 H5（移动端）
+│   └── admin/                     # Vue3 前端（超管 + 开发者 + 代理 + 官网 + H5 五合一）
 │       ├── src/
-│       │   ├── api/
-│       │   ├── pages/             # U-01 ~ U-14
-│       │   └── stores/
+│       │   ├── api/               # 9 个 API 模块（admin/agent/apps/auth/cards/http/pay/profile/sysConfig/tenant/tenantFinance）
+│       │   ├── components/        # 公告横幅（Platform/Developer/Agent）+ EmptyState + PageHeader + ResponsiveTable
+│       │   ├── layouts/           # AdminLayout / TenantLayout / AgentLayout / BasicLayout / H5Layout
+│       │   ├── router/            # 路由 + 角色守卫
+│       │   ├── stores/            # Pinia: auth / sysConfig
+│       │   ├── styles/            # SCSS 变量
+│       │   ├── views/
+│       │   │   ├── admin/         # 12 个超管页面
+│       │   │   ├── agent/         # 8 个代理页面
+│       │   │   ├── tenant/        # 16 个开发者页面
+│       │   │   ├── h5/            # 4 个 H5 页面
+│       │   │   ├── landing/       # 官网首页
+│       │   │   ├── login/         # 登录页
+│       │   │   ├── register/      # 开发者注册
+│       │   │   └── error/         # 404
+│       │   ├── App.vue
+│       │   └── main.ts
+│       ├── .env.development / .env.production
+│       ├── vite.config.ts
 │       └── package.json
 │
-├── sdks/                          # 客户端 SDK
-│   ├── python/
-│   ├── nodejs/
-│   ├── java/
-│   ├── csharp/
-│   ├── go/
-│   ├── php/
-│   ├── cpp/
-│   └── e-lang/
+├── configs/                       # 运行时配置
+│   └── config.yaml.example
 │
 ├── deploy/                        # 部署相关
-│   ├── docker-compose.yml
-│   ├── Dockerfile.api
-│   ├── Dockerfile.admin
-│   ├── Dockerfile.h5
-│   ├── nginx.conf
-│   ├── baota-install.sh          # 宝塔安装脚本
-│   └── README.md
+│   └── nginx/
+│       ├── admin.conf             # admin 反代
+│       └── gateway.conf           # 网关总入口（限流）
 │
-├── docs/                          # 文档
-│   ├── CHANGELOG.md              # 更新日志
-│   ├── PROJECT.md                # 项目文档（本文件）
-│   ├── SPEC.md                   # 规范文档
-│   ├── TODO.md                   # 待完成文档
-│   ├── api/                      # API 文档（OpenAPI 3.0）
-│   ├── sdk/                      # SDK 对接文档
-│   └── database/                 # 数据库设计文档
+├── docs/                          # 四份核心文档
+│   ├── CHANGELOG.md
+│   ├── PROJECT.md                 # 本文件
+│   ├── SPEC.md
+│   └── TODO.md
+│
+├── keys/                          # RSA 密钥对挂载点
+│   └── .gitkeep
 │
 ├── scripts/                       # 脚本
-│   ├── backup.sh                 # 备份脚本
-│   ├── restore.sh                # 恢复脚本
-│   └── migrate.sh                # 迁移脚本
+│   ├── baota_deploy.sh            # 宝塔一键部署
+│   ├── gen_rsa_key.sh             # RSA-4096 密钥对生成（v0.3.5，独立脚本）
+│   ├── reset_admin_password.sh    # 重置超管密码
+│   └── auto_push.sh               # 自动提交推送
 │
+├── Dockerfile                     # 后端镜像（多阶段构建）
+├── Dockerfile.admin               # 前端镜像
+├── docker-compose.yml             # 完整编排（mysql/redis/api/admin/nginx）
 ├── .env.example
 ├── .gitignore
-├── LICENSE
-├── README.md
-└── go.mod
+├── PROMPT.md                      # AI 接手指引
+└── README.md
 ```
 
 ---
@@ -527,12 +516,12 @@ pnpm dev
 - `release/*`：发布分支
 
 ### 7.4 编码铁律（HARD）
-所有代码必须遵守：
-- [references/04 禁硬编码假数据](../../web-project-flow/references/04-no-hardcode-fake-data.md)
-- [references/05 配置后台化 sys_config](../../web-project-flow/references/05-config-to-backend.md)
-- [references/06 防 AI 幻觉](../../web-project-flow/references/06-anti-hallucination.md)
+所有代码必须遵守 `web-project-flow` skill（已全局安装）的三份铁律：
+- references/04 禁硬编码假数据
+- references/05 配置后台化 sys_config
+- references/06 防 AI 幻觉
 
-违反铁律的代码必须重写。
+可通过 `/bhardcode /bconfig /bhaluc` 一次性加载；用 `/bdocs` 触发四份文档联动更新。违反铁律的代码必须重写。
 
 ---
 
@@ -544,6 +533,6 @@ pnpm dev
 
 ---
 
-**文档版本**：0.1.0  
-**最后更新**：2026-07-19  
+**文档版本**：0.3.5  
+**最后更新**：2026-07-20  
 **维护者**：KeyAuth SaaS Team

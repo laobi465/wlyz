@@ -1,6 +1,8 @@
 # PROMPT.md —— AI 接手指引
 
 > 当新的 AI / 开发者接手本项目时，按本文件指引快速进入工作状态。
+>
+> 配套 Skill：`web-project-flow`（已全局安装）。输入 `/bhelp` 查看全部 11 份提示词索引；写代码前用 `/bhardcode /bconfig /bhaluc` 加载三铁律；变更后用 `/bdocs` 触发四份文档联动更新；接手项目用 `/bonboard`。
 
 ## 一、项目背景速读（2 分钟）
 
@@ -52,17 +54,31 @@ docs/                       # 四份核心文档
 
 ## 五、当前进度
 
-**v0.2.0（骨架阶段）已完成**：
-- ✅ 后端 Go 项目结构（main / config / model / middleware / handler / router）
-- ✅ 26 张表 DDL + 默认 seed 数据
-- ✅ 三套前端布局 + 登录页 + 代理注册页 + 404
-- ✅ Docker Compose + 宝塔部署脚本
+**v0.3.5（最新，2026-07-19）已完成**：
+- ✅ 后端 Go 项目结构（main / config / model / middleware / handler / router / quota / migration / heartbeat）
+- ✅ 26 张基础表 + 4 张扩展表（log_login_failed / refresh_token_device / tenant_balance_log / tenant_withdraw）共 30 个 GORM struct，7 套 migration（001~007）
+- ✅ 后端业务 API 全量实现：17 个 handler 文件，143 条路由，三角色 dashboard/profile/CRUD/2FA/登录设备全部真实实现，无 501 占位
+- ✅ 三角色前端：45 个 .vue 页面，BasicLayout + AdminLayout/TenantLayout/AgentLayout + 官网 + H5，全部响应式
+- ✅ 平台总支付闭环（彩虹易支付：下单/回调/同步跳转/自动发卡/防重入/超时关闭/抽成结算）
+- ✅ 代理体系闭环（邀请码 + 充值审核 + 余额扣款生成卡密 + 佣金计算 + 提现审核 + 三级通知）
+- ✅ 开发者结算与对账闭环（balance/frozen_balance + 批量结算 + 对账报表 + 双审核页面）
+- ✅ 日志系统（验证/操作异步 worker + 三表独立查询 + UTF-8 BOM CSV 导出）
+- ✅ 套餐配额统一封装（quota 包：CheckMaxApps/MaxCards/MaxAgents/MaxDevices）
+- ✅ 轻量级 SQL 文件迁移机制（schema_migrations 表 + dirty 状态 + 单迁移事务）
+- ✅ H5 公共 API（PublicAppInfo + PublicCardTypes，购卡闭环）
+- ✅ Docker Compose + 宝塔部署 + RSA-4096 密钥生成独立脚本
 
-**v0.2.0 待实现**：
-- ⏳ 后端各 handler 业务逻辑（当前均为 501 占位）
-- ⏳ 前端各业务页面（当前均为 PlaceholderView 占位）
-- ⏳ 客户端 SDK（Go / C# / Python 三语言）
+**v0.3.6（待开始）剩余 P1 收尾**：
+- ⏳ 卡密 CSV 导入导出
+- ⏳ 设备强制下线（清 Redis 心跳）
+- ⏳ 安装向导页面（/install）
+- ⏳ 代理注册付费流程（前后端均仍为 TODO 占位：auth.go:443 AgentRegister + Register.vue）
+- ⏳ 开发者自有易支付（pay.go:528 EpayTenantNotify 仍返回 "fail"）
+- ⏳ 客户端 SDK（Python / Node.js / PHP 三语言）
 - ⏳ 单元测试 + 集成测试
+
+**v0.4.0（三期商业化，待开始）**：
+- 多级代理 + 全语言 SDK + 在线更新 + 数据备份恢复 + 监控告警 + 通知系统
 
 详细任务见 `docs/TODO.md`。
 
@@ -124,4 +140,6 @@ bash scripts/reset_admin_password.sh NewPass@2026
 - `pkg/snowflake/snowflake.go` 中 `twepoch = 1767225600000`（2026-01-01 UTC）
 - `migrations/002_seed_data.up.sql` 中默认超管密码哈希为占位，部署后必须重置
 - `scripts/reset_admin_password.sh` 中后端 `--reset-admin-password` subcommand 需在 main.go 实现
-- 前端各 `TODO` 注释处的真实接口对接
+- `apps/server/internal/handler/auth.go:443` `AgentRegister` 仍为 501 占位（v0.3.6 交付）
+- `apps/server/internal/handler/pay.go:528` `EpayTenantNotify` 仍返回 "fail"（v0.3.6 交付）
+- `apps/admin/src/views/agent/Register.vue` 三处 TODO 占位（v0.3.6 交付）

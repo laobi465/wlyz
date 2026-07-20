@@ -9,6 +9,66 @@
 
 ---
 
+## [0.3.6] - 2026-07-20
+
+### [文档] 四份核心文档 + README + PROMPT 全量同步对齐 v0.3.5 实际状态
+
+本次发布为纯文档同步，按 `web-project-flow` skill 的 `references/09-docs-lifecycle.md` 规范联动更新，消除多份文档与代码实际状态不一致的矛盾。配套 `web-project-flow` skill 已全局安装。
+
+#### README.md
+- [修改] 版本徽章 `0.2.7` → `0.3.5`
+- [修改] 「当前版本」表格新增 v0.3.0 ~ v0.3.5 六行，所有模块状态从「⏳ 计划中」改为「✅ 已完成」
+- [修改] 「后续版本规划」从 v0.2.5/v0.2.6/v0.2.7/v0.3.0/v0.4.0 改为 v0.3.6/v0.4.0
+- [新增] 「开发约束」章节补 `web-project-flow` skill 已全局安装说明 + `/bhelp` `/bhardcode /bconfig /bhaluc` `/bdocs` 命令索引
+
+#### PROMPT.md
+- [新增] 顶部 skill 使用说明（`/bhelp` / `/bonboard` / `/bdocs`）
+- [修改] 「五、当前进度」从 v0.2.0 骨架阶段重写为 v0.3.5 已完成 + v0.3.6 待开始 + v0.4.0 计划
+- [修改] 「九、可信度声明」补三个具体占位文件位置（auth.go:443 / pay.go:528 / Register.vue）
+
+#### PROJECT.md
+- [修改] 文档版本 `0.1.0` → `0.3.5`，最后更新 `2026-07-19` → `2026-07-20`
+- [修改] 「3.1 平台超管后台」17 个模块状态全勾选已实现项（11 ✅ + 6 ☐ 标注 v0.4.x）
+- [修改] 「3.2 开发者控制台」19 个模块状态全勾选（15 ✅ + 4 ☐ 标注 v0.3.6/v0.4.x）
+- [修改] 「3.3 代理商控制台」10 个模块状态全勾选（8 ✅ + 2 ☐ 标注 v0.4.x）
+- [修改] 「3.4 终端用户 H5」14 个页面状态全勾选（5 ✅ + 9 ☐ 标注 v0.4.x 终端用户体系未建）
+- [修改] 「3.5 客户端 SDK」补预计版本（Python/Node/PHP v0.3.6，其余 v0.4.0）
+- [修改] 「4.1 表清单」26 张 → 30 张，新增 platform_settlement/log_login_failed/refresh_token_device/tenant_balance_log/tenant_withdraw/schema_migrations 6 张表，并加「引入版本」列
+- [修改] 「4.2 Redis 缓存键」移除 session:admin/tenant/agent（实际用 JWT 无 session）+ 补 2fa:setup/2fa:backup/login:fail
+- [修改] 「6. 目录结构」完全重写对齐实际（移除不存在的 service/repository 子目录、sdks/ 目录、deploy/docker-compose.yml；新增 internal/auth/heartbeat/migration/quota 包说明 + handler 17 文件清单 + .env.development/production + PROMPT.md）
+- [修改] 「7.4 编码铁律」补 skill 命令索引
+
+#### SPEC.md
+- [修改] 文档版本 `0.1.0` → `0.3.5`，最后更新 `2026-07-19` → `2026-07-20`
+- [修改] 「2.1 分层架构」从理论 4 层（Handler/Service/Repository/Model）改为实际 3 层简化架构（Handler 直连 GORM + 辅助包 + Model+Middleware），补当前实现说明 + v0.4.x 重构计划
+- [修改] 「2.2 模块边界」从理论 `internal/service/<module>/` 改为实际 `internal/handler/` 17 文件清单，补跨文件通信机制（Deps / RecordOperation / writeVerifyLogCtx）
+- [修改] 「8.3 数据库迁移」从 `golang-migrate/migrate` 改为自研轻量级 SQL 文件迁移机制（v0.3.5），补 schema_migrations 表 + dirty 状态 + multiStatements + MIGRATION_AUTO/MIGRATION_DIR 等实际细节
+- [修改] 「9.1 四份核心文档」补联动校验铁律三条
+
+#### TODO.md
+- [修改] 「三级公告体系」11 项子项从 [待开始] 改为 [已完成]（统一公告表/notice_target/notice_read/S-15/S-16/D-10/agent_notify/顶部公告/P-08），消除与 v0.3.0 章节的矛盾
+- [修改] 「云变量与版本管理」5 项子项全部改为 [已完成]（云变量 CRUD + 3 个客户端接口），消除与 v0.3.0 章节的矛盾
+- [修改] 「数据统计看板」3 项已实现（admin/tenant/agent dashboard）改为 [已完成]，仅留 2 项 v0.4.x
+- [修改] 「客户端 SDK」版本号 v0.3.0 → v0.3.6
+- [修改] 「开发者自有易支付」补 tenant_pay_config [已完成] + EpayTenantNotify 仍返回 "fail" 的精确位置（pay.go:528）
+- [修改] 「代理注册付费流程」补邀请码 CRUD [已完成] + AgentRegister 501 占位精确位置（auth.go:443）
+- [修改] 「代理购买卡密」实时扫码购卡/独立门户/子域名绑定 从 v0.3.0 → v0.4.x
+- [修改] 里程碑表新增 v0.3.5 行 + v0.3.6 [进行中] 行
+- [修改] 「v0.2.3 进度统计」章节完全重写为「v0.3.5 进度统计」（总任务 75→110，已完成 53→90，待完成 21→19，新增 v0.2.0~v0.3.5 已完成版本汇总表 + v0.3.6/v0.4.x 待完成项分类）
+- [修改] 文档版本 `0.2.7` → `0.3.5`
+
+#### 验证
+- [验证] 文档版本号四份统一为 `0.3.5`
+- [验证] 时间戳统一为 `2026-07-20`
+- [验证] TODO 中标记 [已完成] 的项均能在对应版本 CHANGELOG 中找到（联动校验铁律 ①）
+- [验证] PROJECT 中描述的功能与 SPEC 中的规范一致（联动校验铁律 ②）
+
+#### 待核实项（铁律 06）
+- 表清单 30 张中 `app_user` 在 v0.2.0 DDL 中存在但 v0.3.x 实际未使用（终端用户体系未建），待 v0.4.x 终端用户体系启动时确认
+- `agent_quota` 表在 DDL 中存在但 model.go 中无对应 struct，待核实是否仍在使用
+
+---
+
 ## [0.3.5] - 2026-07-19
 
 ### [修复] P0 紧急修复：RSA 脚本 / 数据库迁移 / H5 公共 API / 套餐配额
