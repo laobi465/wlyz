@@ -222,8 +222,8 @@ MYSQL_ROOT_PASSWORD=<强密码>
 MYSQL_PASSWORD=<强密码>
 REDIS_PASSWORD=<强密码>
 
-# AES-256 密钥：32 字节 base64
-openssl rand -base64 32
+# AES-256 密钥：必须正好 32 字节字符串（不是 base64 解码后 32 字节）
+openssl rand -hex 16
 AES_KEY=<上面的输出>
 
 # JWT 密钥

@@ -68,10 +68,12 @@ if [[ ! -f keys/rsa_private.pem || ! -f keys/rsa_public.pem ]]; then
 fi
 
 # ---------- 校验 AES 密钥长度 ----------
-AES_KEY_DECODED_LEN=$(echo -n "${AES_KEY}" | base64 -d 2>/dev/null | wc -c | tr -d ' ')
-if [[ "${AES_KEY_DECODED_LEN}" -ne 32 ]]; then
-    warn "AES_KEY 解码后长度为 ${AES_KEY_DECODED_LEN} 字节，应为 32 字节"
-    warn "请使用以下命令重新生成：openssl rand -base64 32"
+# 后端 config.go 校验 len(AES_KEY) == 32（字符串本身 32 字节，不是 base64 解码后 32 字节）
+# 正确生成方式：openssl rand -hex 16  → 16 字节随机 → hex 编码 32 字符
+AES_KEY_LEN=$(echo -n "${AES_KEY}" | wc -c | tr -d ' ')
+if [[ "${AES_KEY_LEN}" -ne 32 ]]; then
+    warn "AES_KEY 长度为 ${AES_KEY_LEN} 字符，应为 32 字符"
+    warn "请使用以下命令重新生成：openssl rand -hex 16"
 fi
 
 # ---------- 构建并启动 ----------

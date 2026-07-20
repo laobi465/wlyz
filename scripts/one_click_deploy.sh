@@ -262,11 +262,14 @@ if [[ ! -f .env ]]; then
     log "生成 .env 并自动填充强随机密钥..."
     cp .env.example .env
 
-    # 生成强随机密钥（tr 去除 shell 不友好字符 / +=）
+    # 生成强随机密钥
+    # AES_KEY 必须正好 32 字节字符串（后端 config.go 校验 len != 32）
+    # 用 openssl rand -hex 16 生成 16 字节随机 → hex 编码 32 字符
+    # MySQL/Redis 密码去除 shell 不友好字符 / +=
     MYSQL_ROOT_PWD=$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-24)
     MYSQL_PWD=$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-24)
     REDIS_PWD=$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-24)
-    AES_KEY=$(openssl rand -base64 32)
+    AES_KEY=$(openssl rand -hex 16)
     JWT_SECRET=$(openssl rand -hex 32)
 
     # 替换占位符（兼容 CHANGE_ME_XXX 形式）

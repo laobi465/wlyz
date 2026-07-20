@@ -105,7 +105,8 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       # 必须从环境变量传入（铁律 04：敏感配置不进代码）
-      AES_KEY: ${AES_KEY}
+      # 注意：后端 config.go 读取的环境变量名为 APP_AES_KEY，必须 32 字节字符串
+      APP_AES_KEY: ${AES_KEY}
       JWT_SECRET: ${JWT_SECRET}
       RSA_PRIVATE_KEY_PATH: /app/keys/rsa_private.pem
       RSA_PUBLIC_KEY_PATH: /app/keys/rsa_public.pem
