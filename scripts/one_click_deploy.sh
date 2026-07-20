@@ -1,25 +1,23 @@
 #!/usr/bin/env bash
 # ============================================================
-# KeyAuth SaaS —— SSH 一键自动化部署脚本
+# KeyAuth SaaS —— SSH 一行命令一键自动化部署脚本
 # ============================================================
-# 功能：
+# 功能（一行命令完成全部，无需事先上传源码）：
 #   1. 检测操作系统（CentOS/Ubuntu/Debian 系）
 #   2. 检测宝塔面板，未安装则拉取官方脚本自动安装
-#   3. 检测 Docker，未安装则通过宝塔/Docker 官方脚本安装
-#   4. 克隆/更新项目源码
-#   5. 自动生成 RSA 密钥对 + .env 强随机密钥
-#   6. docker compose 构建并启动 mysql/redis/server/admin
-#   7. 等待服务就绪，输出访问信息
+#   3. 检测 Docker，未安装则自动安装（Docker 官方脚本 + 阿里云镜像）
+#   4. 自动 git clone 仓库到 /www/wwwroot/keyauth
+#   5. 自动生成 RSA-4096 密钥对 + .env 强随机密钥
+#   6. docker compose up -d --build 构建并启动 mysql/redis/server/admin
+#   7. 等待服务就绪
+#   8. 把所有部署信息（宝塔入口/密钥/访问地址/运维命令）写入 /root/keyauth_deploy_info.txt
 #
-# 用法（远程一行命令）：
+# 用法（远程一行命令，推荐）：
 #   sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/laobi465/wlyz/main/scripts/one_click_deploy.sh)"
 #
 # 或先下载再执行：
 #   curl -fsSL https://raw.githubusercontent.com/laobi465/wlyz/main/scripts/one_click_deploy.sh -o one_click_deploy.sh
 #   sudo bash one_click_deploy.sh
-#
-# 也可在已 clone 的项目内执行：
-#   sudo bash scripts/one_click_deploy.sh
 # ============================================================
 set -euo pipefail
 
@@ -42,18 +40,34 @@ REPO_URL="https://github.com/laobi465/wlyz.git"
 PROJECT_DIR="/www/wwwroot/keyauth"
 BT_PANEL_DIR="/www/server/panel"
 BT_PORT_FILE="${BT_PANEL_DIR}/data/port.pl"
+DEPLOY_INFO_FILE="/root/keyauth_deploy_info.txt"
+
+# 部署状态记录（最终写入 txt）
+declare -A DEPLOY_STATE
+DEPLOY_STATE[os_pretty]="未知"
+DEPLOY_STATE[bt_status]="未安装"
+DEPLOY_STATE[bt_url]="未获取"
+DEPLOY_STATE[bt_username]="未获取"
+DEPLOY_STATE[bt_password]="未获取"
+DEPLOY_STATE[bt_port]="8888"
+DEPLOY_STATE[docker_status]="未安装"
+DEPLOY_STATE[project_dir]="$PROJECT_DIR"
+DEPLOY_STATE[mysql_root_pwd]="未生成"
+DEPLOY_STATE[mysql_pwd]="未生成"
+DEPLOY_STATE[redis_pwd]="未生成"
+DEPLOY_STATE[aes_key]="未生成"
+DEPLOY_STATE[jwt_secret]="未生成"
+DEPLOY_STATE[server_port]="8080"
+DEPLOY_STATE[admin_port]="8081"
+DEPLOY_STATE[server_ip]="未知"
+DEPLOY_STATE[frontend_url]="未知"
+DEPLOY_STATE[api_url]="未知"
+DEPLOY_STATE[server_ok]="false"
+DEPLOY_STATE[mysql_ok]="false"
+DEPLOY_STATE[deploy_time]="$(date '+%Y-%m-%d %H:%M:%S')"
 
 # 记录是否全新安装宝塔（影响后续提示）
 BT_FRESH_INSTALLED=0
-# 记录是否需要克隆源码（远程模式）
-SHOULD_CLONE=1
-
-# 检测当前是否已在项目目录内（本地模式）
-if [[ -f "docker-compose.yml" && -f "scripts/one_click_deploy.sh" ]]; then
-    PROJECT_DIR="$(pwd)"
-    SHOULD_CLONE=0
-    log "检测到已在项目目录内，使用本地源码部署：$PROJECT_DIR"
-fi
 
 # ---------- Step 1: 检测操作系统 ----------
 step "Step 1/9: 检测操作系统"
@@ -66,6 +80,7 @@ fi
 OS_ID="${ID:-unknown}"
 OS_FAMILY="${ID_LIKE:-}"
 OS_PRETTY="${PRETTY_NAME:-$OS_ID}"
+DEPLOY_STATE[os_pretty]="$OS_PRETTY"
 log "操作系统：$OS_PRETTY"
 
 is_centos=0; is_ubuntu=0
@@ -81,7 +96,7 @@ case "$OS_ID" in
         fi ;;
 esac
 
-# ---------- 安装基础工具（curl/wget/openssl/git） ----------
+# ---------- 安装基础工具 ----------
 install_pkgs() {
     if [[ $is_centos -eq 1 ]]; then
         yum install -y "$@" >/dev/null 2>&1
@@ -110,14 +125,15 @@ step "Step 2/9: 检测宝塔面板"
 
 if [[ -d "$BT_PANEL_DIR" && -f "$BT_PANEL_DIR/BT-Panel" ]]; then
     log "✓ 宝塔面板已安装：$BT_PANEL_DIR"
+    DEPLOY_STATE[bt_status]="已安装"
     if [[ -f "$BT_PORT_FILE" ]]; then
-        log "  面板端口：$(cat "$BT_PORT_FILE" 2>/dev/null || echo 未知)"
+        DEPLOY_STATE[bt_port]=$(cat "$BT_PORT_FILE" 2>/dev/null || echo 8888)
+        log "  面板端口：${DEPLOY_STATE[bt_port]}"
     fi
 else
     log "未检测到宝塔面板，开始拉取官方脚本安装..."
     warn "宝塔安装约需 2-5 分钟，期间会自动应答 y 继续安装"
 
-    # 进入临时目录执行
     cd /tmp || exit 1
     if command -v curl >/dev/null 2>&1; then
         curl -sSO https://download.bt.cn/install/install_panel.sh
@@ -133,8 +149,8 @@ else
         exit 1
     }
 
-    # 清理临时文件
     rm -f install_panel.sh
+    cd "$PROJECT_DIR" 2>/dev/null || cd /root
 
     if [[ ! -d "$BT_PANEL_DIR" ]]; then
         err "宝塔安装完成但目录不存在：$BT_PANEL_DIR"
@@ -142,13 +158,25 @@ else
     fi
 
     BT_FRESH_INSTALLED=1
-    log "✓ 宝塔面板安装完成"
-    echo ""
-    warn "宝塔面板默认信息（请妥善保存）："
-    if command -v bt >/dev/null 2>&1; then
-        bt default 2>/dev/null || true
+    DEPLOY_STATE[bt_status]="全新安装"
+    if [[ -f "$BT_PORT_FILE" ]]; then
+        DEPLOY_STATE[bt_port]=$(cat "$BT_PORT_FILE" 2>/dev/null || echo 8888)
     fi
-    echo ""
+    log "✓ 宝塔面板安装完成（端口：${DEPLOY_STATE[bt_port]}）"
+fi
+
+# 尝试读取宝塔默认登录信息
+if command -v bt >/dev/null 2>&1; then
+    BT_DEFAULT_OUT=$(bt default 2>/dev/null || true)
+    if [[ -n "$BT_DEFAULT_OUT" ]]; then
+        # 解析 "外网面板地址: xxx" / "username: xxx" / "password: xxx"
+        BT_URL=$(echo "$BT_DEFAULT_OUT" | grep -iE "面板地址|panel url|外网" | head -1 | sed 's/.*[:：]\s*//' | tr -d ' \r' || true)
+        BT_USER=$(echo "$BT_DEFAULT_OUT" | grep -iE "username|账号|用户名" | head -1 | sed 's/.*[:：]\s*//' | tr -d ' \r' || true)
+        BT_PWD=$(echo "$BT_DEFAULT_OUT" | grep -iE "password|密码" | head -1 | sed 's/.*[:：]\s*//' | tr -d ' \r' || true)
+        [[ -n "$BT_URL" ]] && DEPLOY_STATE[bt_url]="$BT_URL"
+        [[ -n "$BT_USER" ]] && DEPLOY_STATE[bt_username]="$BT_USER"
+        [[ -n "$BT_PWD" ]] && DEPLOY_STATE[bt_password]="$BT_PWD"
+    fi
 fi
 
 # ---------- Step 3: 检测并安装 Docker ----------
@@ -178,6 +206,7 @@ if ! command -v docker >/dev/null 2>&1; then
     err "Docker 安装失败，请通过宝塔软件商店「Docker 管理器」手动安装后重试"
     exit 1
 fi
+DEPLOY_STATE[docker_status]="已安装 $(docker --version | cut -d' ' -f3 | tr -d ',')"
 log "✓ Docker 已就绪：$(docker --version)"
 
 if ! docker compose version >/dev/null 2>&1; then
@@ -189,27 +218,21 @@ log "✓ Docker Compose v2 已就绪"
 # ---------- Step 4: 拉取/更新项目源码 ----------
 step "Step 4/9: 拉取项目源码"
 
-if [[ $SHOULD_CLONE -eq 1 ]]; then
-    mkdir -p /www/wwwroot
-    if [[ -d "$PROJECT_DIR/.git" ]]; then
-        log "项目已存在，执行 git pull 更新..."
-        cd "$PROJECT_DIR"
-        git fetch --all >/dev/null 2>&1 || warn "git fetch 失败"
-        git reset --hard origin/main >/dev/null 2>&1 || warn "git reset 失败"
-        git pull origin main || warn "git pull 失败，使用现有代码继续"
-    else
-        log "从 GitHub 克隆项目到 $PROJECT_DIR ..."
-        if ! git clone --depth 1 "$REPO_URL" "$PROJECT_DIR"; then
-            err "git clone 失败，请检查服务器是否能访问 GitHub"
-            err "如服务器无法访问 GitHub，请在本地打包上传后手动执行："
-            err "  1. 上传源码到 $PROJECT_DIR"
-            err "  2. cd $PROJECT_DIR && bash scripts/one_click_deploy.sh"
-            exit 1
-        fi
-        cd "$PROJECT_DIR"
-    fi
+mkdir -p /www/wwwroot
+if [[ -d "$PROJECT_DIR/.git" ]]; then
+    log "项目已存在，执行 git pull 更新..."
+    cd "$PROJECT_DIR"
+    git fetch --all >/dev/null 2>&1 || warn "git fetch 失败"
+    git reset --hard origin/main >/dev/null 2>&1 || warn "git reset 失败"
+    git pull origin main || warn "git pull 失败，使用现有代码继续"
 else
-    log "使用本地源码：$PROJECT_DIR"
+    log "从 GitHub 克隆项目到 $PROJECT_DIR ..."
+    if ! git clone --depth 1 "$REPO_URL" "$PROJECT_DIR"; then
+        err "git clone 失败，请检查服务器是否能访问 GitHub"
+        err "如服务器无法访问 GitHub，可在宝塔文件管理上传源码包到 $PROJECT_DIR 后重试"
+        exit 1
+    fi
+    cd "$PROJECT_DIR"
 fi
 log "✓ 当前目录：$(pwd)"
 
@@ -253,10 +276,25 @@ if [[ ! -f .env ]]; then
     sed -i "s|^AES_KEY=.*|AES_KEY=${AES_KEY}|g" .env
     sed -i "s|^JWT_SECRET=.*|JWT_SECRET=${JWT_SECRET}|g" .env
 
+    # 记录到状态表（写入最终 txt）
+    DEPLOY_STATE[mysql_root_pwd]="$MYSQL_ROOT_PWD"
+    DEPLOY_STATE[mysql_pwd]="$MYSQL_PWD"
+    DEPLOY_STATE[redis_pwd]="$REDIS_PWD"
+    DEPLOY_STATE[aes_key]="$AES_KEY"
+    DEPLOY_STATE[jwt_secret]="$JWT_SECRET"
+
     log "✓ .env 已生成并自动填充强随机密钥"
     warn ".env 路径：$(pwd)/.env —— 请妥善备份"
 else
-    log "✓ .env 已存在，跳过生成"
+    log "✓ .env 已存在，跳过生成（从已有 .env 读取密钥）"
+    set +e
+    set -a; source .env; set +a
+    set -e
+    DEPLOY_STATE[mysql_root_pwd]="${MYSQL_ROOT_PASSWORD:-未配置}"
+    DEPLOY_STATE[mysql_pwd]="${MYSQL_PASSWORD:-未配置}"
+    DEPLOY_STATE[redis_pwd]="${REDIS_PASSWORD:-未配置}"
+    DEPLOY_STATE[aes_key]="${AES_KEY:-未配置}"
+    DEPLOY_STATE[jwt_secret]="${JWT_SECRET:-未配置}"
 fi
 
 # 复制后端配置（如不存在）
@@ -264,6 +302,10 @@ if [[ ! -f configs/config.yaml && -f configs/config.yaml.example ]]; then
     cp configs/config.yaml.example configs/config.yaml
     log "✓ configs/config.yaml 已生成"
 fi
+
+# 读取端口配置
+DEPLOY_STATE[server_port]="${SERVER_PORT:-8080}"
+DEPLOY_STATE[admin_port]="${ADMIN_PORT:-8081}"
 
 # ---------- Step 7: 构建并启动服务 ----------
 step "Step 7/9: 构建并启动 Docker 服务"
@@ -279,73 +321,184 @@ set -a; source .env; set +a
 set -e
 
 log "等待 MySQL 就绪（最长 60s）..."
-MYSQL_OK=0
-for i in {1..30}; do
+for _ in {1..30}; do
     if docker compose exec -T mysql mysqladmin ping -h 127.0.0.1 -uroot -p"${MYSQL_ROOT_PASSWORD}" >/dev/null 2>&1; then
         log "✓ MySQL 已就绪"
-        MYSQL_OK=1
+        DEPLOY_STATE[mysql_ok]="true"
         break
     fi
     sleep 2
 done
-[[ $MYSQL_OK -eq 0 ]] && warn "MySQL 等待超时，请手动检查：docker compose logs mysql"
+[[ "${DEPLOY_STATE[mysql_ok]}" == "false" ]] && warn "MySQL 等待超时，请手动检查：docker compose logs mysql"
 
 log "等待后端 server 就绪（最长 60s）..."
-SERVER_OK=0
-for i in {1..30}; do
+for _ in {1..30}; do
     if curl -sf http://127.0.0.1:${SERVER_PORT:-8080}/health >/dev/null 2>&1; then
         log "✓ 后端 server 已就绪"
-        SERVER_OK=1
+        DEPLOY_STATE[server_ok]="true"
         break
     fi
     sleep 2
 done
-[[ $SERVER_OK -eq 0 ]] && warn "后端 server 等待超时，请手动检查：docker compose logs server"
+[[ "${DEPLOY_STATE[server_ok]}" == "false" ]] && warn "后端 server 等待超时，请手动检查：docker compose logs server"
 
-# ---------- Step 9: 输出部署结果 ----------
-step "Step 9/9: 部署完成"
+# ---------- Step 9: 生成 /root/keyauth_deploy_info.txt ----------
+step "Step 9/9: 生成部署信息文件 /root/keyauth_deploy_info.txt"
 
 SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 [[ -z "$SERVER_IP" ]] && SERVER_IP="<你的服务器IP>"
+DEPLOY_STATE[server_ip]="$SERVER_IP"
+DEPLOY_STATE[frontend_url]="http://${SERVER_IP}:${DEPLOY_STATE[admin_port]}"
+DEPLOY_STATE[api_url]="http://${SERVER_IP}:${DEPLOY_STATE[server_port]}"
+DEPLOY_STATE[deploy_time]="$(date '+%Y-%m-%d %H:%M:%S')"
 
-# 读取宝塔面板入口（如已安装）
-if [[ $BT_FRESH_INSTALLED -eq 1 ]] && command -v bt >/dev/null 2>&1; then
-    warn "宝塔面板默认信息："
-    bt default 2>/dev/null | head -10 || true
-fi
+cat > "$DEPLOY_INFO_FILE" <<EOF
+================================================================
+  KeyAuth SaaS 部署信息 —— 请妥善保存（含敏感信息，勿外传）
+================================================================
 
+部署时间：${DEPLOY_STATE[deploy_time]}
+操作系统：${DEPLOY_STATE[os_pretty]}
+项目目录：${DEPLOY_STATE[project_dir]}
+部署信息文件：${DEPLOY_INFO_FILE}
+
+================================================================
+  一、宝塔面板信息
+================================================================
+
+状态：${DEPLOY_STATE[bt_status]}
+面板端口：${DEPLOY_STATE[bt_port]}
+面板地址：${DEPLOY_STATE[bt_url]}
+账号：${DEPLOY_STATE[bt_username]}
+密码：${DEPLOY_STATE[bt_password]}
+
+如以上信息为"未获取"，请在服务器执行：bt default
+修改宝塔密码：bt 5
+修改宝塔端口：bt 8
+
+================================================================
+  二、Docker 环境
+================================================================
+
+Docker：${DEPLOY_STATE[docker_status]}
+项目容器：mysql / redis / server / admin
+
+================================================================
+  三、KeyAuth SaaS 访问地址
+================================================================
+
+前端后台：${DEPLOY_STATE[frontend_url]}
+后端 API：${DEPLOY_STATE[api_url]}
+健康检查：${DEPLOY_STATE[api_url]}/health
+
+================================================================
+  四、密钥与配置（敏感信息，务必保密）
+================================================================
+
+文件位置：${DEPLOY_STATE[project_dir]}/.env
+RSA 私钥：${DEPLOY_STATE[project_dir]}/keys/rsa_private.pem
+RSA 公钥：${DEPLOY_STATE[project_dir]}/keys/rsa_public.pem
+
+MYSQL_ROOT_PASSWORD = ${DEPLOY_STATE[mysql_root_pwd]}
+MYSQL_PASSWORD      = ${DEPLOY_STATE[mysql_pwd]}
+REDIS_PASSWORD      = ${DEPLOY_STATE[redis_pwd]}
+AES_KEY             = ${DEPLOY_STATE[aes_key]}
+JWT_SECRET          = ${DEPLOY_STATE[jwt_secret]}
+
+================================================================
+  五、服务状态
+================================================================
+
+后端 server：$([ "${DEPLOY_STATE[server_ok]}" == "true" ] && echo "✓ 运行中" || echo "✗ 未就绪，请查看日志")
+MySQL：      $([ "${DEPLOY_STATE[mysql_ok]}" == "true" ] && echo "✓ 运行中" || echo "✗ 未就绪")
+
+================================================================
+  六、下一步操作（必做）
+================================================================
+
+1. 重置超管密码（首次部署必须）：
+   cd ${DEPLOY_STATE[project_dir]} && bash scripts/reset_admin_password.sh
+
+2. 在宝塔面板「安全」中关闭 MySQL(3306)/Redis(6379) 公网端口
+
+3. 在宝塔面板「网站」绑定域名 + 申请 SSL 证书，反代到 :${DEPLOY_STATE[admin_port]}
+
+4. 登录后台「系统配置 > 支付」配置平台易支付参数
+
+$([ $BT_FRESH_INSTALLED -eq 1 ] && echo "5. 首次安装宝塔，请登录面板后修改默认账号密码和端口" || echo "")
+
+================================================================
+  七、常用运维命令
+================================================================
+
+cd ${DEPLOY_STATE[project_dir]}
+
+# 查看服务状态
+docker compose ps
+
+# 查看后端实时日志
+docker compose logs -f server
+
+# 重启后端
+docker compose restart server
+
+# 代码更新后重新构建
+git pull origin main && docker compose up -d --build server admin
+
+# 进入 MySQL
+docker compose exec mysql mysql -ukeyauth -p${DEPLOY_STATE[mysql_pwd]} keyauth
+
+# 停止全部服务（数据保留）
+docker compose down
+
+# 停止并删除数据（谨慎！）
+docker compose down -v
+
+================================================================
+  八、备份建议
+================================================================
+
+定期备份以下文件到安全位置：
+1. ${DEPLOY_STATE[project_dir]}/.env                   （所有密钥）
+2. ${DEPLOY_STATE[project_dir]}/keys/rsa_private.pem   （RSA 私钥）
+3. ${DEPLOY_STATE[project_dir]}/keys/rsa_public.pem    （RSA 公钥）
+4. MySQL 数据卷（docker volume inspect keyauth_mysql-data）
+5. 本部署信息文件：${DEPLOY_INFO_FILE}
+
+================================================================
+EOF
+
+chmod 600 "$DEPLOY_INFO_FILE"
+
+# ---------- 最终输出 ----------
 echo ""
 echo -e "${GREEN}${BOLD}==================== 部署完成 ====================${NC}"
 echo ""
 echo -e "${BOLD}服务状态：${NC}"
-echo "  后端 API：    $([ $SERVER_OK -eq 1 ] && echo "✓ 运行中" || echo "✗ 未就绪，请查看日志")"
-echo "  MySQL：       $([ $MYSQL_OK -eq 1 ] && echo "✓ 运行中" || echo "✗ 未就绪")"
+echo "  后端 API：    $([ "${DEPLOY_STATE[server_ok]}" == "true" ] && echo "✓ 运行中" || echo "✗ 未就绪")"
+echo "  MySQL：       $([ "${DEPLOY_STATE[mysql_ok]}" == "true" ] && echo "✓ 运行中" || echo "✗ 未就绪")"
 echo ""
 echo -e "${BOLD}访问地址：${NC}"
-echo "  前端后台：    http://${SERVER_IP}:${ADMIN_PORT:-8081}"
-echo "  后端 API：    http://${SERVER_IP}:${SERVER_PORT:-8080}"
-echo "  宝塔面板：    http://${SERVER_IP}:8888（默认端口，实际以安装时输出为准）"
+echo "  前端后台：    ${DEPLOY_STATE[frontend_url]}"
+echo "  后端 API：    ${DEPLOY_STATE[api_url]}"
+echo "  宝塔面板：    http://${DEPLOY_STATE[server_ip]}:${DEPLOY_STATE[bt_port]}"
 echo ""
-echo -e "${BOLD}下一步操作（必做）：${NC}"
-echo "  1. 重置超管密码："
-echo "       cd ${PROJECT_DIR} && bash scripts/reset_admin_password.sh"
-echo "  2. 在宝塔面板「安全」中关闭 MySQL(3306)/Redis(6379) 公网端口"
-echo "  3. 在宝塔面板「网站」绑定域名 + 申请 SSL 证书，反代到 :${ADMIN_PORT:-8081}"
-echo "  4. 登录后台「系统配置 > 支付」配置平台易支付参数"
+echo -e "${GREEN}${BOLD}==================== 重要：部署信息已保存 ====================${NC}"
+echo ""
+echo -e "${BOLD}所有部署信息（含宝塔账号、密钥、访问地址、运维命令）已写入：${NC}"
+echo -e "  ${CYAN}${DEPLOY_INFO_FILE}${NC}"
+echo ""
+echo -e "${BOLD}查看部署信息：${NC}"
+echo "  cat $DEPLOY_INFO_FILE"
+echo ""
+echo -e "${BOLD}下一步必做：${NC}"
+echo "  1. 查看部署信息：cat $DEPLOY_INFO_FILE"
+echo "  2. 重置超管密码：cd ${DEPLOY_STATE[project_dir]} && bash scripts/reset_admin_password.sh"
+echo "  3. 宝塔面板「安全」关闭 MySQL/Redis 公网端口"
+echo "  4. 宝塔面板「网站」绑定域名 + 申请 SSL 证书"
 if [[ $BT_FRESH_INSTALLED -eq 1 ]]; then
     echo "  5. 首次安装宝塔，请登录面板后修改默认账号密码和端口"
 fi
 echo ""
-echo -e "${BOLD}重要文件备份：${NC}"
-echo "  .env 文件：      ${PROJECT_DIR}/.env"
-echo "  RSA 私钥：       ${PROJECT_DIR}/keys/rsa_private.pem"
-echo "  宝塔账号信息：   执行 bt default 查看"
-echo ""
-echo -e "${BOLD}常用运维命令：${NC}"
-echo "  cd ${PROJECT_DIR}"
-echo "  docker compose ps                          # 查看服务状态"
-echo "  docker compose logs -f server              # 后端实时日志"
-echo "  docker compose restart server              # 重启后端"
-echo "  docker compose up -d --build server admin  # 代码更新后重建"
-echo ""
+echo -e "${YELLOW}提示：${DEPLOY_INFO_FILE} 已设置 chmod 600（仅 root 可读），含敏感信息，请妥善保管${NC}"
 echo -e "${GREEN}==================================================${NC}"
