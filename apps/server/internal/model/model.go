@@ -37,6 +37,7 @@ type SysAdmin struct {
 	Phone        string `gorm:"size:32" json:"phone"`
 	Status       string `gorm:"size:32;not null;default:active" json:"status"` // active/disabled
 	TOTPSecret   string `gorm:"size:64" json:"-"`                               // 2FA 密钥（AES 加密）
+	BackupCodes  string `gorm:"size:512" json:"-"`                              // v0.4.0：2FA 备用码（AES 加密的逗号分隔字符串）
 	LastLoginAt  *time.Time `json:"last_login_at"`
 	LastLoginIP  string `gorm:"size:45" json:"last_login_ip"`
 }
@@ -56,6 +57,7 @@ type SysTenant struct {
 	PackageID    uint64  `gorm:"index;not null" json:"package_id"`
 	ExpiresAt    *time.Time `gorm:"index" json:"expires_at"`
 	TOTPSecret   string  `gorm:"size:64" json:"-"`
+	BackupCodes  string  `gorm:"size:512" json:"-"` // v0.4.0：2FA 备用码（AES 加密的逗号分隔字符串）
 	LastLoginAt  *time.Time `json:"last_login_at"`
 	LastLoginIP  string  `gorm:"size:45" json:"last_login_ip"`
 	Balance      float64 `gorm:"type:decimal(12,2);not null;default:0" json:"balance"`         // v0.3.4：可提现余额
@@ -266,6 +268,7 @@ type Agent struct {
 	CommissionMode        string  `gorm:"size:32;not null;default:percentage" json:"commission_mode"` // percentage/diff
 	InviterID             *uint64 `gorm:"index" json:"inviter_id"`
 	TOTPSecret            string  `gorm:"size:64" json:"-"` // 2FA 密钥（AES 加密）
+	BackupCodes           string  `gorm:"size:512" json:"-"` // v0.4.0：2FA 备用码（AES 加密的逗号分隔字符串）
 	Subdomain             string  `gorm:"size:64" json:"subdomain"`
 	LastLoginAt           *time.Time `json:"last_login_at"`
 	LastLoginIP           string  `gorm:"size:45" json:"last_login_ip"`

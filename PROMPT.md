@@ -12,7 +12,7 @@
 
 **v0.3.6 已发布**：6 个测试包（crypto/snowflake/epay/quota/heartbeat/middleware）+ 跨语言签名对齐测试全部通过。运行 `cd apps/server && go test ./...` 验证。
 
-**v0.4.0 进行中**：UA 解析迁移 + JWT jti 精准单点踢出已完成（`pkg/ua` 包 + handler 层接入 + ListLoginDevices 响应增强 + `internal/auth` 包 18 个测试 + middleware JTI 注入测试，8 个测试包全 PASS）。
+**v0.4.0 进行中**：UA 解析迁移 + JWT jti 精准单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 slog 已完成（4 项迁移全绿；`pkg/ua` + `internal/auth` + `internal/logger` + `internal/handler/profile_2fa_test.go` 共 37 个新测试，10 个测试包全 PASS）。
 
 ## 二、必读文档（按顺序）
 
@@ -77,6 +77,8 @@ docs/                       # 四份核心文档
 v0.4.0 已新增完成（进行中）：
 - ✅ UA 解析库迁移（`pkg/ua` 自实现零第三方依赖 + 20 个测试全 PASS；handler 层 `parseDeviceName` / `detectDeviceType` / `ListLoginDevicesFull` 全部接入；ListLoginDevices 响应新增 `os`/`os_version`/`browser`/`browser_version`/`is_bot` 字段，不改 DB schema 向前兼容；移除 profile.go「待核实 v0.4.x：引入更完整的 UA 解析库」标注）
 - ✅ JWT jti 精准单点踢出（jti 嵌入 JWT `RegisteredClaims.ID` + `auth.BlacklistRefreshTokenByJTI` + `revokeSessionByJTI`；`KickDevice` / `Logout` / `RefreshToken` 轮换全部改造为 jti 维度，仅失效指定会话不影响其他设备；`ChangePassword` / `Disable2FA` 仍走 user 维度 `BlacklistRefreshToken` 强制全部重登；`internal/auth/jwt_test.go` 18 个测试 + `internal/middleware/middleware_test.go` 新增 `TestJWTAuth_JTI注入上下文`，8 个测试包全 PASS；兼容旧 token：无 jti 时 `IsRefreshTokenBlacklisted` 回退 user 维度）
+- ✅ 2FA backup_codes DB 持久化（migration 008 三表 sys_admin/sys_tenant/agent 加 `backup_codes VARCHAR(512)` 字段 + model struct 同步；profile.go 新增 `loadUserBackupCodes`/`updateUserBackupCodes`/`consumeBackupCode` 三函数；Verify2FA 改为 DB 落库 + Disable2FA 清空字段；兼容 v0.3.x 老用户：DB 字段为空时 `loadUserBackupCodes` 自动回退 Redis 读取，首次 `consumeBackupCode` 消费成功后回写 DB + 清理 Redis 老数据；`internal/handler/profile_2fa_test.go` 13 个测试全 PASS）
+- ✅ 登录失败日志结构化（新建 `internal/logger` 包基于 Go 1.21+ 标准库 `log/slog`，零第三方依赖，取代 zap/zerolog；`Options{Level, Format, Output}` + `Init/Debug/Info/Warn/Error` + 4 个 Ctx 版本；`AppConfig` 加 LogLevel/LogFormat/LogOutput；`cmd/main.go` 启动时调用 `logger.Init`；`session.go` + `log_worker.go` 3 处 `_ = err` 静默丢弃替换为 `logger.Error("xxx write failed", "err", err, ...业务字段...)` 结构化日志，移除 3 处「待核实 v0.4.x：引入结构化日志记录此错误」标注；`internal/logger/logger_test.go` 6 个测试全 PASS；10 个测试包全绿）
 
 v0.3.5 已完成（基线）：
 - ✅ 后端 Go 项目结构（main / config / model / middleware / handler / router / quota / migration / heartbeat）
@@ -94,7 +96,7 @@ v0.3.5 已完成（基线）：
 
 **v0.3.6 已完成（2026-07-20）**：剩余 P1 收尾 + 单元测试 + 客户端 SDK 签名对齐测试，全部完成。
 
-**v0.4.0 进行中（2026-07-20）**：UA 解析迁移 + JWT jti 精准单点踢出已完成，后续推进多级代理 / 全语言 SDK 等。
+**v0.4.0 进行中（2026-07-20）**：UA 解析迁移 + JWT jti 精准单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 slog 4 项迁移全绿，后续推进多级代理 / 全语言 SDK 等。
 
 **v0.4.0（三期商业化，待开始）**：
 - 多级代理 + 全语言 SDK + 在线更新 + 数据备份恢复 + 监控告警 + 通知系统
@@ -167,3 +169,7 @@ bash scripts/reset_admin_password.sh NewPass@2026
 > v0.4.0 已落地：UA 解析库迁移完成（`pkg/ua` 自实现零第三方依赖 + 20 个测试全 PASS；handler 层 `parseDeviceName` / `detectDeviceType` / `ListLoginDevicesFull` 全部接入；ListLoginDevices 响应新增 `os` / `os_version` / `browser` / `browser_version` / `is_bot` 字段，不改 DB schema 向前兼容）；profile.go 中原「待核实 v0.4.x：引入更完整的 UA 解析库」标注已移除。
 
 > v0.4.0 已落地：JWT jti 精准单点踢出完成（`internal/auth` 包新增 `BlacklistRefreshTokenByJTI` + `IsRefreshTokenBlacklisted` 改造为双维度优先 jti；`internal/middleware/auth.go` `JWTAuth` 注入 `c.Set("jti", claims.ID)` + `GenerateToken` 保留 `claims.ID` 修复 jti 丢失 bug；`internal/handler/auth.go` Login/RegisterTenant/RefreshToken/Logout 全部生成并传递 jti；`internal/handler/session.go` `recordLoginSession` 增加 jti 参数 + 新增 `revokeSessionByJTI`；`internal/handler/profile.go` KickDevice 注释更新为「v0.4.0 已支持精准单点踢出」，ChangePassword/Disable2FA 故意保留 user 维度；18 个 auth 测试 + 1 个 middleware JTI 注入测试全 PASS，8 个测试包全绿；兼容旧 token：无 jti 回退 user 维度）；session.go 中原「待核实 v0.4.x：将 jti 嵌入 JWT 后改为只黑名单指定 jti」标注已移除。
+
+> v0.4.0 已落地：2FA backup_codes DB 持久化完成（`migrations/008_v0.4.0_2fa_backup_codes.up.sql` 三表 sys_admin/sys_tenant/agent 加 `backup_codes VARCHAR(512) NOT NULL DEFAULT ''` 字段 + `internal/model/model.go` 三表 struct 同步加 `BackupCodes` 字段；`internal/handler/profile.go` 新增 `loadUserBackupCodes`/`updateUserBackupCodes`/`consumeBackupCode` 三函数，Verify2FA 第 4 步从 Redis 持久化改为 DB 字段写入 + 清理 Redis 老数据，Disable2FA 第 5 步清空 DB `backup_codes` 字段 + 清理 Redis；兼容 v0.3.x 老用户：`loadUserBackupCodes` DB 为空时回退 Redis 读取，`consumeBackupCode` 消费成功后回写 DB + 清理 Redis 老数据；`internal/handler/profile_2fa_test.go` 13 个测试全 PASS，覆盖 DB 读取 / Redis 回退 / 消费 / 边界 / role 分支 / 兼容路径全场景）；profile.go 中原「待核实 v0.4.x：备用码理想方案为 bcrypt 哈希入库，当前简化用 AES 加密存 Redis，后续 v0.4.x 加 backup_codes 字段后迁移」标注已移除；session.go 中原「待核实 v0.4.x：引入结构化日志记录此错误」标注已移除（log_worker.go 同步移除）。
+
+> v0.4.0 已落地：登录失败日志结构化完成（新建 `internal/logger` 包基于 Go 1.21+ 标准库 `log/slog`，零第三方依赖取代 zap/zerolog；`Options{Level, Format, Output}` + `Init` 用 `atomic.Value` 并发安全切换 + `L()` / `Debug/Info/Warn/Error` + 4 个 `DebugCtx/InfoCtx/WarnCtx/ErrorCtx` 链路追踪版本；`internal/config/config.go` `AppConfig` 加 `LogLevel`/`LogFormat`/`LogOutput` 三个 yaml 字段；`cmd/main.go` 启动时调用 `logger.Init(logger.Options{...})` 从 config 注入；`internal/handler/session.go` `StartLoginFailureWorker` + `internal/handler/log_worker.go` `StartVerifyLogWorker` + `StartOperationLogWorker` 3 处 `_ = err` 静默丢弃替换为 `logger.Error("xxx write failed", "err", err, ...业务字段...)` 结构化日志；`internal/logger/logger_test.go` 6 个测试全 PASS：parseLevel 4 级别 + 大小写 + 默认值 / JSON 格式 level/msg/字段断言 / level=warn 过滤 debug+info / text 格式 msg 含空格自动加引号 / L() 非 nil / 空 Options 不 panic）。

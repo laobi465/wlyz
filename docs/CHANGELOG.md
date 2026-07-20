@@ -11,6 +11,93 @@
 
 ## [0.4.0] - 2026-07-20（v0.4.x 迁移项推进）
 
+### [新增] 2FA 备用码 DB 持久化 + 登录失败日志结构化（v0.4.x 迁移项第三 / 四项）
+
+#### 背景
+
+- v0.3.x 2FA 备用码存 Redis（`2fa:backup:{role}:{user_id}` 持久化无 TTL），存在 Redis 单点故障 / 内存占用 / 不便审计等问题
+- v0.3.x 异步日志 worker（登录失败 / 验证 / 操作日志）写入失败时 `_ = err` 静默丢弃，无法定位 DB 写入异常
+- TODO.md 第 251 行 `[迁移] 2FA backup_codes Redis 持久化 → 加表字段后迁移` + 第 252 行 `[迁移] 登录失败日志结构化记录 → v0.4.x 引入 zap/zerolog`
+
+#### 实现（迁移项3：2FA backup_codes DB 持久化）
+
+**`migrations/008_v0.4.0_2fa_backup_codes.up.sql`**：
+- `sys_admin` / `sys_tenant` / `agent` 三表新增 `backup_codes VARCHAR(512) NOT NULL DEFAULT ''` 字段
+- 存 AES-256-GCM 加密的逗号分隔字符串（最多 5 个备用码，加密后约 200 字符，512 字符安全冗余）
+
+**`internal/model/model.go`**：
+- 三表 struct 同步新增 `BackupCodes string` 字段（`gorm:"size:512" json:"-"`）
+
+**`internal/handler/profile.go`**：
+- 新增 `loadUserBackupCodes(deps, role, userID)`：优先读 DB 字段，DB 为空时回退 Redis 老数据（兼容 v0.3.x 用户）
+- 新增 `updateUserBackupCodes(deps, role, userID, enc)`：按 role 更新对应表
+- 新增 `consumeBackupCode(deps, role, userID, input) (matched, remaining, err)`：解密 → 匹配 → 移除 → 加密回写 DB + 同步清理 Redis 老数据
+- `Verify2FA` 第 4 步：备用码从 Redis 持久化改为 DB 字段写入 + 清理 Redis 老数据
+- `Disable2FA` 第 5 步：清空 DB `backup_codes` 字段 + 清理 Redis 老数据
+- `twoFABackupKey` 注释更新：从「待核实 v0.4.x 加表字段后迁移」改为「v0.4.0 仅作兼容回退读取」
+
+#### 实现（迁移项4：登录失败日志结构化）
+
+**`internal/logger/logger.go`**（新建包）：
+- 基于 Go 1.21+ 标准库 `log/slog`，零第三方依赖（取代 zap/zerolog 引入）
+- `Options{Level, Format, Output}`：级别（debug/info/warn/error，默认 info）+ 格式（json/text，默认 json）+ 输出（stdout/stderr/文件路径，默认 stdout）
+- `Init(opt)` 初始化全局 logger（atomic.Value 并发安全切换）
+- `L() / Debug / Info / Warn / Error / DebugCtx / InfoCtx / WarnCtx / ErrorCtx` 便捷封装
+
+**`internal/config/config.go`**：
+- `AppConfig` 新增 `LogLevel` / `LogFormat` / `LogOutput` 三个 yaml 字段
+
+**`cmd/main.go`**：
+- 启动时调用 `logger.Init(logger.Options{...})` 从 config 注入
+
+**`internal/handler/session.go` + `internal/handler/log_worker.go`**：
+- 3 处 `_ = err` 替换为 `logger.Error("xxx write failed", "err", err, ...业务字段...)` 结构化日志
+- 字段包含：err / user_type / username / client_ip / tenant_id / app_id / action / operator_type / operator_id / module / action（按场景）
+- 移除 3 处「待核实 v0.4.x：引入结构化日志记录此错误」标注
+
+#### 测试（`internal/handler/profile_2fa_test.go` + `internal/logger/logger_test.go`）
+
+**`profile_2fa_test.go`（13 个测试，全 PASS）**：
+- `TestLoadUserBackupCodes_DB读取`：从 DB 字段读取 AES 加密的备用码
+- `TestLoadUserBackupCodes_DB为空回退Redis`：v0.3.x 老用户兼容路径
+- `TestLoadUserBackupCodes_用户不存在`：gorm.ErrRecordNotFound 透传
+- `TestLoadUserBackupCodes_TenantRole` / `AgentRole` / `不支持角色`：role 分支覆盖
+- `TestUpdateUserBackupCodes_清空`：传入空字符串清空字段
+- `TestConsumeBackupCode_消费成功`：正确输入后备用码被移除 + DB 更新 + Redis 清理
+- `TestConsumeBackupCode_消费最后一个`：剩余空时 DB 写入空字符串
+- `TestConsumeBackupCode_输入不匹配`：错误输入不消费
+- `TestConsumeBackupCode_空输入` / `无备用码`：边界条件
+- `TestConsumeBackupCode_从Redis回退消费`：v0.3.x 老用户首次消费走 Redis 路径
+- `TestTwoFABackupKey_格式` / `TestTwoFASetupKey_格式`：key 格式断言
+
+**`logger_test.go`（6 个测试，全 PASS）**：
+- `TestParseLevel`：4 级别 + 大小写 + 默认值
+- `TestInit_JSONFormat`：JSON 输出包含 level/msg/字段
+- `TestInit_LevelFiltering`：level=warn 时 info/debug 不输出
+- `TestInit_TextFormat`：text 格式 msg 含空格自动加引号
+- `TestL_ReturnsNonNil`：Init 前后 L() 非 nil
+- `TestInit_DefaultFallback`：空 Options 不 panic
+
+#### 铁律遵守
+
+- **铁律 04（无硬编码）**：日志级别 / 格式 / 输出路径 从 `config.yaml` 读取，无硬编码
+- **铁律 05（配置走后端）**：未来可扩展为 sys_config 热更新日志级别（Init 支持重复调用）
+- **铁律 06（反幻觉）**：测试覆盖 DB 读取 / Redis 回退 / 消费 / 边界 / role 分支 / 兼容路径全场景；profile.go 注释更新与代码一致
+
+#### 兼容性
+
+- v0.3.x 老用户升级后：DB `backup_codes` 字段为空 → `loadUserBackupCodes` 自动回退 Redis 读取 → 首次 `consumeBackupCode` 消费成功后写入 DB + 清理 Redis → 后续走 DB 路径
+- v0.3.x 老 token 不受 logger 改动影响（仅异步 worker 内部日志输出方式变化）
+- 回滚 SQL（`008_v0.4.0_2fa_backup_codes.down.sql`）：DROP 三表字段；回滚前需确认备用码已重新写入 Redis
+
+#### 验证
+
+- `go test ./...`：10 个测试包全 PASS（新增 `internal/logger` + `internal/handler/profile_2fa_test.go`）
+- `go vet ./...`：0 警告
+- `go build ./...`：通过
+
+---
+
 ### [新增] JWT jti 精准单点踢出（v0.4.x 迁移项第二项）
 
 #### 背景

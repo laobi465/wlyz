@@ -4,6 +4,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -205,12 +206,115 @@ func updateUserTOTPSecret(deps *Deps, role string, userID uint64, secretEnc stri
 	return errors.New("unsupported role: " + role)
 }
 
+// loadUserBackupCodes 按 role 加载 2FA 备用码（AES 加密的逗号分隔字符串）
+// v0.4.0：从 DB backup_codes 字段读取；若 DB 为空则回退到 Redis（兼容 v0.3.x 老用户）
+func loadUserBackupCodes(deps *Deps, role string, userID uint64) (string, error) {
+	var enc string
+	switch role {
+	case auth.RoleAdmin:
+		var admin model.SysAdmin
+		if err := deps.DB.Select("backup_codes").First(&admin, userID).Error; err != nil {
+			return "", err
+		}
+		enc = admin.BackupCodes
+	case auth.RoleTenant:
+		var tenant model.SysTenant
+		if err := deps.DB.Select("backup_codes").First(&tenant, userID).Error; err != nil {
+			return "", err
+		}
+		enc = tenant.BackupCodes
+	case auth.RoleAgent:
+		var agent model.Agent
+		if err := deps.DB.Select("backup_codes").First(&agent, userID).Error; err != nil {
+			return "", err
+		}
+		enc = agent.BackupCodes
+	default:
+		return "", errors.New("unsupported role: " + role)
+	}
+	// v0.4.0 兼容：DB 字段为空时回退到 Redis 老数据
+	if enc == "" && deps.Redis != nil {
+		if v, err := deps.Redis.Get(context.Background(), twoFABackupKey(role, userID)).Result(); err == nil {
+			return v, nil
+		}
+	}
+	return enc, nil
+}
+
+// updateUserBackupCodes 按 role 更新 2FA 备用码（密文入库）
+// backupEnc 为空字符串表示清空备用码
+func updateUserBackupCodes(deps *Deps, role string, userID uint64, backupEnc string) error {
+	switch role {
+	case auth.RoleAdmin:
+		return deps.DB.Model(&model.SysAdmin{}).Where("id = ?", userID).
+			Update("backup_codes", backupEnc).Error
+	case auth.RoleTenant:
+		return deps.DB.Model(&model.SysTenant{}).Where("id = ?", userID).
+			Update("backup_codes", backupEnc).Error
+	case auth.RoleAgent:
+		return deps.DB.Model(&model.Agent{}).Where("id = ?", userID).
+			Update("backup_codes", backupEnc).Error
+	}
+	return errors.New("unsupported role: " + role)
+}
+
+// consumeBackupCode 校验并消费一个备用码
+// v0.4.0：从 DB 读取 AES 加密的备用码列表 → 解密 → 校验 input 是否在内 → 移除该码 → 加密回写 DB
+// 返回 (matched, remaining, error)：matched=true 表示消费成功
+// 兼容：若 DB 字段为空，会回退到 Redis 读取（loadUserBackupCodes 已处理）
+func consumeBackupCode(deps *Deps, role string, userID uint64, input string) (matched bool, remaining []string, err error) {
+	if input == "" {
+		return false, nil, nil
+	}
+	enc, err := loadUserBackupCodes(deps, role, userID)
+	if err != nil {
+		return false, nil, err
+	}
+	if enc == "" {
+		return false, nil, nil
+	}
+	plain, err := deps.Crypto.DecryptAES(enc)
+	if err != nil {
+		return false, nil, err
+	}
+	codes := strings.Split(plain, ",")
+	found := -1
+	for i, c := range codes {
+		if c == input {
+			found = i
+			break
+		}
+	}
+	if found < 0 {
+		return false, codes, nil
+	}
+	// 移除已消费的码
+	remaining = append(append([]string{}, codes[:found]...), codes[found+1:]...)
+	newPlain := strings.Join(remaining, ",")
+	newEnc := ""
+	if newPlain != "" {
+		newEnc, err = deps.Crypto.EncryptAES(newPlain)
+		if err != nil {
+			return false, codes, err
+		}
+	}
+	if err := updateUserBackupCodes(deps, role, userID, newEnc); err != nil {
+		return false, codes, err
+	}
+	// v0.4.0：消费成功后同步清理 Redis 老数据（避免下次仍走 Redis 回退路径）
+	if deps.Redis != nil {
+		_ = deps.Redis.Del(context.Background(), twoFABackupKey(role, userID)).Err()
+	}
+	return true, remaining, nil
+}
+
 // twoFASetupKey 2FA setup Redis Key（TTL 10min）
 func twoFASetupKey(role string, userID uint64) string {
 	return "2fa:setup:" + role + ":" + strconv.FormatUint(userID, 10)
 }
 
-// twoFABackupKey 2FA backup codes Redis Key（持久化，待核实 v0.4.x 加表字段后迁移）
+// twoFABackupKey 2FA backup codes Redis Key（v0.3.x 持久化方案，v0.4.0 改为 DB backup_codes 字段）
+// v0.4.0：此 key 仅作为兼容回退读取；新写入一律走 DB；consumeBackupCode 消费后自动清理
 func twoFABackupKey(role string, userID uint64) string {
 	return "2fa:backup:" + role + ":" + strconv.FormatUint(userID, 10)
 }
@@ -557,17 +661,18 @@ func Verify2FA(deps *Deps) gin.HandlerFunc {
 			return
 		}
 
-		// 4. 备用码 AES 加密后存 Redis（持久化，无 TTL）
-		// 注：备用码理想方案为 bcrypt 哈希入库，当前简化用 AES 加密存 Redis，后续 v0.4.x 加 backup_codes 字段后迁移
+		// 4. v0.4.0：备用码 AES 加密后写入 DB backup_codes 字段（取代 v0.3.x 的 Redis 持久化）
+		// 同时清理 v0.3.x Redis 老数据（若存在），避免数据双源不一致
 		backupEnc, err := deps.Crypto.EncryptAES(strings.Join(setupData.BackupCodes, ","))
 		if err != nil {
 			middleware.Fail(c, http.StatusInternalServerError, 5004, "加密备用码失败: "+err.Error())
 			return
 		}
-		if err := deps.Redis.Set(ctx, twoFABackupKey(role, userID), backupEnc, 0).Err(); err != nil {
+		if err := updateUserBackupCodes(deps, role, userID, backupEnc); err != nil {
 			middleware.Fail(c, http.StatusInternalServerError, 5005, "保存备用码失败: "+err.Error())
 			return
 		}
+		_ = deps.Redis.Del(ctx, twoFABackupKey(role, userID)).Err()
 
 		// 5. 删除 setup key
 		_ = deps.Redis.Del(ctx, twoFASetupKey(role, userID)).Err()
@@ -650,8 +755,9 @@ func Disable2FA(deps *Deps) gin.HandlerFunc {
 			return
 		}
 
-		// 5. 删除 Redis 备用码 key
+		// 5. v0.4.0：清空 DB backup_codes 字段 + Redis 兼容 key
 		ctx := c.Request.Context()
+		_ = updateUserBackupCodes(deps, role, userID, "")
 		_ = deps.Redis.Del(ctx, twoFABackupKey(role, userID)).Err()
 
 		// 6. 黑名单当前用户 refresh token（强制重新登录）

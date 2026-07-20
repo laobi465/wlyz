@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/auth"
+	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 )
@@ -29,8 +30,13 @@ func StartVerifyLogWorker(deps *Deps) {
 	go func() {
 		for log := range verifyLogCh {
 			if err := deps.DB.Create(log).Error; err != nil {
-				// 待核实 v0.4.x：引入结构化日志记录此错误
-				_ = err
+				// v0.4.0：结构化日志记录（取代 _ = err 静默丢弃）
+				logger.Error("verify_log write failed",
+					"err", err,
+					"tenant_id", log.TenantID,
+					"app_id", log.AppID,
+					"action", log.Action,
+				)
 			}
 		}
 	}()
@@ -84,8 +90,14 @@ func StartOperationLogWorker(deps *Deps) {
 	go func() {
 		for log := range operationLogCh {
 			if err := deps.DB.Create(log).Error; err != nil {
-				// 待核实 v0.4.x：引入结构化日志记录此错误
-				_ = err
+				// v0.4.0：结构化日志记录（取代 _ = err 静默丢弃）
+				logger.Error("operation_log write failed",
+					"err", err,
+					"operator_type", log.OperatorType,
+					"operator_id", log.OperatorID,
+					"module", log.Module,
+					"action", log.Action,
+				)
 			}
 		}
 	}()

@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/auth"
+	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/ua"
@@ -106,8 +107,13 @@ func StartLoginFailureWorker(deps *Deps) {
 		for log := range loginFailureCh {
 			// 单条失败不影响主流程，仅记录错误
 			if err := deps.DB.Create(log).Error; err != nil {
-				// 待核实 v0.4.x：引入结构化日志记录此错误
-				_ = err
+				// v0.4.0：结构化日志记录（取代 _ = err 静默丢弃）
+				logger.Error("login_failure_log write failed",
+					"err", err,
+					"user_type", log.UserType,
+					"username", log.Username,
+					"client_ip", log.ClientIP,
+				)
 			}
 		}
 	}()

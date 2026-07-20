@@ -14,6 +14,7 @@ import (
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/config"
 	"github.com/your-org/keyauth-saas/apps/server/internal/handler"
+	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/router"
 )
 
@@ -32,6 +33,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("[FATAL] 加载配置失败: %v", err)
 	}
+
+	// 2.1 初始化结构化日志（v0.4.0：基于 log/slog，零依赖）
+	// 日志级别 / 格式 / 输出路径 优先从 config 读取，可后续扩展为 sys_config 热更新
+	logger.Init(logger.Options{
+		Level:  cfg.App.LogLevel,
+		Format: cfg.App.LogFormat,
+		Output: cfg.App.LogOutput,
+	})
 
 	// 3. 初始化依赖（数据库、Redis、密钥等）
 	container, err := config.InitContainer(cfg)

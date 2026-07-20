@@ -247,9 +247,9 @@
 - [x] [已完成] 前端 `admin/Settlements.vue` 升级：双 Tab（结算记录 + 批量结算 / 对账报表 9 卡片） - v0.3.4
 - [x] [已完成] 路由注册：admin 加 `/tenant-withdrawal-review`；tenant 加 `/settlements` + `/withdrawal` - v0.3.4
 - [x] [已完成] `pnpm run build` 前端编译验证通过 - v0.3.4
-- [迁移] 2FA `backup_codes` Redis 持久化 → v0.4.x 加表字段后迁移
+- [x] [已完成 2026-07-20] 2FA `backup_codes` DB 持久化（migration 008 三表加 backup_codes 字段 + model 字段 + profile.go `loadUserBackupCodes`/`updateUserBackupCodes`/`consumeBackupCode` + Verify2FA/Disable2FA 改造为 DB 落库 + 兼容 v0.3.x Redis 回退读取；13 个 handler 测试全 PASS） - v0.4.0
 - [x] [已完成 2026-07-20] UA 解析库引入（自实现 `pkg/ua` 包，零第三方依赖，20 个测试全 PASS；handler 层 `parseDeviceName` / `detectDeviceType` / `ListLoginDevicesFull` 全部接入） - v0.4.0
-- [迁移] 登录失败日志结构化记录 → v0.4.x 引入 zap/zerolog
+- [x] [已完成 2026-07-20] 登录失败日志结构化记录（新建 `internal/logger` 包基于 Go 标准库 `log/slog`，零依赖；`AppConfig` 加 LogLevel/LogFormat/LogOutput；3 处 `_ = err` 替换为 `logger.Error` 结构化日志；6 个 logger 测试全 PASS） - v0.4.0
 - [x] [已完成 2026-07-20] JWT jti 精准单点踢出（jti 嵌入 JWT RegisteredClaims.ID + `auth.BlacklistRefreshTokenByJTI` + `revokeSessionByJTI` + KickDevice/Logout/RefreshToken 全部改造为 jti 维度；18 个 auth 测试 + 1 个 middleware JTI 注入测试全 PASS，8 个测试包全绿） - v0.4.0
 
 #### v0.3.5 P0 修复：RSA 脚本 / 数据库迁移 / H5 公共 API / 套餐配额 ✅ v0.3.5 已完成
@@ -471,7 +471,7 @@
 | v0.3.4 | 2026-07-19 | ✅ 已完成（结算与对账闭环：开发者 balance/frozen_balance + tenant_balance_log + tenant_withdraw + 批量结算 + 对账报表 + 双审核页面） |
 | v0.3.5 | 2026-07-19 | ✅ 已完成（P0 修复：RSA 脚本 / 数据库迁移 / H5 公共 API / 套餐配额） |
 | v0.3.6 | 2026-07-20 | ✅ 已完成（剩余 P1 收尾 + 单元测试 + 客户端 SDK 签名对齐测试） |
-| v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移 + JWT jti 单点踢出已完成，多级代理 / 全语言 SDK / 监控告警等待开始） |
+| v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移 + JWT jti 单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 已完成，多级代理 / 全语言 SDK / 监控告警等待开始） |
 
 ---
 
@@ -479,7 +479,7 @@
 
 - **总任务数**：约 110 项
 - **已完成**：约 100 项（v0.2.0 ~ v0.3.6 全部已发布版本累积）
-- **测试覆盖**：8 个测试包（crypto/snowflake/epay/quota/heartbeat/middleware/ua/auth）+ 跨语言签名对齐，全 PASS
+- **测试覆盖**：10 个测试包（crypto/snowflake/epay/quota/heartbeat/middleware/ua/auth/logger/handler）+ 跨语言签名对齐，全 PASS
 - **进行中**：0 项
 - **待开始**：约 10 项（v0.4.x 商业化）
 
@@ -518,6 +518,8 @@
 - [x] [已完成 2026-07-20] v0.3.6 文档同步
 - [x] [已完成 2026-07-20] UA 解析库迁移（pkg/ua 自实现 + handler 层接入 + ListLoginDevices 响应增强，20 个测试全 PASS） - v0.4.0
 - [x] [已完成 2026-07-20] JWT jti 精准单点踢出（jti 嵌入 JWT + BlacklistRefreshTokenByJTI + revokeSessionByJTI + KickDevice/Logout/RefreshToken 改造为 jti 维度，18 个 auth 测试 + 1 个 middleware JTI 注入测试全 PASS） - v0.4.0
+- [x] [已完成 2026-07-20] 2FA backup_codes DB 持久化（migration 008 + 三表加字段 + profile.go loadUserBackupCodes/updateUserBackupCodes/consumeBackupCode + Verify2FA/Disable2FA 改造 + 兼容 v0.3.x Redis 回退；13 个 handler 测试全 PASS） - v0.4.0
+- [x] [已完成 2026-07-20] 登录失败日志结构化（internal/logger 包基于 log/slog 零依赖 + AppConfig 加 LogLevel/LogFormat/LogOutput + 3 处 _ = err 替换为 logger.Error 结构化日志；6 个 logger 测试全 PASS） - v0.4.0
 
 **v0.4.x 三期商业化（约 10 项）**：
 - 多级代理（二级 + 三级 + 跨级佣金）
@@ -533,5 +535,5 @@
 ---
 
 **文档版本**：0.4.0  
-**最后更新**：2026-07-20（v0.4.0 第二项迁移：JWT jti 精准单点踢出，jti 维度黑名单 + revokeSessionByJTI）  
+**最后更新**：2026-07-20（v0.4.0 第三 / 四项迁移：2FA backup_codes DB 持久化 + 登录失败日志结构化 slog）  
 **维护者**：KeyAuth SaaS Team

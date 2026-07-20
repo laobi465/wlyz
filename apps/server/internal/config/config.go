@@ -30,8 +30,11 @@ type Config struct {
 }
 
 type AppConfig struct {
-	Port string `yaml:"port"` // 监听端口
-	Mode string `yaml:"mode"` // debug / release / test
+	Port      string `yaml:"port"`       // 监听端口
+	Mode      string `yaml:"mode"`       // debug / release / test
+	LogLevel  string `yaml:"log_level"`  // v0.4.0：日志级别 debug/info/warn/error（默认 info）
+	LogFormat string `yaml:"log_format"` // v0.4.0：日志格式 json/text（默认 json）
+	LogOutput string `yaml:"log_output"` // v0.4.0：日志输出 stdout/stderr/文件路径（默认 stdout）
 }
 
 type MySQLConfig struct {

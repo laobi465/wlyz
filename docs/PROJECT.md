@@ -259,8 +259,9 @@ SDK 校验签名 → 通过则解锁功能
 | 平台 | `tenant_balance_log` | 开发者余额流水（settle/withdraw/refund/adjust） | v0.3.4 |
 | 平台 | `tenant_withdraw` | 开发者提现申请 | v0.3.4 |
 | 系统 | `schema_migrations` | 轻量级迁移机制版本跟踪（dirty 状态） | v0.3.5 |
+| 安全 | `sys_admin.backup_codes` / `sys_tenant.backup_codes` / `agent.backup_codes` | v0.4.0 2FA 备用码 DB 持久化（AES 加密的逗号分隔字符串，migration 008） | v0.4.0 |
 
-> migration 文件：`apps/server/migrations/` 共 7 套（001 ~ 007），由 `internal/migration/migrator.go` 在 `InitContainer` 阶段自动执行。
+> migration 文件：`apps/server/migrations/` 共 8 套（001 ~ 008），由 `internal/migration/migrator.go` 在 `InitContainer` 阶段自动执行。
 
 ### 4.2 Redis 缓存键设计
 
@@ -276,8 +277,8 @@ SDK 校验签名 → 通过则解锁功能
 | `lock:card:{card_id}` | 5s | 卡密操作分布式锁 |
 | `nonce:{nonce}` | 5min | Nonce 防重放 |
 | `pay:notify:lock:{order_no}` | 10s | 回调防重入锁 |
-| `2fa:setup:{user_id}` | 10min | 2FA setup 中转（待 verify 前临时存 totp_secret） |
-| `2fa:backup:{user_id}` | persistent | 2FA 备用码（持久化） |
+| `2fa:setup:{role}:{user_id}` | 10min | 2FA setup 中转（待 verify 前临时存 totp_secret） |
+| `2fa:backup:{role}:{user_id}` | persistent | v0.3.x 2FA 备用码持久化；v0.4.0 改为 DB backup_codes 字段，此 key 仅作兼容回退读取（consumeBackupCode 消费后自动清理） |
 | `login:fail:{username}` | 15min | 登录失败次数（达阈值锁定账号） |
 | `auth:refresh:blacklist:jti:{jti}` | refresh_ttl | v0.4.0：jti 维度黑名单（精准单点踢出，KickDevice/Logout/RefreshToken 轮换） |
 | `auth:refresh:blacklist:{role}:{user_id}` | refresh_ttl | user 维度黑名单（修改密码/关闭 2FA 强制所有设备重登） |
@@ -406,24 +407,25 @@ keyauth-saas/
 │   │   │   └── main.go           # 程序入口（含 StartVerifyLogWorker + StartOperationLogWorker）
 │   │   ├── internal/
 │   │   │   ├── auth/             # JWT/TOTP/login_lock（v0.2.1）+ jti 单点踢出（v0.4.0：BlacklistRefreshTokenByJTI + IsRefreshTokenBlacklisted 双维度）
-│   │   │   ├── config/           # 配置加载 + sys_config 缓存（cache.go）
+│   │   │   ├── config/           # 配置加载 + sys_config 缓存（cache.go）+ v0.4.0 AppConfig 加 LogLevel/LogFormat/LogOutput
 │   │   │   ├── handler/          # HTTP 处理器（18 个文件，148 条路由，v0.3.6 新增 3 条代理注册公开路由）
 │   │   │   │   ├── admin.go / admin_business.go / admin_finance.go  # 超管 3 文件
 │   │   │   │   ├── tenant_business.go / tenant_finance.go / tenant_settle.go  # 开发者 3 文件
 │   │   │   │   ├── agent_business.go  # 代理 1 文件
 │   │   │   │   ├── app.go / card.go / client.go  # 应用/卡密/客户端验证
-│   │   │   │   ├── auth.go / session.go / profile.go / public.go  # 鉴权/会话/账号设置/公开 API（auth.go 含 v0.3.6 AgentRegister 代理注册付费流程 + v0.4.0 jti 单点踢出；session.go 含 v0.4.0 revokeSessionByJTI）
+│   │   │   │   ├── auth.go / session.go / profile.go / public.go  # 鉴权/会话/账号设置/公开 API（auth.go 含 v0.3.6 AgentRegister + v0.4.0 jti 单点踢出；session.go 含 v0.4.0 revokeSessionByJTI + 结构化日志；profile.go 含 v0.4.0 2FA backup_codes DB 持久化）
 │   │   │   │   ├── install.go  # 安装向导（v0.3.6，首次部署配置）
 │   │   │   │   ├── pay.go  # 平台总支付 + 开发者自有易支付占位（v0.3.6 EpayNotify 前缀分发 + processAgentRegisterPaid）
-│   │   │   │   ├── log_worker.go  # 异步日志 worker（验证 4096 + 操作 2048）
+│   │   │   │   ├── log_worker.go  # 异步日志 worker（验证 4096 + 操作 2048，v0.4.0 替换 _ = err 为 logger.Error 结构化日志）
 │   │   │   │   └── deps.go  # 依赖注入容器
 │   │   │   ├── heartbeat/        # 心跳保活（Redis Sorted Set，6 个方法）
+│   │   │   ├── logger/           # v0.4.0 结构化日志封装（基于 Go 标准库 log/slog，零依赖；Init/Debug/Info/Warn/Error + 4 个 Ctx 版本）
 │   │   │   ├── middleware/       # 中间件（auth/tenant/signature/ratelimit/response/time）
 │   │   │   ├── migration/        # 轻量级 SQL 文件迁移（v0.3.5）
-│   │   │   ├── model/            # 30 个 GORM struct
+│   │   │   ├── model/            # 30 个 GORM struct（v0.4.0 三表加 BackupCodes 字段）
 │   │   │   ├── quota/            # 套餐配额检查（CheckMaxApps/MaxCards/MaxAgents/MaxDevices，v0.3.5）
 │   │   │   └── router/           # 路由注册
-│   │   ├── migrations/           # 7 套 SQL 迁移（001 ~ 007）
+│   │   ├── migrations/           # 8 套 SQL 迁移（001 ~ 008；008 = v0.4.0 2FA backup_codes 字段）
 │   │   ├── pkg/
 │   │   │   ├── crypto/           # AES-256-GCM + RSA-4096 + HMAC-SHA256 + bcrypt + 卡密生成
 │   │   │   ├── epay/             # 彩虹易支付工具包
@@ -540,5 +542,5 @@ pnpm dev
 ---
 
 **文档版本**：0.4.0  
-**最后更新**：2026-07-20（v0.4.0 第二项迁移：JWT jti 精准单点踢出，auth 包 BlacklistRefreshTokenByJTI + revokeSessionByJTI 双维度黑名单）  
+**最后更新**：2026-07-20（v0.4.0 第三 / 四项迁移：2FA backup_codes DB 持久化 + 登录失败日志结构化 slog；新增 internal/logger 包 + migration 008）  
 **维护者**：KeyAuth SaaS Team
