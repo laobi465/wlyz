@@ -1,7 +1,7 @@
-// v0.4.0 通知系统 Handler
+// v0.4.0 通知系统 Handler（v0.5.0 扩展 webhook 三通道）
 // 严格遵循铁律 04/05/06：
 //   04 - 三通道开关 / 服务商密钥 / SMTP / 重试策略 / 限流 全部从 sys_config 读取
-//   05 - 16 项 notify.* 配置可通过后台「系统配置」实时调整
+//   05 - notify.* 配置可通过后台「系统配置」实时调整（v0.4.0 16 项 + v0.5.0 10 项）
 //   06 - 仅暴露模板 CRUD / 日志查询 / 手动重试 / 测试发送接口；变量替换在 notify 包内完成（strings.NewReplacer 防 SSTI）
 package handler
 
@@ -44,6 +44,16 @@ func AdminNotifyStatus(deps *Deps) gin.HandlerFunc {
 			"retry_times":           deps.CfgCache.GetInt(ctx, notify.CfgKeyRetryTimes, 3),
 			"retry_interval":        deps.CfgCache.GetInt(ctx, notify.CfgKeyRetryIntervalSeconds, 60),
 			"rate_limit_per_minute": deps.CfgCache.GetInt(ctx, notify.CfgKeyRateLimitPerMinute, 60),
+			// v0.5.0 webhook 三通道（铁律 05：概览仅暴露开关 + 是否已配置，敏感字段不返回原文）
+			"dingtalk_enabled":         deps.CfgCache.GetBool(ctx, notify.CfgKeyDingTalkEnabled, false),
+			"dingtalk_webhook_url_set": deps.CfgCache.GetString(ctx, notify.CfgKeyDingTalkWebhookURL, "") != "",
+			"dingtalk_secret_set":      deps.CfgCache.GetString(ctx, notify.CfgKeyDingTalkSecret, "") != "",
+			"dingtalk_at_all":          deps.CfgCache.GetBool(ctx, notify.CfgKeyDingTalkAtAll, false),
+			"wecom_enabled":            deps.CfgCache.GetBool(ctx, notify.CfgKeyWeComEnabled, false),
+			"wecom_webhook_url_set":    deps.CfgCache.GetString(ctx, notify.CfgKeyWeComWebhookURL, "") != "",
+			"telegram_enabled":         deps.CfgCache.GetBool(ctx, notify.CfgKeyTelegramEnabled, false),
+			"telegram_bot_token_set":   deps.CfgCache.GetString(ctx, notify.CfgKeyTelegramBotToken, "") != "",
+			"telegram_chat_id":         deps.CfgCache.GetString(ctx, notify.CfgKeyTelegramChatID, ""),
 		}
 
 		// 统计
@@ -103,7 +113,7 @@ func AdminCreateNotifyTemplate(deps *Deps) gin.HandlerFunc {
 			return
 		}
 		if !notify.ValidateChannel(req.Channel) {
-			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "无效的渠道，必须为 sms/email/inapp"})
+			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "无效的渠道，必须为 sms/email/inapp/dingtalk/wecom/telegram"})
 			return
 		}
 		if req.Variables == "" {

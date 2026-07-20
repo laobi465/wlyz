@@ -418,11 +418,11 @@
 - [ ] [待开始] 独角数卡对接 - v0.5.0
 - [ ] [待开始] 蓝米发卡对接 - v0.5.0
 - [ ] [待开始] USDT/加密货币支付 - v0.5.0
-- [ ] [待开始] 钉钉机器人通知 - v0.5.0
+- [x] [已完成 2026-07-20] 钉钉机器人通知 - v0.5.0（v0.5.0 集成扩展批次 1：notify 包 WebhookProvider 接口 + dingtalkWebhookProvider 实现 + HMAC-SHA256 加签（timestamp+"\n"+secret）+ base64 编码 + url.QueryEscape + markdown 消息类型 + @mobiles/@all 支持 + 5 项 notify.dingtalk.* sys_config + 4 个 HTTP 测试用例 + 1 个加签算法测试 + 1 个 @mobiles 测试）
 - [ ] [待开始] PayPal 海外支付 - v0.5.0（v0.5.0 新增：PayPal Orders API v2 + Webhook 支付完成回调 + access_token 自动刷新 + 沙盒/生产环境切换）
 - [ ] [待开始] Stripe 海外支付 - v0.5.0（v0.5.0 新增：Payment Intents API + Stripe Checkout + Webhook 签名校验 + 多币种支持）
-- [ ] [待开始] 企业微信机器人通知 - v0.5.0（v0.5.0 新增：群机器人 webhook + 文本/markdown/模板卡片消息类型 + 签名校验 + 频率限制）
-- [ ] [待开始] Telegram Bot 通知 - v0.5.0（v0.5.0 新增：Bot API sendMessage + 频道/群组/私聊三种 chat_type + MarkdownV2 渲染 + 长消息分页）
+- [x] [已完成 2026-07-20] 企业微信机器人通知 - v0.5.0（v0.5.0 集成扩展批次 1：wecomWebhookProvider 实现 + markdown 消息类型 + subject 加粗前缀作为标题 + 2 项 notify.wecom.* sys_config + 2 个 HTTP 测试用例）
+- [x] [已完成 2026-07-20] Telegram Bot 通知 - v0.5.0（v0.5.0 集成扩展批次 1：telegramWebhookProvider 实现 + MarkdownV2 渲染 + escapeTelegramMarkdown 16 字符转义（_*[]()~`>#+-=|{}.!）+ 4096 字符上限自动截断 + "（已截断）"提示 + telegramAPIBase 可测试覆盖 + 3 项 notify.telegram.* sys_config + 3 个 HTTP 测试用例含长消息截断场景）
 
 #### 主题市场
 - [ ] [待开始] 多套主题模板 - v0.6.0
@@ -501,7 +501,7 @@
 | v0.3.6 | 2026-07-20 | ✅ 已完成（剩余 P1 收尾 + 单元测试 + 客户端 SDK 签名对齐测试） |
 | v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移 + JWT jti 单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 + 全语言 SDK 扩展 + 多级代理体系 + 灰度发布 + 在线更新 + 数据备份恢复 + 监控告警 + 通知系统 + 终端用户体系 + API 开放平台 + 管理员弹窗通知 已完成；14 项迁移全绿） |
 | v0.4.x | 2026-07-20 | ✅ 已完成（v0.4.0 收尾 + Prometheus/Grafana 集成 + 12 项 P0/P1 残留项：S-04/D-15/U-11~14 全部闭环 + 阿里云 SMS 完整签名 + SMTP SSL 包装 + 套餐审核 + 租户安全 + H5 终端用户 4 页 + 帮助中心 + 联系客服） |
-| v0.5.0 | 进行中 | ⏳ 进行中（性能优化批次 4 项已完成：MySQL 读写分离 + Redis 三模式 + snowflake Redis 协调 + 卡密批量生成 577k/s；UX 批次 4 项已完成：多主题切换 + 暗黑模式 + 移动端响应式优化 + 数字滚动动效；国际化批次 2 项已完成：后台 i18n 中英 + SDK 多语言文档；待开始：集成扩展批次 8 项——发卡对接 2 项（独角数卡 / 蓝米发卡）+ 支付扩展 3 项（USDT 加密货币 / PayPal / Stripe）+ 通知扩展 3 项（钉钉机器人 / 企业微信机器人 / Telegram Bot）） |
+| v0.5.0 | 进行中 | ⏳ 进行中（性能优化批次 4 项已完成：MySQL 读写分离 + Redis 三模式 + snowflake Redis 协调 + 卡密批量生成 577k/s；UX 批次 4 项已完成：多主题切换 + 暗黑模式 + 移动端响应式优化 + 数字滚动动效；国际化批次 2 项已完成：后台 i18n 中英 + SDK 多语言文档；集成扩展批次 1 已完成 3 项：钉钉机器人 / 企业微信机器人 / Telegram Bot 通知（WebhookProvider 抽象 + 3 provider 实现 + migration 030 + 22 个测试全 PASS）；待开始：发卡对接 2 项（独角数卡 / 蓝米发卡）+ 支付扩展 3 项（USDT 加密货币 / PayPal / Stripe）） |
 
 ---
 
@@ -569,6 +569,6 @@
 
 ---
 
-**文档版本**：0.4.0  
-**最后更新**：2026-07-20（v0.4.0 第十六项迁移：公告增强 + 数据统计看板 migration 019 + notice.content_format 字段 + 9 项 notice.*/stats.* sys_config + handler/notice_stats.go 三端 popup API + 验证趋势图 API + 代理业绩排行 API + admin/tenant Create/Update/List 接口支持 is_popup/show_badge/content_format + router 注册 10 条新路由 + 18 个测试全 PASS）  
+**文档版本**：0.5.0  
+**最后更新**：2026-07-20（v0.5.0 集成扩展批次 1：notify 包 WebhookProvider 接口 + 钉钉/企微/TG 3 个 webhook provider 实现 + migration 030 + 10 项 notify.{dingtalk,wecom,telegram}.* sys_config + Manager 注册 3 个 SetProvider 注入点 + dispatch 扩展 3 case + ValidateChannel 扩展 6 通道 + handler/notify.go AdminNotifyStatus 加 9 项 webhook 通道配置概览 + SysConfig.vue 加 notify 分组 + webhook_url 敏感标记 + webhook_test.go 22 个测试用例全 PASS + go build + npm run build 全通过）  
 **维护者**：KeyAuth SaaS Team

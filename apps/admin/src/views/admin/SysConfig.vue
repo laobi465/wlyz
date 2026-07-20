@@ -115,7 +115,7 @@ const loading = ref(false)
 const activeGroup = ref('')
 const keyword = ref('')
 
-const groups = ['system', 'security', 'jwt', 'totp', 'app', 'card', 'verify', 'pay', 'admin', 'tenant', 'agent']
+const groups = ['system', 'security', 'jwt', 'totp', 'app', 'card', 'verify', 'pay', 'admin', 'tenant', 'agent', 'notify']
 
 const groupLabels: Record<string, string> = {
   system: '系统',
@@ -128,7 +128,8 @@ const groupLabels: Record<string, string> = {
   pay: '支付',
   admin: '超管',
   tenant: '开发者',
-  agent: '代理'
+  agent: '代理',
+  notify: '通知'
 }
 
 const groupLabel = (g: string) => groupLabels[g] || g
@@ -155,7 +156,8 @@ const mobileFields = [
 
 const isSensitive = (key?: string) => {
   if (!key) return false
-  const patterns = ['secret', 'password', 'private', 'token', 'aes_key']
+  // v0.5.0：webhook_url 也按敏感配置处理（钉钉/企微 webhook URL 内嵌 access_token/key）
+  const patterns = ['secret', 'password', 'private', 'token', 'aes_key', 'webhook_url']
   return patterns.some(p => key.toLowerCase().includes(p))
 }
 

@@ -68,13 +68,29 @@ const (
 	CfgKeyRateLimitPerMinute    = "notify.rate_limit.per_minute"
 	CfgKeyEmailSMTPEncryption     = "notify.email.smtp_encryption"       // 默认 "ssl"，可选 none/ssl/tls
 	CfgKeyEmailSMTPTimeoutSeconds = "notify.email.smtp_timeout_seconds"  // 默认 10
+	// v0.5.0 集成扩展：钉钉机器人
+	CfgKeyDingTalkEnabled   = "notify.dingtalk.enabled"     // bool
+	CfgKeyDingTalkWebhookURL = "notify.dingtalk.webhook_url" // string 含 access_token
+	CfgKeyDingTalkSecret    = "notify.dingtalk.secret"      // string 加签密钥（可选）
+	CfgKeyDingTalkAtMobiles = "notify.dingtalk.at_mobiles"  // string 逗号分隔手机号
+	CfgKeyDingTalkAtAll     = "notify.dingtalk.at_all"      // bool
+	// v0.5.0 集成扩展：企业微信机器人
+	CfgKeyWeComEnabled    = "notify.wecom.enabled"     // bool
+	CfgKeyWeComWebhookURL = "notify.wecom.webhook_url" // string 含 key
+	// v0.5.0 集成扩展：Telegram Bot
+	CfgKeyTelegramEnabled  = "notify.telegram.enabled"   // bool
+	CfgKeyTelegramBotToken = "notify.telegram.bot_token" // string Bot Token
+	CfgKeyTelegramChatID   = "notify.telegram.chat_id"   // string chat_id（频道/群组/私聊）
 )
 
 // Channel 通知渠道
 const (
-	ChannelSMS   = "sms"
-	ChannelEmail = "email"
-	ChannelInApp = "inapp"
+	ChannelSMS       = "sms"
+	ChannelEmail     = "email"
+	ChannelInApp     = "inapp"
+	ChannelDingTalk  = "dingtalk"  // v0.5.0 钉钉机器人
+	ChannelWeCom     = "wecom"     // v0.5.0 企业微信机器人
+	ChannelTelegram  = "telegram"  // v0.5.0 Telegram Bot
 )
 
 // TemplateCode 预置模板代码
@@ -151,6 +167,14 @@ type EmailProvider interface {
 	Send(ctx context.Context, to, subject, htmlBody string) (msgID string, err error)
 }
 
+// WebhookProvider v0.5.0 Webhook 类通知服务商接口（钉钉/企微/TG 通用）
+// subject 作为消息标题（部分渠道如 TG 用 Markdown 加粗展示，企微作为 markdown 标题）
+// content 作为消息正文
+// recipient 在 webhook 通道通常留空（消息广播到群），保留字段以兼容日志结构
+type WebhookProvider interface {
+	Send(ctx context.Context, recipient, subject, content string) (msgID string, err error)
+}
+
 // Manager 通知管理器
 type Manager struct {
 	db          *gorm.DB
@@ -158,6 +182,10 @@ type Manager struct {
 	crypto      *crypto.Manager
 	smsProvider SMSProvider
 	emailProvider EmailProvider
+	// v0.5.0 集成扩展：3 个 webhook provider
+	dingtalkProvider WebhookProvider
+	wecomProvider    WebhookProvider
+	telegramProvider WebhookProvider
 	mu          sync.Mutex
 }
 
@@ -170,6 +198,10 @@ func NewManager(db *gorm.DB, cache *config.ConfigCache, cry *crypto.Manager) *Ma
 	}
 	m.smsProvider = &aliyunSMSProvider{mgr: m}
 	m.emailProvider = &smtpEmailProvider{mgr: m}
+	// v0.5.0 集成扩展：3 个 webhook provider
+	m.dingtalkProvider = &dingtalkWebhookProvider{mgr: m}
+	m.wecomProvider = &wecomWebhookProvider{mgr: m}
+	m.telegramProvider = &telegramWebhookProvider{mgr: m}
 	return m
 }
 
@@ -266,6 +298,12 @@ func (m *Manager) IsChannelEnabled(ctx context.Context, channel string) bool {
 		return m.cache.GetBool(ctx, CfgKeyEmailEnabled, false)
 	case ChannelInApp:
 		return m.cache.GetBool(ctx, CfgKeyInAppEnabled, true)
+	case ChannelDingTalk:
+		return m.cache.GetBool(ctx, CfgKeyDingTalkEnabled, false)
+	case ChannelWeCom:
+		return m.cache.GetBool(ctx, CfgKeyWeComEnabled, false)
+	case ChannelTelegram:
+		return m.cache.GetBool(ctx, CfgKeyTelegramEnabled, false)
 	}
 	return false
 }
@@ -367,6 +405,24 @@ func (m *Manager) dispatch(ctx context.Context, channel, recipient, subject, con
 	case ChannelInApp:
 		// 站内信直接写日志即视为发送成功（前端拉取日志展示）
 		return &SendResult{Status: LogStatusSent, ProviderMsgID: fmt.Sprintf("inapp-%d", time.Now().UnixNano())}
+	case ChannelDingTalk:
+		msgID, err := m.dingtalkProvider.Send(ctx, recipient, subject, content)
+		if err != nil {
+			return &SendResult{Status: LogStatusFailed, ErrorMessage: err.Error()}
+		}
+		return &SendResult{Status: LogStatusSent, ProviderMsgID: msgID}
+	case ChannelWeCom:
+		msgID, err := m.wecomProvider.Send(ctx, recipient, subject, content)
+		if err != nil {
+			return &SendResult{Status: LogStatusFailed, ErrorMessage: err.Error()}
+		}
+		return &SendResult{Status: LogStatusSent, ProviderMsgID: msgID}
+	case ChannelTelegram:
+		msgID, err := m.telegramProvider.Send(ctx, recipient, subject, content)
+		if err != nil {
+			return &SendResult{Status: LogStatusFailed, ErrorMessage: err.Error()}
+		}
+		return &SendResult{Status: LogStatusSent, ProviderMsgID: msgID}
 	}
 	return &SendResult{Status: LogStatusFailed, ErrorMessage: "unknown channel: " + channel}
 }
@@ -379,6 +435,10 @@ func (m *Manager) TestDispatch(ctx context.Context, channel, recipient, subject,
 // SetSMSProvider / SetEmailProvider 暴露注入点供测试 mock
 func (m *Manager) SetSMSProvider(p SMSProvider) { m.smsProvider = p }
 func (m *Manager) SetEmailProvider(p EmailProvider) { m.emailProvider = p }
+// v0.5.0 集成扩展：webhook provider 注入点
+func (m *Manager) SetDingTalkProvider(p WebhookProvider) { m.dingtalkProvider = p }
+func (m *Manager) SetWeComProvider(p WebhookProvider) { m.wecomProvider = p }
+func (m *Manager) SetTelegramProvider(p WebhookProvider) { m.telegramProvider = p }
 
 // ============== 6. 日志查询 / 重试 ==============
 
@@ -803,7 +863,8 @@ func ParseVariables(varsJSON string) []string {
 
 // ValidateChannel 校验渠道
 func ValidateChannel(channel string) bool {
-	return channel == ChannelSMS || channel == ChannelEmail || channel == ChannelInApp
+	return channel == ChannelSMS || channel == ChannelEmail || channel == ChannelInApp ||
+		channel == ChannelDingTalk || channel == ChannelWeCom || channel == ChannelTelegram
 }
 
 // ============== 12. v0.4.x 收尾项 D：支付方式变更通知代理 ==============
