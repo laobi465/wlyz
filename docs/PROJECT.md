@@ -425,7 +425,8 @@ keyauth-saas/
 │   │   ├── pkg/
 │   │   │   ├── crypto/           # AES-256-GCM + RSA-4096 + HMAC-SHA256 + bcrypt + 卡密生成
 │   │   │   ├── epay/             # 彩虹易支付工具包
-│   │   │   └── snowflake/        # 雪花算法订单号
+│   │   │   ├── snowflake/        # 雪花算法订单号
+│   │   │   └── ua/               # User-Agent 解析（OS/Browser/版本号/设备类型/爬虫，v0.4.0）
 │   │   ├── go.mod
 │   │   └── go.sum
 │   │

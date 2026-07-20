@@ -1066,7 +1066,7 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 | 内存 Redis | `github.com/alicebob/miniredis/v2` | v2.38.0 |
 | SQLite 内存库 | `gorm.io/driver/sqlite` + `github.com/mattn/go-sqlite3` | v1.6.0 + v1.14.22 |
 
-#### 测试覆盖（6 个包，0 失败）
+#### 测试覆盖（7 个包，0 失败）
 
 | 包 | 测试文件 | 覆盖范围 |
 |---|---|---|
@@ -1074,6 +1074,7 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 | `pkg/crypto` | `sign_alignment_test.go` | 跨语言签名对齐（Python / Node.js / PHP vs 后端 `HMACSHA256`） |
 | `pkg/snowflake` | `snowflake_test.go` | `NewNode` 边界 / `NextID` 并发安全 / `OrderNo` 三通道前缀 / `twepoch` 常量 |
 | `pkg/epay` | `epay_test.go` | `BuildSubmitURL` / `ParseNotify` / `VerifyNotify` / 端到端闭环 |
+| `pkg/ua` | `ua_test.go` | UA 解析：Chrome/Firefox/Safari/Edge/curl/Bot/空字符串 + OS 版本号提取 + 设备类型 + 优先级匹配（20 个测试） |
 | `internal/quota` | `quota_test.go` | `CheckMaxApps/Cards/Agents/Devices` 全场景 + `ExceededError` 类型匹配 |
 | `internal/heartbeat` | `heartbeat_test.go` | `Record/IsOnline/Remove/CountOnline/ListOnline/GetLastHeartbeatAt` 全场景 + 端到端闭环 |
 | `internal/middleware` | `middleware_test.go` | JWT 鉴权 / TenantScope 租户隔离 / SignatureAuth HMAC 签名闭环 / RateLimitByIP 滑动窗口 / IPBlacklist / RecordCardFailure 自动封禁 / Response 格式（21 个测试） |
@@ -1088,6 +1089,7 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 6. **miniredis Close 后 Addr() panic**：测试 Redis 故障 fail-open 场景时，不能用 `mr.Close()` 后调用 `mr.Addr()`，需直接构造指向不可达地址（如 `127.0.0.1:1`）的 `redis.Client`
 7. **ConfigReader mock**：中间件测试用 `mockConfigReader`（内存 map）实现 `ConfigReader` 接口，避免依赖 sys_config 表
 8. **CryptoManager 注入**：`SetCryptoManager` 在测试 setup 时注入测试 AES 密钥（32 字节），`t.Cleanup` 恢复 nil
+9. **UA 解析纯函数测试**：`pkg/ua` 无外部依赖，纯函数测试基于固定 UA 字符串断言；iOS/macOS UA 用 `_` 分隔版本号，`cleanVersion` 必须允许 `_` 通过再由 `parseOS` 转换为 `.`；浏览器匹配顺序 Edge → curl → Bot → Firefox → Chrome → Safari（避免 Edge UA 含 Chrome/ 被误识别为 Chrome）
 
 #### 运行命令
 

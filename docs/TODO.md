@@ -248,7 +248,7 @@
 - [x] [已完成] 路由注册：admin 加 `/tenant-withdrawal-review`；tenant 加 `/settlements` + `/withdrawal` - v0.3.4
 - [x] [已完成] `pnpm run build` 前端编译验证通过 - v0.3.4
 - [迁移] 2FA `backup_codes` Redis 持久化 → v0.4.x 加表字段后迁移
-- [迁移] UA 解析库（mileusna/ua 或 ua-parser）→ v0.4.x 引入
+- [x] [已完成 2026-07-20] UA 解析库引入（自实现 `pkg/ua` 包，零第三方依赖，20 个测试全 PASS；handler 层 `parseDeviceName` / `detectDeviceType` / `ListLoginDevicesFull` 全部接入） - v0.4.0
 - [迁移] 登录失败日志结构化记录 → v0.4.x 引入 zap/zerolog
 - [迁移] JWT jti 精确单设备踢出 → v0.4.x
 
@@ -471,7 +471,7 @@
 | v0.3.4 | 2026-07-19 | ✅ 已完成（结算与对账闭环：开发者 balance/frozen_balance + tenant_balance_log + tenant_withdraw + 批量结算 + 对账报表 + 双审核页面） |
 | v0.3.5 | 2026-07-19 | ✅ 已完成（P0 修复：RSA 脚本 / 数据库迁移 / H5 公共 API / 套餐配额） |
 | v0.3.6 | 2026-07-20 | ✅ 已完成（剩余 P1 收尾 + 单元测试 + 客户端 SDK 签名对齐测试） |
-| v0.4.0 | 待定 | [待开始] 三期商业化 |
+| v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移已完成，多级代理 / 全语言 SDK / 监控告警等待开始） |
 
 ---
 
@@ -479,7 +479,7 @@
 
 - **总任务数**：约 110 项
 - **已完成**：约 100 项（v0.2.0 ~ v0.3.6 全部已发布版本累积）
-- **测试覆盖**：6 个测试包（crypto/snowflake/epay/quota/heartbeat/middleware）+ 跨语言签名对齐，全 PASS
+- **测试覆盖**：7 个测试包（crypto/snowflake/epay/quota/heartbeat/middleware/ua）+ 跨语言签名对齐，全 PASS
 - **进行中**：0 项
 - **待开始**：约 10 项（v0.4.x 商业化）
 
@@ -516,6 +516,7 @@
 - [x] [已完成 2026-07-20] 单元测试 + 客户端 SDK 签名对齐测试（pkg/crypto + pkg/snowflake + pkg/epay + internal/quota + internal/heartbeat + 跨语言签名对齐）
 - [x] [已完成 2026-07-20] 中间件层单元测试（internal/middleware：JWT/Tenant/Signature/RateLimit/IPBlacklist/RecordCardFailure/Response，21 个测试全 PASS）
 - [x] [已完成 2026-07-20] v0.3.6 文档同步
+- [x] [已完成 2026-07-20] UA 解析库迁移（pkg/ua 自实现 + handler 层接入 + ListLoginDevices 响应增强，20 个测试全 PASS） - v0.4.0
 
 **v0.4.x 三期商业化（约 10 项）**：
 - 多级代理（二级 + 三级 + 跨级佣金）
@@ -530,6 +531,6 @@
 
 ---
 
-**文档版本**：0.3.6  
-**最后更新**：2026-07-20（v0.3.6 全部任务收尾，单元测试 + SDK 签名对齐测试完成）  
+**文档版本**：0.4.0  
+**最后更新**：2026-07-20（v0.4.0 首项迁移：pkg/ua 包 + handler 层接入 + ListLoginDevices 响应增强）  
 **维护者**：KeyAuth SaaS Team

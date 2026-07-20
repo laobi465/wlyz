@@ -9,6 +9,71 @@
 
 ---
 
+## [0.4.0] - 2026-07-20（UA 解析迁移，进行中）
+
+### [新增] pkg/ua 包：User-Agent 解析工具（v0.4.x 迁移项首项）
+
+#### 背景
+
+- v0.3.x 的 `parseDeviceName`（profile.go）与 `detectDeviceType`（session.go）是简化实现，仅识别 OS+Browser 主流场景，无版本号、无爬虫识别
+- TODO.md 第 251 行 `[迁移] UA 解析库（mileusna/ua 或 ua-parser）→ v0.4.x 引入`
+- v0.4.x 起首项迁移：新建 `pkg/ua` 包，自实现轻量级解析器，**零第三方依赖**
+
+#### 实现
+
+- 新建 `pkg/ua/ua.go`：
+  - `DeviceInfo` 结构体：OS / OSVersion / Browser / Version / DeviceType / DeviceName
+  - `Parse(ua string) DeviceInfo`：解析入口，覆盖 Chrome / Firefox / Safari / Edge / curl / 爬虫
+  - `IsBot(ua string) bool`：识别 Googlebot / Bingbot / Baiduspider / YandexBot / DuckDuckBot / Slurp
+  - OS 版本号提取：Windows NT→友好版本（10.0→10 / 6.3→8.1 / 6.2→8 / 6.1→7 / 6.0→Vista / 5.1→XP）；macOS 10_15_7→10.15.7；iOS 14_2_1→14.2.1；Android 11;→11
+  - 设备类型判定：pc / mobile / tablet / bot / unknown（iPad / Android 平板识别为 tablet；Android 含 Mobile 识别为 mobile）
+  - 浏览器匹配顺序：Edge → curl → Bot → Firefox → Chrome → Safari（避免 Edge 被识别为 Chrome、Chrome 被识别为 Safari）
+
+- 新建 `pkg/ua/ua_test.go`（20 个测试全 PASS）：
+  - Chrome on macOS（含 OS 版本 10.15.7 + 浏览器版本 90.0.4430.85）
+  - Firefox on Windows 10（NT 10.0→10 友好版本）
+  - Safari on iPhone（iOS 14_2_1→14.2.1）
+  - Edge on Windows（验证 Edge 先于 Chrome 匹配）
+  - Chrome on Android Mobile / Tablet（验证含/不含 Mobile 标识的设备类型区分）
+  - iPad（验证 iOS 平板识别）
+  - curl（SDK 测试常用 UA）
+  - 空字符串 / 仅空白字符
+  - Googlebot / Baiduspider（爬虫识别 + DeviceType=bot）
+  - Linux + Firefox
+  - 旧版 Windows XP（NT 5.1→XP） / Windows 8（NT 6.2→8）
+  - IsBot 多场景（6 个爬虫 UA + 4 个正常 UA）
+  - SDK 自定义 UA（keyauth-py/1.0 不崩溃，返回 Unknown）
+  - DeviceName 拼接逻辑（OS+Browser / 仅 OS / 仅 Browser / Unknown）
+  - Edge 优先级（Edge UA 含 Edg/ 与 Chrome/，必须识别为 Edge）
+  - Safari 优先级（Chrome UA 含 Chrome/ 与 Safari/，必须识别为 Chrome）
+  - 版本号提取（Chrome / Firefox / Safari Version / curl）
+
+#### handler 层改造
+
+- `internal/handler/profile.go`：
+  - `parseDeviceName` 改为调用 `ua.Parse(uaStr).DeviceName`，保留函数签名作为兼容包装
+  - 移除原 50 行简化实现（OS / Browser 双 switch），删除「待核实 v0.4.x：引入更完整的 UA 解析库」标注
+
+- `internal/handler/session.go`：
+  - `recordLoginSession` 改为调用一次 `ua.Parse` 复用结果（替代 `parseDeviceName` + `detectDeviceType` 两次扫描）
+  - `detectDeviceType` 改为调用 `ua.Parse(uaStr).DeviceType`，保留函数签名作为兼容包装
+  - `ListLoginDevicesFull` 响应增强：新增 `os` / `os_version` / `browser` / `browser_version` / `is_bot` 字段
+  - 动态解析 UA 拆分字段，**不改 DB schema**，向前兼容（前端旧字段 `device_name` / `device_type` 保留）
+
+#### 铁律遵守
+
+- 铁律 04（禁硬编码）：无任何硬编码密钥/域名/IP；OS/Browser 常量集中定义在包顶部
+- 铁律 05（配置后台化）：UA 解析为纯函数，无配置依赖
+- 铁律 06（防幻觉）：20 个测试覆盖主流 UA + 边界 + 爬虫 + SDK UA；所有断言基于固定输入；移除「待核实 v0.4.x」标注（已落地）
+
+#### 验证
+
+- `go test ./...`：7 个测试包全 PASS（新增 `pkg/ua`）
+- `go vet ./...`：0 警告
+- `go build ./...`：通过
+
+---
+
 ## [0.3.6] - 2026-07-20
 
 ### [新增] 中间件层单元测试（HTTP 安全闭环）

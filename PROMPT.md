@@ -12,6 +12,8 @@
 
 **v0.3.6 已发布**：6 个测试包（crypto/snowflake/epay/quota/heartbeat/middleware）+ 跨语言签名对齐测试全部通过。运行 `cd apps/server && go test ./...` 验证。
 
+**v0.4.0 进行中**：UA 解析迁移已完成（`pkg/ua` 包 + handler 层接入 + ListLoginDevices 响应增强，7 个测试包全 PASS）。
+
 ## 二、必读文档（按顺序）
 
 1. **README.md** —— 项目概览 + 快速部署
@@ -41,6 +43,7 @@ apps/server/                # Go 后端
   internal/model/model.go   # GORM 模型（26 张表）
   internal/config/cache.go  # sys_config 缓存（铁律 05 核心）
   pkg/crypto/crypto.go      # AES / RSA / HMAC / bcrypt / 卡密生成
+  pkg/ua/ua.go              # User-Agent 解析（OS/Browser/版本号/设备类型/爬虫）
   migrations/               # SQL 迁移（001 schema + 002 seed）
 
 apps/admin/                 # Vue3 前端
@@ -71,6 +74,9 @@ docs/                       # 四份核心文档
 - ✅ 中间件层单元测试（`internal/middleware/middleware_test.go` 21 个测试全 PASS：JWTAuth 7 + TenantScope 3 + SignatureAuth 7（含 Nonce 防重放/时间戳容差/AES 解密 sign_secret 端到端闭环）+ RateLimitByIP 4（含 Redis 故障 fail-open）+ IPBlacklist 2 + RecordCardFailure 3 + Response 2 + GenerateToken RoundTrip 1；用 `httptest.NewRecorder` + `gin.TestMode` + `mockConfigReader` + miniredis + SQLite 内存库）
 - ✅ 文档全量同步对齐 v0.3.6 实际状态（README/PROMPT/PROJECT/SPEC/TODO/CHANGELOG 六份联动更新）
 
+v0.4.0 已新增完成（进行中）：
+- ✅ UA 解析库迁移（`pkg/ua` 自实现零第三方依赖 + 20 个测试全 PASS；handler 层 `parseDeviceName` / `detectDeviceType` / `ListLoginDevicesFull` 全部接入；ListLoginDevices 响应新增 `os`/`os_version`/`browser`/`browser_version`/`is_bot` 字段，不改 DB schema 向前兼容；移除 profile.go「待核实 v0.4.x：引入更完整的 UA 解析库」标注）
+
 v0.3.5 已完成（基线）：
 - ✅ 后端 Go 项目结构（main / config / model / middleware / handler / router / quota / migration / heartbeat）
 - ✅ 26 张基础表 + 4 张扩展表（log_login_failed / refresh_token_device / tenant_balance_log / tenant_withdraw）共 30 个 GORM struct，7 套 migration（001~007）
@@ -86,6 +92,8 @@ v0.3.5 已完成（基线）：
 - ✅ Docker Compose + 宝塔部署 + RSA-4096 密钥生成独立脚本
 
 **v0.3.6 已完成（2026-07-20）**：剩余 P1 收尾 + 单元测试 + 客户端 SDK 签名对齐测试，全部完成。
+
+**v0.4.0 进行中（2026-07-20）**：UA 解析迁移已完成（pkg/ua + handler 接入 + ListLoginDevices 增强），后续推进多级代理 / 全语言 SDK 等。
 
 **v0.4.0（三期商业化，待开始）**：
 - 多级代理 + 全语言 SDK + 在线更新 + 数据备份恢复 + 监控告警 + 通知系统
@@ -154,3 +162,5 @@ bash scripts/reset_admin_password.sh NewPass@2026
 > v0.3.6 已修复：原 `card.go:422` 设备强制下线 TODO 已实现（联动 heartbeat.Remove）；卡密 CSV 导入导出已实现；原 `auth.go:443` AgentRegister 501 占位已实现（方案 B 先支付后建 Agent）；Register.vue 三处 TODO 已落地（读配置+调起支付+查询订单状态）；install.go 配置键名 bug 已修复（`agent.register_fee` → `agent.register.fee` 与 seed 002 对齐）；原 `pay.go:528` `EpayTenantNotify` 占位 `c.String(200, "fail")` 已实现完整回调流程（含 `processTenantOwnPaidOrder` 事务 + `loadTenantPayConfig` AES 解密）；双层支付模式切换已生效（`CreatePayOrder` 内 `SysPackage.AllowCustomPay` + `TenantPayConfig.Enabled` 双开关，TOP/ORD 前缀分发）；`002_seed_data.up.sql` 中 `pay.platform.notify_path` 与 router 不一致 bug 已修复；客户端 SDK 三语言已发布（`sdks/python/` + `sdks/nodejs/` + `sdks/php/`，9 个验证 API + HMAC-SHA512/256 签名算法 + KeyAuthError 异常体系，PHP `php -l` 校验通过）。
 
 > 客户端 SDK 签名算法「待核实」项更新（v0.3.6 已通过单元测试部分验证）：三语言 SDK 优先用 `sha512/256` 算法（与后端 `crypto.HMACSHA256` 的 `sha512.New512_256` 变体对齐），运行时不支持时回退标准 `sha256`。**已验证**：Python + PHP 在 sha512/256 可用环境下与后端签名完全一致（`sdks/tests/sign.py` + `sign.php` + `pkg/crypto/sign_alignment_test.go`，3 组固定输入全 PASS）；**待核实**：sha256 回退分支与 sha512.New512_256 不等价（已确认两者输出不同，回退会导致签名校验失败），Node.js 沙箱环境 OpenSSL 不支持 sha512/256，已 `t.Skipf` 标注「环境限制」，待生产环境 Node.js 验证。
+
+> v0.4.0 已落地：UA 解析库迁移完成（`pkg/ua` 自实现零第三方依赖 + 20 个测试全 PASS；handler 层 `parseDeviceName` / `detectDeviceType` / `ListLoginDevicesFull` 全部接入；ListLoginDevices 响应新增 `os` / `os_version` / `browser` / `browser_version` / `is_bot` 字段，不改 DB schema 向前兼容）；profile.go 中原「待核实 v0.4.x：引入更完整的 UA 解析库」标注已移除。

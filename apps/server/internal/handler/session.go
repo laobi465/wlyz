@@ -7,7 +7,6 @@ package handler
 import (
 	"context"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -16,25 +15,26 @@ import (
 	"github.com/your-org/keyauth-saas/apps/server/internal/auth"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
+	"github.com/your-org/keyauth-saas/apps/server/pkg/ua"
 )
 
 // ============== 会话记录 ==============
 
 // recordLoginSession 登录成功后写入一条 refresh_token_device 记录
 // refresh_jti 使用 uuid 作为会话标识（当前 JWT 不携带 jti，待核实 v0.4.x 将 jti 嵌入 claims 后即可精准单点踢出）
-func recordLoginSession(deps *Deps, role string, userID uint64, ip, ua string, refreshTTL time.Duration) error {
+func recordLoginSession(deps *Deps, role string, userID uint64, ip, uaStr string, refreshTTL time.Duration) error {
 	now := time.Now()
 	expiresAt := now.Add(refreshTTL)
-	deviceName := parseDeviceName(ua)
-	deviceType := detectDeviceType(ua)
+	// v0.4.x：使用 pkg/ua 统一解析（一次解析复用结果，避免重复扫描 UA）
+	info := ua.Parse(uaStr)
 	session := &model.RefreshTokenDevice{
 		UserRole:     role,
 		UserID:       userID,
 		RefreshJTI:   uuid.NewString(),
-		DeviceName:   deviceName,
-		DeviceType:   deviceType,
+		DeviceName:   info.DeviceName,
+		DeviceType:   info.DeviceType,
 		ClientIP:     ip,
-		UserAgent:    truncateUA(ua),
+		UserAgent:    truncateUA(uaStr),
 		LastActiveAt: now,
 		ExpiresAt:    expiresAt,
 		Revoked:      false,
@@ -63,17 +63,10 @@ func markAllSessionsRevoked(deps *Deps, role string, userID uint64) {
 		})
 }
 
-// detectDeviceType 简化设备类型判定（pc/mobile/tablet）
-func detectDeviceType(ua string) string {
-	uaLower := strings.ToLower(ua)
-	switch {
-	case strings.Contains(uaLower, "ipad") || strings.Contains(uaLower, "tablet"):
-		return "tablet"
-	case strings.Contains(uaLower, "mobile") || strings.Contains(uaLower, "android") || strings.Contains(uaLower, "iphone"):
-		return "mobile"
-	default:
-		return "pc"
-	}
+// detectDeviceType 设备类型判定（v0.4.x 改为调用 pkg/ua）
+// 保留此函数作为 handler 层包装，兼容既有调用点
+func detectDeviceType(uaStr string) string {
+	return ua.Parse(uaStr).DeviceType
 }
 
 // truncateUA 截断 User-Agent 到 512 字符（数据库字段长度限制）
@@ -178,11 +171,18 @@ func ListLoginDevicesFull(deps *Deps) gin.HandlerFunc {
 		list := make([]gin.H, 0, len(sessions))
 		for _, s := range sessions {
 			isCurrent := s.ClientIP == currentIP && s.UserAgent == currentUA
+			// v0.4.x：动态解析 UA 拆分字段（不改 DB schema，向前兼容）
+			info := ua.Parse(s.UserAgent)
 			list = append(list, gin.H{
 				"id":             s.ID,
 				"device_id":      s.RefreshJTI,
 				"device_name":    s.DeviceName,
 				"device_type":    s.DeviceType,
+				"os":             info.OS,
+				"os_version":     info.OSVersion,
+				"browser":        info.Browser,
+				"browser_version": info.Version,
+				"is_bot":         info.DeviceType == ua.DeviceBot,
 				"ip":             s.ClientIP,
 				"location":       "", // 待核实 v0.4.x：接入 IP 地理库
 				"user_agent":     s.UserAgent,

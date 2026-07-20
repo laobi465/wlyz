@@ -18,6 +18,7 @@ import (
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/crypto"
+	"github.com/your-org/keyauth-saas/apps/server/pkg/ua"
 )
 
 // ============== DTO ==============
@@ -214,42 +215,11 @@ func twoFABackupKey(role string, userID uint64) string {
 	return "2fa:backup:" + role + ":" + strconv.FormatUint(userID, 10)
 }
 
-// parseDeviceName 从 User-Agent 简化解析设备名称（OS / Browser）
-// 待核实 v0.4.x：引入更完整的 UA 解析库（如 mileusna/ua 或 oe ua-parser）
-func parseDeviceName(ua string) string {
-	ua = strings.TrimSpace(ua)
-	if ua == "" {
-		return "Unknown Device"
-	}
-	uaLower := strings.ToLower(ua)
-
-	osName := "Unknown OS"
-	switch {
-	case strings.Contains(uaLower, "windows"):
-		osName = "Windows"
-	case strings.Contains(uaLower, "mac os") || strings.Contains(uaLower, "macintosh"):
-		osName = "macOS"
-	case strings.Contains(uaLower, "android"):
-		osName = "Android"
-	case strings.Contains(uaLower, "iphone") || strings.Contains(uaLower, "ipad"):
-		osName = "iOS"
-	case strings.Contains(uaLower, "linux"):
-		osName = "Linux"
-	}
-
-	browser := "Unknown Browser"
-	switch {
-	case strings.Contains(uaLower, "edg/"):
-		browser = "Edge"
-	case strings.Contains(uaLower, "chrome/"):
-		browser = "Chrome"
-	case strings.Contains(uaLower, "firefox/"):
-		browser = "Firefox"
-	case strings.Contains(uaLower, "safari/"):
-		browser = "Safari"
-	}
-
-	return osName + " / " + browser
+// parseDeviceName 从 User-Agent 解析设备名称（OS / Browser）
+// v0.4.x：改为调用 pkg/ua 包，支持 OS 版本号 + 浏览器版本号 + 爬虫识别
+// 保留此函数作为 handler 层包装，避免改动 recordLoginSession 调用点
+func parseDeviceName(uaStr string) string {
+	return ua.Parse(uaStr).DeviceName
 }
 
 // ============== 1. ProfileMe 当前用户完整信息 ==============
