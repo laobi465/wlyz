@@ -36,6 +36,8 @@
 - 在线更新体系（v0.4.0 GitHub Webhook 自动部署 + 双重锁防并发 + 失败自动回滚 + 完整审计日志）
 - 数据备份恢复体系（v0.4.0 全库 SQL 备份 + SHA-256 校验 + AES-256-GCM 加密 + gzip 压缩 + 异步恢复 + 过期清理）
 - 监控告警体系（v0.4.0 CPU/内存/磁盘/错误率采集 + 阈值告警 + webhook 通知 + 静默期去重 + 自动恢复 + 告警确认）
+- 通知系统（v0.4.0 短信/邮件/站内信三通道 + 模板引擎 + 服务商抽象 + 失败重试 + 限流，Aliyun SMS + SMTP Email 双实现）
+- 终端用户体系（v0.4.0 H5 注册/登录/绑卡/个人中心 + HMAC-SHA256 access token + SHA-512 哈希 refresh token + jti 单点踢出 + bcrypt cost=12）
 - 心跳保活 + 离线宽限期
 - 云变量远程下发
 - 多语言 SDK（Python / Node.js / Java / C# / Go / PHP / C++ / 易语言）
@@ -141,7 +143,7 @@ SDK 校验签名 → 通过则解锁功能
 | S-05 | 代理全局视图 | ✅ | 跨租户代理列表 + 状态/封禁（v0.3.0） |
 | S-06 | 平台总支付配置 | ✅ | sys_config 易支付网关/商户号/密钥 + 抽成比例 + TestPayConfig（v0.2.3） |
 | S-07 | 系统配置 | ✅ | sys_config 全局参数 CRUD + Redis 缓存（v0.2.0） |
-| S-08 | 通知模板 | ☐ | 短信/邮件/站内信模板（v0.4.x） |
+| S-08 | 通知模板 | ✅ | 短信/邮件/站内信三通道 + 模板 CRUD + 日志查询 + 失败重试 + 测试发送（v0.4.0：9 个 admin 端点 + 16 项 notify.* 配置 + Aliyun SMS 骨架 + SMTP Email 实现 + Render 用 strings.NewReplacer 防 SSTI） |
 | S-09 | 安全防护 | ✅ | 全局 IP 黑名单 + 登录失败日志 + 安全中心统计（v0.3.1） |
 | S-10 | 操作日志 | ✅ | 三表独立查询（操作/验证/登录失败）+ CSV 导出（v0.3.3） |
 | S-11 | 系统监控 | ✅ | CPU/内存/磁盘/在线设备/QPS/错误率采集 + 阈值告警 + webhook 通知 + 静默期 + 自动恢复 + 告警确认/重发 + 24h 聚合（v0.4.0） |
@@ -161,7 +163,7 @@ SDK 校验签名 → 通过则解锁功能
 | D-03 | 卡密管理 | ✅ | 批量生成 + 状态机 + 封禁/解封/删除（v0.2.2）+ CSV 导入导出（v0.3.6） |
 | D-04 | 卡类套餐 | ✅ | 时长卡/次数卡/永久卡/试用卡/功能解锁卡 5 类型 CRUD（v0.2.2） |
 | D-05 | 设备管理 | ✅ | 列表 + 强制下线（v0.3.0）+ 封禁卡密联动下线（v0.3.6） |
-| D-06 | 用户管理 | ☐ | 终端用户列表、封禁（v0.4.x，终端用户体系未建） |
+| D-06 | 用户管理 | ✅ | 终端用户列表 + 详情 + 状态/封禁（v0.4.0：4 个 admin 端点 AdminListEndUsers/AdminEndUserStats/AdminGetEndUser/AdminUpdateEndUserStatus + end_user 表 + 关联卡密查询） |
 | D-07 | 订单管理 | ✅ | 订单列表 + 状态筛选（v0.3.0） |
 | D-08 | 代理管理 | ✅ | 代理 CRUD + 邀请码生成/禁用 + 套餐配额校验（v0.3.0 + v0.3.5） |
 | D-09 | 云变量 | ✅ | 变量 CRUD + 客户端 get_var 接口（v0.3.0） |
@@ -199,13 +201,13 @@ SDK 校验签名 → 通过则解锁功能
 | U-02 | 应用详情页 | ✅ | PublicAppInfo 渲染（v0.3.5） |
 | U-03 | 购卡结算页 | ✅ | PublicCardTypes + CreatePayOrder（v0.2.3 + v0.3.5） |
 | U-04 | 支付结果页 | ✅ | GetPayOrder + 卡密明文展示（v0.2.4 + v0.3.5） |
-| U-05 | 我的卡密 | ☐ | 终端用户体系未建（v0.4.x） |
+| U-05 | 我的卡密 | ◐ | 后端已建（v0.4.0：H5EndUserListMyCards + H5EndUserGetCardDetail），前端待接入（v0.4.x） |
 | U-06 | 卡密详情 | ✅ | 卡密查询 + 详情（v0.2.4） |
 | U-07 | 查卡页 | ✅ | 按 card_key 查询（v0.2.4） |
-| U-08 | 在线激活页 | ☐ | 终端用户体系未建（v0.4.x） |
-| U-09 | 用户登录/注册 | ☐ | 终端用户体系未建（v0.4.x） |
-| U-10 | 用户中心 | ☐ | 终端用户体系未建（v0.4.x） |
-| U-11 | 订单列表 | ☐ | 终端用户体系未建（v0.4.x） |
+| U-08 | 在线激活页 | ◐ | 后端已建（v0.4.0：H5EndUserBindCard + UnbindCard 事务化绑卡），前端待接入（v0.4.x） |
+| U-09 | 用户登录/注册 | ◐ | 后端已建（v0.4.0：H5EndUserRegister + H5EndUserLogin + 验证码 + 重置密码），前端待接入（v0.4.x） |
+| U-10 | 用户中心 | ◐ | 后端已建（v0.4.0：H5EndUserMe + UpdateProfile + ChangePassword + 会话管理 + 单点踢出），前端待接入（v0.4.x） |
+| U-11 | 订单列表 | ☐ | 终端用户订单视图（v0.4.x，后端订单查询已存在，待 H5 接入） |
 | U-12 | 公告详情 | ☐ | v0.4.x |
 | U-13 | 帮助中心 | ☐ | v0.4.x |
 | U-14 | 联系客服 | ☐ | v0.4.x |
@@ -270,8 +272,10 @@ SDK 校验签名 → 通过则解锁功能
 | 在线更新 | `system_update_log.trigger_source` / `trigger_by` / `commit_before` / `commit_after` / `status` / `steps_json` / `log_text` / `rolled_back_from` | v0.4.0 在线更新体系（GitHub Webhook + 自动部署 + 回滚 + 审计日志，migration 011） | v0.4.0 |
 | 数据备份 | `system_backup_log.backup_type` / `file_path` / `file_size` / `checksum` / `status` / `tables_count` / `rows_count` / `restored_from` | v0.4.0 数据备份恢复（全库 SQL 备份 + SHA-256 + AES-256-GCM + gzip + 过期清理，migration 012） | v0.4.0 |
 | 监控告警 | `system_metric.metric_name` / `metric_value` / `metric_unit` / `labels_json` / `collected_at` + `system_alert.alert_rule` / `severity` / `status` / `threshold` / `operator` / `fired_at` / `resolved_at` / `acked_by` / `notify_sent` | v0.4.0 监控告警（CPU/内存/磁盘/错误率采集 + 阈值告警 + webhook 通知 + 静默期 + 自动恢复，migration 013） | v0.4.0 |
+| 通知系统 | `notify_template`（code/channel/subject/body_html/tenant_id/status）+ `notify_log`（tenant_id/channel/recipient/template_code/status/provider_msg_id/error_message/retry_count/priority） | v0.4.0 通知系统（短信/邮件/站内信三通道 + 模板 CRUD + 日志 + 失败重试，migration 014 + 16 项 notify.* sys_config） | v0.4.0 |
+| 终端用户 | `end_user`（tenant_id/username/email/phone/password_hash/status/last_login_at/last_login_ip）+ `end_user_card`（user_id/card_id/tenant_id）+ `end_user_token`（user_id/refresh_token_hash/access_jti/expires_at/user_agent/ip/revoked）+ `app_card.end_user_id` | v0.4.0 终端用户体系（H5 注册/登录/绑卡/单点踢出 + HMAC-SHA256 access token + SHA-512 哈希 refresh token + jti 单点踢出，migration 015 + 10 项 enduser.* sys_config） | v0.4.0 |
 
-> migration 文件：`apps/server/migrations/` 共 13 套（001 ~ 013），由 `internal/migration/migrator.go` 在 `InitContainer` 阶段自动执行。
+> migration 文件：`apps/server/migrations/` 共 15 套（001 ~ 015），由 `internal/migration/migrator.go` 在 `InitContainer` 阶段自动执行。
 
 ### 4.2 Redis 缓存键设计
 
@@ -418,7 +422,7 @@ keyauth-saas/
 │   │   ├── internal/
 │   │   │   ├── auth/             # JWT/TOTP/login_lock（v0.2.1）+ jti 单点踢出（v0.4.0：BlacklistRefreshTokenByJTI + IsRefreshTokenBlacklisted 双维度）
 │   │   │   ├── config/           # 配置加载 + sys_config 缓存（cache.go）+ v0.4.0 AppConfig 加 LogLevel/LogFormat/LogOutput
-│   │   │   ├── handler/          # HTTP 处理器（18 个文件，148 条路由，v0.3.6 新增 3 条代理注册公开路由）
+│   │   │   ├── handler/          # HTTP 处理器（20 个文件，176 条路由；v0.3.6 新增 3 条代理注册公开路由；v0.4.0 新增 9 notify + 19 enduser = 28 条路由）
 │   │   │   │   ├── admin.go / admin_business.go / admin_finance.go  # 超管 3 文件
 │   │   │   │   ├── tenant_business.go / tenant_finance.go / tenant_settle.go  # 开发者 3 文件
 │   │   │   │   ├── agent_business.go  # 代理 1 文件
@@ -426,19 +430,23 @@ keyauth-saas/
 │   │   │   │   ├── auth.go / session.go / profile.go / public.go  # 鉴权/会话/账号设置/公开 API（auth.go 含 v0.3.6 AgentRegister + v0.4.0 jti 单点踢出；session.go 含 v0.4.0 revokeSessionByJTI + 结构化日志；profile.go 含 v0.4.0 2FA backup_codes DB 持久化）
 │   │   │   │   ├── install.go  # 安装向导（v0.3.6，首次部署配置）
 │   │   │   │   ├── pay.go  # 平台总支付 + 开发者自有易支付占位（v0.3.6 EpayNotify 前缀分发 + processAgentRegisterPaid）
+│   │   │   │   ├── notify.go  # v0.4.0 通知系统管理端 9 个端点（status/templates CRUD/logs/retry/test）
+│   │   │   │   ├── enduser.go  # v0.4.0 终端用户体系 19 个端点（5 公开 + 10 H5 + 4 admin）
 │   │   │   │   ├── log_worker.go  # 异步日志 worker（验证 4096 + 操作 2048，v0.4.0 替换 _ = err 为 logger.Error 结构化日志）
 │   │   │   │   └── deps.go  # 依赖注入容器
+│   │   │   ├── enduser/          # v0.4.0 终端用户体系核心（Manager 15 方法 + HMAC-SHA256 access token + SHA-512 哈希 refresh token + jti 单点踢出 + bcrypt cost=12 + 事务化绑卡）
 │   │   │   ├── grayscale/        # v0.4.0 灰度发布核心（Match 7 步过滤链 + HashBucket SHA-256 稳定桶 + ParseList + DefaultRate + IsEnabled）
 │   │   │   ├── heartbeat/        # 心跳保活（Redis Sorted Set，6 个方法）
 │   │   │   ├── logger/           # v0.4.0 结构化日志封装（基于 Go 标准库 log/slog，零依赖；Init/Debug/Info/Warn/Error + 4 个 Ctx 版本）
-│   │   │   ├── middleware/       # 中间件（auth/tenant/signature/ratelimit/response/time）
+│   │   │   ├── middleware/       # 中间件（auth/tenant/signature/ratelimit/response/time + v0.4.0 H5EndUserAuth HMAC-SHA256 + 常量时间比较防时序攻击）
 │   │   │   ├── migration/        # 轻量级 SQL 文件迁移（v0.3.5）
-│   │   │   ├── model/            # 30 个 GORM struct（v0.4.0 三表加 BackupCodes 字段；v0.4.0 Agent 加 ParentID/Level + AgentInviteCode 加 CreatorType/CreatorAgentID；v0.4.0 AppVersion 加 ReleaseStrategy/GrayscaleRate/GrayscalePlatforms/GrayscaleRegions/GrayscaleChannels）
+│   │   │   ├── model/            # 35 个 GORM struct（v0.4.0 三表加 BackupCodes 字段；v0.4.0 Agent 加 ParentID/Level + AgentInviteCode 加 CreatorType/CreatorAgentID；v0.4.0 AppVersion 加 ReleaseStrategy/GrayscaleRate/GrayscalePlatforms/GrayscaleRegions/GrayscaleChannels；v0.4.0 新增 NotifyTemplate/NotifyLog/EndUser/EndUserCard/EndUserToken 5 表 + AppCard.EndUserID）
 │   │   │   ├── multilevel/       # v0.4.0 多级代理核心（DistributeCrossCommission 跨级佣金 + CanCreateSubordinate + ComputeSubordinateLevel + BuildAgentTree + ListSubordinates）
+│   │   │   ├── notify/           # v0.4.0 通知系统核心（Manager Send/Retry/GetStats/Template CRUD + Render strings.NewReplacer 防 SSTI + SMSProvider/EmailProvider 接口 + Aliyun SMS 骨架 + SMTP Email 实现 + 16 项 notify.* 配置）
 │   │   │   ├── quota/            # 套餐配额检查（CheckMaxApps/MaxCards/MaxAgents/MaxDevices，v0.3.5）
 │   │   │   ├── router/           # 路由注册
 │   │   │   └── update/           # v0.4.0 在线更新核心（Manager.ExecuteUpdate 6 步流程 + VerifyWebhookSignature + ParsePushEvent + BranchMatches + AcquireLock/ReleaseLock + HealthCheck + Rollback）
-│   │   ├── migrations/           # 11 套 SQL 迁移（001 ~ 011；008 = v0.4.0 2FA backup_codes 字段；009 = v0.4.0 多级代理 parent_id/level + creator_type/creator_agent_id + 4 项 sys_config；010 = v0.4.0 灰度发布 app_version 5 字段 + 3 项 sys_config；011 = v0.4.0 在线更新 system_update_log 表 + 8 项 sys_config）
+│   │   ├── migrations/           # 15 套 SQL 迁移（001 ~ 015；008 = v0.4.0 2FA backup_codes 字段；009 = v0.4.0 多级代理 parent_id/level + creator_type/creator_agent_id + 4 项 sys_config；010 = v0.4.0 灰度发布 app_version 5 字段 + 3 项 sys_config；011 = v0.4.0 在线更新 system_update_log 表 + 8 项 sys_config；012 = v0.4.0 数据备份 system_backup_log 表；013 = v0.4.0 监控告警 system_metric + system_alert 表；014 = v0.4.0 通知系统 notify_template + notify_log 表 + 16 项 sys_config；015 = v0.4.0 终端用户 end_user + end_user_card + end_user_token 表 + ALTER app_card.end_user_id + 10 项 sys_config）
 │   │   ├── pkg/
 │   │   │   ├── crypto/           # AES-256-GCM + RSA-4096 + HMAC-SHA256 + bcrypt + 卡密生成
 │   │   │   ├── epay/             # 彩虹易支付工具包

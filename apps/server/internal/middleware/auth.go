@@ -3,6 +3,10 @@
 package middleware
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -87,4 +91,67 @@ func GenerateToken(secret, issuer string, expireHours int, claims JWTClaims) (st
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(secret))
+}
+
+// H5EndUserAuth 终端用户 access token 鉴权中间件（v0.4.0）
+// 鉴权流程：① 提取 Authorization: Bearer <access_token> ② HMAC-SHA256 签名校验
+// ③ 过期校验 ④ 注入 enduser_id / enduser_app_id 到 context
+//
+// 与 JWTAuth 的区别：终端用户 token 不走 jwt 库（简化为 HMAC-SHA256(secret|user_id|app_id|exp)），
+// 因 enduser 包未引入 jwt 依赖；如需迁移到标准 JWT，可复用 JWTClaims。
+func H5EndUserAuth(secret string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 1002, "message": "未提供 Token"})
+			return
+		}
+		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+		if tokenStr == authHeader {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 1002, "message": "Token 格式错误"})
+			return
+		}
+		// 解析 token：payload.signature
+		parts := strings.SplitN(tokenStr, ".", 2)
+		if len(parts) != 2 {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 2002, "message": "Token 无效"})
+			return
+		}
+		payload, sig := parts[0], parts[1]
+		// 校验签名（HMAC-SHA256）
+		// 铁律 06：直接调用 crypto.HMACSHA256 会形成循环依赖（crypto 不依赖 middleware），
+		// 此处用 hmac 标准库重新实现一份等价逻辑
+		expectedSig := computeHMACSHA256(payload, secret)
+		if !hmacEqualConstTime(sig, expectedSig) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 2002, "message": "Token 签名无效"})
+			return
+		}
+		// 解析 payload：userID|appID|exp
+		var userID, appID uint64
+		var exp int64
+		if _, err := fmt.Sscanf(payload, "%d|%d|%d", &userID, &appID, &exp); err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 2002, "message": "Token 载荷无效"})
+			return
+		}
+		if time.Now().Unix() > exp {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 2002, "message": "Token 已过期"})
+			return
+		}
+		c.Set("enduser_id", userID)
+		c.Set("enduser_app_id", appID)
+		c.Next()
+	}
+}
+
+// computeHMACSHA256 计算 HMAC-SHA256(secret, data) 的十六进制字符串
+// 与 pkg/crypto.HMACSHA256 等价（避免循环依赖）
+func computeHMACSHA256(data, secret string) string {
+	h := hmac.New(sha256.New, []byte(secret))
+	h.Write([]byte(data))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// hmacEqualConstTime 常量时间比较，防时序攻击
+func hmacEqualConstTime(a, b string) bool {
+	return hmac.Equal([]byte(a), []byte(b))
 }

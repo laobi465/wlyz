@@ -121,6 +121,24 @@ func Register(container *config.Container) *gin.Engine {
 		adminAuth.POST("/monitor/alerts/resend", handler.AdminResendAlert(deps))
 		adminAuth.POST("/monitor/cleanup", handler.AdminCleanupMetrics(deps))
 
+		// 通知系统（v0.4.0 短信/邮件/站内信 三通道 + 模板 + 日志 + 重试）
+		// 铁律 05：16 项 notify.* 配置可通过「系统配置」实时调整
+		adminAuth.GET("/notify/status", handler.AdminNotifyStatus(deps))
+		adminAuth.GET("/notify/templates", handler.AdminListNotifyTemplates(deps))
+		adminAuth.POST("/notify/templates", handler.AdminCreateNotifyTemplate(deps))
+		adminAuth.PUT("/notify/templates/:id", handler.AdminUpdateNotifyTemplate(deps))
+		adminAuth.DELETE("/notify/templates/:id", handler.AdminDeleteNotifyTemplate(deps))
+		adminAuth.GET("/notify/logs", handler.AdminListNotifyLogs(deps))
+		adminAuth.GET("/notify/logs/:id", handler.AdminGetNotifyLog(deps))
+		adminAuth.POST("/notify/logs/:id/retry", handler.AdminRetryNotifyLog(deps))
+		adminAuth.POST("/notify/test", handler.AdminTestNotify(deps))
+
+		// 终端用户管理（v0.4.0 H5 注册/登录/绑卡/单点踢出）
+		adminAuth.GET("/endusers", handler.AdminListEndUsers(deps))
+		adminAuth.GET("/endusers/stats", handler.AdminEndUserStats(deps))
+		adminAuth.GET("/endusers/:id", handler.AdminGetEndUser(deps))
+		adminAuth.PUT("/endusers/:id/status", handler.AdminUpdateEndUserStatus(deps))
+
 		// 公告管理
 		adminAuth.GET("/notices", handler.AdminListNotices(deps))
 		adminAuth.POST("/notices", handler.AdminCreateNotice(deps))
@@ -328,6 +346,36 @@ func Register(container *config.Container) *gin.Engine {
 		// H5 终端用户购卡流程公开接口（v0.3.5 新增）
 		publicGroup.GET("/apps/info", handler.PublicAppInfo(deps))    // 按 app_key 查应用公开信息
 		publicGroup.GET("/card_types", handler.PublicCardTypes(deps)) // 按 app_id 查可购卡类列表
+
+		// H5 终端用户认证公开接口（v0.4.0 新增）
+		// 铁律 05：注册开关 / 验证码 TTL / 密码长度 等均从 sys_config 读取
+		publicGroup.POST("/enduser/register", handler.H5EndUserRegister(deps))
+		publicGroup.POST("/enduser/login", handler.H5EndUserLogin(deps))
+		publicGroup.POST("/enduser/refresh", handler.H5RefreshToken(deps))
+		publicGroup.POST("/enduser/verify_code", handler.H5SendVerifyCode(deps))
+		publicGroup.POST("/enduser/reset_password", handler.H5ResetPassword(deps))
+	}
+
+	// ----- H5 终端用户 API（终端用户 access token 鉴权，v0.4.0 新增） -----
+	// 与三角色 JWT 鉴权分离：H5EndUserAuth 使用 HMAC-SHA256(secret|user_id|app_id|exp).signature
+	h5Auth := v1.Group("/h5")
+	h5Auth.Use(middleware.H5EndUserAuth(cfg.JWT.Secret))
+	{
+		// 个人中心
+		h5Auth.GET("/me", handler.H5EndUserMe(deps))
+		h5Auth.PUT("/me", handler.H5EndUserUpdateProfile(deps))
+		h5Auth.POST("/me/password", handler.H5EndUserChangePassword(deps))
+		h5Auth.POST("/logout", handler.H5EndUserLogout(deps))
+
+		// 会话管理（jti 单点踢出）
+		h5Auth.GET("/sessions", handler.H5EndUserListSessions(deps))
+		h5Auth.POST("/sessions/:jti/kick", handler.H5EndUserKickSession(deps))
+
+		// 卡密绑定
+		h5Auth.POST("/cards/bind", handler.H5EndUserBindCard(deps))
+		h5Auth.POST("/cards/unbind", handler.H5EndUserUnbindCard(deps))
+		h5Auth.GET("/cards", handler.H5EndUserListMyCards(deps))
+		h5Auth.GET("/cards/:id", handler.H5EndUserGetCardDetail(deps))
 	}
 
 	// ----- 安装向导（无需鉴权，仅首次部署可用，v0.3.6） -----

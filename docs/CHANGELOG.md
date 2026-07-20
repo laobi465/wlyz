@@ -11,6 +11,242 @@
 
 ## [0.4.0] - 2026-07-20（v0.4.x 迁移项推进）
 
+### [新增] 终端用户体系（v0.4.x 第十二项：H5 注册/登录/绑卡/单点踢出 + HMAC access token + SHA-512 refresh token + jti）
+
+#### 背景
+
+- v0.3.5 H5 购卡流程仅支持匿名下单，无终端用户身份概念；卡密绑定靠设备 HWID，跨设备体验差
+- 商业化诉求：H5 注册登录、卡密绑定到账户、多端会话管理、单点踢出、密码自助修改/重置
+- TODO.md `[迁移] 终端用户体系 → v0.4.x 终端用户注册/登录/卡密绑定/会话管理`
+
+#### 实现
+
+**`migrations/015_v0.4.0_end_user_system.up.sql`**：
+- 新建 `end_user` 表：终端用户主表（tenant_id / app_id / username / phone / email / password_hash / nickname / avatar_url / status / last_login_at / last_login_ip / last_login_ua / login_count / remark）
+  - 唯一索引 `uk_tenant_app_username`（tenant_id + app_id + username）：同租户同应用下用户名唯一
+- 新建 `end_user_card` 表：用户-卡密绑定关系（user_id / card_id / tenant_id / app_id / bound_at / unbound_at / status）
+  - 唯一索引 `uk_card`（card_id）：一张卡同一时间只能绑一个用户
+- 新建 `end_user_token` 表：refresh token 会话表（user_id / jti / device_name / device_type / ip / user_agent / refresh_token / expires_at / revoked_at）
+  - 唯一索引 `uk_jti`（jti）：精准单点踢出
+- ALTER `app_card` ADD COLUMN `end_user_id` BIGINT UNSIGNED NULL（v0.4.0 终端用户绑定，可空向前兼容）+ 索引 `idx_end_user_id`
+- `sys_config` 新增 10 项 `enduser.*` 配置：
+  - `enduser.register_enabled` = `1`（注册开关）
+  - `enduser.login_method` = `username`（登录方式）
+  - `enduser.password_min_length` = `8`（密码最小长度）
+  - `enduser.verify_code_ttl` = `300`（验证码有效期秒）
+  - `enduser.verify_code_length` = `6`（验证码长度）
+  - `enduser.access_token_ttl` = `2`（access token 有效期小时）
+  - `enduser.refresh_token_ttl` = `30`（refresh token 有效期天）
+  - `enduser.bind_card_per_user_max` = `10`（每用户绑定卡数上限）
+  - `enduser.allow_anonymous_query` = `1`（允许匿名查卡）
+  - `enduser.ip_rate_limit_per_minute` = `60`（IP 限流）
+- 配套 `015_v0.4.0_end_user_system.down.sql` 回滚
+
+**`internal/model/model.go`**：
+- 新增 `EndUser` / `EndUserCard` / `EndUserToken` 三个 struct + TableName
+- `AppCard` 新增 `EndUserID *uint64` 字段（可空，向前兼容）
+
+**`internal/enduser/enduser.go`**（新建包，核心终端用户管理器）：
+- `Manager.Register(ctx, req)`：注册（开关校验 + 用户名 trim + 密码长度 + 重复检查 + bcrypt cost=12 + 写库）
+- `Manager.Login(ctx, req, jwtSecret)`：登录返回 access + refresh token；更新 last_login_at/ip/ua/login_count
+- `generateAccessToken(user, secret, ttlHours)`：HMAC-SHA256(secret, payload).signature 格式，payload = `userID|appID|exp`（避免 jwt 依赖）
+- `Manager.issueRefreshToken`：UUID×2 拼接 + SHA-512 哈希存储 + jti 单点踢出
+- `parseUA(ua)`：简单设备类型识别（mobile/android/iphone → mobile；bot/spider → bot；其余 → pc）+ 128 字符截断
+- `Manager.VerifyRefreshToken` / `RefreshToken`（轮换：旧 token 撤销 + 发新 token）/ `Logout` / `RevokeSession(jti)` / `RevokeAllSessions` / `ListSessions`
+- `Manager.BindCard`：事务（卡密状态校验 + 已绑他人校验 + 上限校验 + 复用 unbound 记录 + 写绑定 + 更新 app_card.end_user_id）
+- `Manager.UnbindCard`：事务（标记 unbound + 清空 app_card.end_user_id）
+- `Manager.ListMyCards` / `GetCardDetail`：通过 end_user_card 关联查询 app_card
+- `Manager.GetProfile` / `UpdateProfile`（白名单字段：nickname/avatar_url/email/phone）/ `ChangePassword`（旧密码校验 + 撤销所有会话）/ `ResetPassword`
+- `Manager.IsRegisterEnabled` / `IsAnonymousQueryAllowed`
+- `ValidateAccessToken(token, secret)`：静态函数（payload.signature 拆分 + HMAC 重算 + 过期校验）
+- 常量：10 个 ConfigKey + 3 个 UserStatus + 2 个 BindStatus + 13 个错误
+
+**`internal/middleware/auth.go`**：
+- 新增 `H5EndUserAuth(secret)` 中间件：与 JWTAuth 分离，专用于 H5 终端用户 access token 鉴权
+  - 提取 Bearer token → 拆分 payload.signature → HMAC-SHA256 重算 + 常量时间比较（防时序攻击）→ 解析 payload → 过期校验 → 注入 `enduser_id` / `enduser_app_id`
+- 新增 `computeHMACSHA256(data, secret)` + `hmacEqualConstTime(a, b)` 辅助函数（避免与 pkg/crypto 循环依赖）
+
+**`internal/handler/enduser.go`**（新建，19 个端点）：
+- 公开接口（publicGroup，5 个）：
+  - `H5EndUserRegister` POST `/public/enduser/register`
+  - `H5EndUserLogin` POST `/public/enduser/login`
+  - `H5RefreshToken` POST `/public/enduser/refresh`
+  - `H5SendVerifyCode` POST `/public/enduser/verify_code`（调用 notify 包生成验证码 + 写日志）
+  - `H5ResetPassword` POST `/public/enduser/reset_password`
+- H5 鉴权接口（h5Auth 组，10 个）：
+  - `H5EndUserMe` GET `/h5/me` / `H5EndUserUpdateProfile` PUT `/h5/me` / `H5EndUserChangePassword` POST `/h5/me/password`
+  - `H5EndUserLogout` POST `/h5/logout`
+  - `H5EndUserListSessions` GET `/h5/sessions` / `H5EndUserKickSession` POST `/h5/sessions/:jti/kick`
+  - `H5EndUserBindCard` POST `/h5/cards/bind` / `H5EndUserUnbindCard` POST `/h5/cards/unbind`
+  - `H5EndUserListMyCards` GET `/h5/cards` / `H5EndUserGetCardDetail` GET `/h5/cards/:id`
+- Admin 接口（adminAuth，4 个）：
+  - `AdminListEndUsers` GET `/admin/endusers`
+  - `AdminGetEndUser` GET `/admin/endusers/:id`
+  - `AdminUpdateEndUserStatus` PUT `/admin/endusers/:id/status`
+  - `AdminEndUserStats` GET `/admin/endusers/stats`
+
+**`internal/router/router.go`**：
+- 新建 `h5Auth` 路由组：`v1.Group("/h5")` + `middleware.H5EndUserAuth(cfg.JWT.Secret)`
+- 注册 5 个公开 + 10 个 H5 + 4 个 admin 共 19 条路由
+
+#### 测试（`internal/enduser/enduser_test.go`，53 个用例全 PASS）
+
+- Register（6 个）：成功 / 注册关闭 / 用户名空 / 密码过短 / 重复用户名 / 不同租户同用户名
+- Login（4 个）：成功 / 用户不存在 / 密码错误 / 用户封禁
+- ValidateAccessToken（4 个）：合法 / 错误 secret / 过期（负 TTL）/ 格式错误
+- parseUA（4 个）：pc / mobile / bot / 过长截断
+- RefreshToken 轮换（3 个）：旧 token 失效 + 新 token 可用 / 非法 token / 空token
+- Logout / Revoke（4 个）：Logout 成功 / RevokeSession by jti / RevokeAllSessions / ListSessions 排除过期
+- BindCard（8 个）：成功 / 卡密不存在 / 卡密封禁 / 卡密禁用 / 已绑他人 / 幂等 / 解绑后再绑 / 上限超出
+- UnbindCard（2 个）：成功 + 卡密 end_user_id 清空 / 未绑定
+- ListMyCards / GetCardDetail（4 个）：分页 / 空 / 详情 / 未归属
+- UpdateProfile（2 个）：白名单过滤 / 全非法字段不报错
+- ChangePassword（3 个）：成功 + 旧密码失效 + 旧 token 撤销 / 旧密码错误 / 新密码过短
+- ResetPassword（2 个）：成功 / 过短
+- 辅助（4 个）：IsRegisterEnabled / IsAnonymousQueryAllowed / 状态机常量 / bcrypt 集成
+- 边界（3 个）：GetProfile NotFound / ChangePassword NotFound / BcryptIntegration
+
+测试栈：SQLite in-memory（end_user + end_user_card + end_user_token + app_card + sys_config AutoMigrate）+ miniredis + 真实 ConfigCache（预置 10 项 enduser.* 配置）+ 真实 bcrypt cost=12
+
+#### 铁律遵守
+
+- **铁律 04（无硬编码）**：10 项配置全部从 sys_config 读取；密码最小长度 / TTL / 绑定上限 / 限流 全部可配置；常量化 3 个 UserStatus + 2 个 BindStatus + 13 个错误
+- **铁律 05（配置走后端）**：注册开关 / 登录方式 / 密码长度 / 验证码 TTL/长度 / access/refresh TTL / 绑定上限 / 匿名查卡 / IP 限流 全部可后台实时调整
+- **铁律 06（反幻觉）**：
+  - 密码 bcrypt cost=12（非明文 / 非 MD5）
+  - refresh token SHA-512 哈希存储（非明文）
+  - access token HMAC-SHA256 签名 + 常量时间比较（防时序攻击）
+  - jti 单点踢出（精准撤销而非全用户踢出）
+  - BindCard 事务保证绑定关系 + 卡密 end_user_id 一致性
+  - ChangePassword 自动撤销所有会话
+  - 全路径覆盖测试（正/负/边界）
+
+#### 可靠性保障
+
+- 卡密绑定事务：end_user_card 写入 + app_card.end_user_id 更新原子化
+- 解绑事务：标记 unbound + 清空 end_user_id 原子化
+- 修改密码事务：更新密码哈希 + 撤销所有 refresh token 原子化
+- 绑定幂等：同用户重复绑同卡返回同一条记录
+- 解绑后再绑复用旧记录（重新激活，不重复写）
+- ListSessions 自动排除已过期 + 已撤销
+- UpdateProfile 白名单过滤（防 status / password_hash 被篡改）
+
+#### 验证
+
+- `go test ./internal/enduser/`：53 个用例全 PASS
+- `go test ./...`：15 个测试包全 PASS（无回归）
+- `go build ./...` + `go vet ./...`：通过
+
+---
+
+### [新增] 通知系统（v0.4.x 第十一项：短信/邮件/站内信 三通道 + 模板引擎 + 服务商抽象 + 重试 + 限流）
+
+#### 背景
+
+- v0.3.x 仅 `log_login_failed` / 系统公告（notices 表）两类通知，无短信/邮件通道
+- 商业化诉求：终端用户验证码（H5 注册/登录）+ 订单支付通知 + 代理佣金到账 + 卡密到期提醒
+- TODO.md `[迁移] 通知系统 → v0.4.x 短信/邮件/站内信 三通道 + 模板引擎 + 服务商抽象 + 重试/限流`
+
+#### 实现
+
+**`migrations/014_v0.4.0_notification_system.up.sql`**：
+- 新建 `notify_template` 表：通知模板（code / name / channel / subject / content / variables / tenant_id / status / remark）
+  - 唯一索引 `uk_code_channel_tenant`（code + channel + tenant_id）：同租户同渠道同 code 唯一
+- 新建 `notify_log` 表：发送日志（template_id / template_code / channel / recipient / subject / content / status / provider_msg_id / error_message / retry_count / priority / tenant_id / sent_at）
+  - 4 个索引：`idx_log_channel` / `idx_log_status` / `idx_log_tenant` / `idx_log_created`
+- `sys_config` 新增 16 项 `notify.*` 配置：
+  - SMS（5 项）：`notify.sms.enabled` / `notify.sms.provider` / `notify.sms.access_key_id` / `notify.sms.access_secret_enc`（AES 加密）/ `notify.sms.sign_name`
+  - Email（6 项）：`notify.email.enabled` / `notify.email.smtp_host` / `notify.email.smtp_port` / `notify.email.smtp_username` / `notify.email.smtp_password_enc`（AES 加密）/ `notify.email.from_address` / `notify.email.from_name`
+  - InApp（1 项）：`notify.inapp.enabled` = `1`
+  - 重试与限流（3 项）：`notify.retry.times` = `3` / `notify.retry.interval_seconds` = `60` / `notify.rate_limit.per_minute` = `60`
+- 预置 4 个模板：
+  - `verify_code`（sms）：`您的验证码：{{code}}，{{ttl}} 分钟内有效`
+  - `verify_code_email`（email）：`<h3>验证码</h3><p>您的邮箱验证码：{{code}}</p>`
+  - `order_paid`（inapp）：`订单 {{order_no}} 已支付 {{amount}} 元`
+  - `agent_commission`（inapp）：`佣金 {{amount}} 元已到账`
+- 配套 `014_v0.4.0_notification_system.down.sql` 回滚
+
+**`internal/model/model.go`**：新增 `NotifyTemplate` / `NotifyLog` 两个 struct + TableName
+
+**`internal/notify/notify.go`**（新建包，核心通知管理器）：
+- `Render(template, vars)`：模板变量替换，使用 `strings.NewReplacer`（防 SSTI，不用 `text/template`）；未提供的变量保留原占位符便于排查
+- `Manager.GetTemplate(ctx, code, channel, tenantID)`：租户自定义优先，回退平台通用（tenant_id=0）
+- `Manager.ListTemplates` / `CreateTemplate` / `UpdateTemplate` / `DeleteTemplate`：模板 CRUD
+- `Manager.IsChannelEnabled(ctx, channel)`：三通道开关检查（SMS/Email 默认关，InApp 默认开）
+- `Manager.CheckRateLimit(ctx, tenantID)`：单租户每分钟限流（查 notify_log 表近 60s 计数）
+- `Manager.Send(ctx, req)`：主入口，流程：① 通道开关 ② 限流 ③ 接收人非空 ④ 查模板 ⑤ 渲染 ⑥ 写 pending 日志 ⑦ 调 provider ⑧ 更新日志状态
+- `Manager.dispatch`：私有方法，按 channel 路由到 SMSProvider / EmailProvider / InApp（直接成功）
+- `Manager.TestDispatch`：暴露 dispatch 供测试发送 handler 使用（绕过模板查找）
+- `Manager.SetSMSProvider` / `SetEmailProvider`：mock 注入点（测试用）
+- `Manager.ListLogs` / `GetLog` / `Retry`：日志查询 + 失败重试（最大重试次数从 sys_config 读取）
+- `Manager.GetStats(ctx, tenantID)`：返回 Stats（Total / Sent / Failed / Pending / SMSCount / EmailCount / InAppCount）；每次 Count 用新 session 避 GORM Where 累积污染
+- `GenerateVerifyCode(length)`：crypto/rand 生成数字验证码
+- `ParseVariables(varsJSON)` / `ValidateChannel(channel)` 辅助函数
+- 常量：16 个 ConfigKey + 3 个 Channel + 4 个 TemplateCode + 2 个 TemplateStatus + 3 个 LogStatus + 3 个 Priority + 7 个错误
+- Provider 实现：
+  - `aliyunSMSProvider`：骨架实现，AccessKeyID 为空时返回 `ErrProviderNotConfig`；配置后返回伪 msgID（生产应调阿里云 Dysms API）
+  - `smtpEmailProvider`：真实 SMTP via `net/smtp.SendMail`，AES 解密 SMTP 密码；构造完整邮件头（From/To/Subject/Message-ID/MIME-Version/Content-Type）
+
+**`internal/handler/notify.go`**（新建，9 个 admin 端点）：
+- `AdminNotifyStatus` GET `/admin/notify/status`：三通道配置概览 + 统计 + 模板数
+- `AdminListNotifyTemplates` GET `/admin/notify/templates`：分页 + channel 过滤
+- `AdminCreateNotifyTemplate` POST `/admin/notify/templates`
+- `AdminUpdateNotifyTemplate` PUT `/admin/notify/templates/:id`
+- `AdminDeleteNotifyTemplate` DELETE `/admin/notify/templates/:id`
+- `AdminListNotifyLogs` GET `/admin/notify/logs`：分页 + channel + status 过滤
+- `AdminGetNotifyLog` GET `/admin/notify/logs/:id`
+- `AdminRetryNotifyLog` POST `/admin/notify/logs/:id/retry`：失败日志手动重试
+- `AdminTestNotify` POST `/admin/notify/test`：绕过模板查找直接 dispatch（template_code="test"）
+
+**`internal/router/router.go`**：注册 9 条 notify admin 路由
+
+#### 测试（`internal/notify/notify_test.go`，36 个用例全 PASS）
+
+- Render（5 个）：空变量 / 单变量 / 多变量 / 未提供变量保留 / SSTI 安全（`{{user}}` → `{{admin}}` 不被解析）
+- ValidateChannel（2 个）：sms/email/inapp 合法 / 大小写敏感 + 空字符串 + 未知渠道
+- ParseVariables（3 个）：空 / 数组 / 非法 JSON + 非 JSON 数组
+- GenerateVerifyCode（3 个）：默认长度 6 / 自定义长度 / 全数字
+- IsChannelEnabled（3 个）：默认 SMS/Email 关 + InApp 开 / 全开 / 未知渠道
+- CheckRateLimit（3 个）：limit=0 不限 / 未超限 / 超限
+- GetTemplate（4 个）：平台回退 / 租户优先 / 不存在 / 禁用模板跳过
+- Send（7 个）：通道关闭 / 限流超限 / 模板未找到 / InApp 成功 + 日志写入 / SMS mock provider 成功 / SMS provider 失败 / Email mock provider 成功 / 空接收人
+- Retry（3 个）：成功 + retry_count 递增 / 非 failed 状态 / 超过最大重试次数
+- GetStats（2 个）：全状态 + 全渠道统计 / 按租户统计
+- 模板 CRUD（1 个，覆盖 Create/Get/Update/List/Delete 全流程）
+- ListLogs（1 个，覆盖 channel/status/全部 3 种过滤）
+- TestDispatch（1 个）：InApp 直接 dispatch
+- 常量（1 个）：3 Channel + 4 TemplateCode + 2 TemplateStatus + 3 LogStatus + 3 Priority
+
+测试栈：SQLite in-memory（notify_template + notify_log + sys_config AutoMigrate）+ miniredis + 真实 ConfigCache（预置 16 项 notify.* 配置）+ mockSMSProvider / mockEmailProvider
+
+#### 铁律遵守
+
+- **铁律 04（无硬编码）**：16 项配置全部从 sys_config 读取；常量化 16 个 ConfigKey + 3 Channel + 4 TemplateCode + 2 TemplateStatus + 3 LogStatus + 3 Priority
+- **铁律 05（配置走后端）**：三通道开关 / 服务商密钥（AES 加密）/ SMTP 配置 / 重试策略 / 限流 全部可后台实时调整
+- **铁律 06（反幻觉）**：
+  - 模板变量替换用 `strings.NewReplacer` 不用 `text/template`（防 SSTI）
+  - 服务商密钥 AES-256-GCM 加密存储（access_secret_enc / smtp_password_enc）
+  - aliyunSMSProvider 未配置 AccessKeyID 时显式返回 `ErrProviderNotConfig`（不返回伪造成功）
+  - smtpEmailProvider 真实调用 `net/smtp.SendMail`（不模拟）
+  - GetStats 每次 Count 用新 session 避 GORM Where 累积污染（已知陷阱）
+  - Updates map key 使用 GORM 列名 `provider_msg_id`（非 JSON tag `provider_msgid`）
+
+#### 可靠性保障
+
+- Send 流程：通道开关 → 限流 → 接收人校验 → 模板查找 → 渲染 → 写 pending 日志 → 调 provider → 更新日志状态
+- 失败重试：最大次数从 sys_config 读取；retry_count 递增；超过上限返回 failed
+- 限流：单租户每分钟发送数查 notify_log 表实时统计
+- 模板查找：租户自定义优先，回退平台通用（tenant_id=0）
+- 站内信直接成功（前端拉取日志展示）
+
+#### 验证
+
+- `go test ./internal/notify/`：36 个用例全 PASS
+- `go test ./...`：15 个测试包全 PASS（无回归）
+- `go build ./...` + `go vet ./...`：通过
+
+---
+
 ### [新增] 监控告警体系（v0.4.x 第十项：系统指标采集 + 阈值告警 + Webhook 通知 + 静默期 + 自动恢复）
 
 #### 背景

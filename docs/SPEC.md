@@ -169,9 +169,15 @@ internal/handler/
 ├── tenant_finance.go   # 开发者财务：代理充值/提现审核（6 个 handler）
 ├── tenant_settle.go    # 开发者结算：结算记录 + 余额概览 + 流水 + 提现申请
 ├── agent_business.go   # 代理业务：dashboard + me + 卡类/卡密/订单/佣金/提现/通知
+├── notify.go           # 通知系统管理端：状态 + 模板 CRUD + 日志 + 重试 + 测试发送（v0.4.0，9 个端点）
+├── enduser.go          # 终端用户体系：5 公开 + 10 H5 + 4 admin（v0.4.0，19 个端点）
 ├── log_worker.go       # 异步日志 worker（验证 4096 + 操作 2048）
 └── deps.go             # 依赖注入容器
 ```
+
+**v0.4.0 新增辅助包**：
+- `internal/notify` — 通知系统核心包：Manager（Send/Retry/GetStats/Template CRUD）+ Render（`strings.NewReplacer` 防 SSTI）+ SMSProvider/EmailProvider 接口 + Aliyun SMS 骨架 + SMTP Email 实现
+- `internal/enduser` — 终端用户体系核心包：Manager（Register/Login/RefreshToken/BindCard 等 15 个方法）+ HMAC-SHA256 access token + SHA-512 哈希 refresh token + jti 单点踢出
 
 **跨文件通信**：
 - 通过 `handler.Deps` 共享 DB/Redis/Crypto/Config/CfgCache
@@ -1460,6 +1466,8 @@ GitHub 算法：`HMAC-SHA256(secret, body)` → hex 编码 → 前缀 `sha256=`
 | `internal/update` | `update_test.go` | v0.4.0 在线更新：VerifyWebhookSignature（7：有效/错误 secret/空 secret 跳过/空签名拒绝/错误前缀/篡改 body/空 body）+ ParsePushEvent（4：有效/非法 JSON/空 ref/缺失 ref）+ BranchMatches（5：短形式/完整形式/不匹配/空分支/tag ref）+ AcquireLock/ReleaseLock（5：首次成功/二次失败/释放后重新获取/Redis key SET/DEL/多 Manager 共享 lockKey 互斥）+ HealthCheck（6：2xx/3xx 禁用重定向/5xx/4xx/连接拒绝/超时尊重）+ 状态机常量（4：TriggerSource/Status/StepStatus/8 个 ConfigKey 互不冲突 + 全部 update. 前缀）+ IsAutoUpdateEnabled/IsLocked（4：默认 false/true/未锁/已锁）+ 边界（6：大 body 10KB/额外字段忽略/分支名特殊字符/不同 lockKey/多次校验一致性/JSON round-trip）+ 并发压力（1：10 goroutine 抢锁无 panic 无死锁）（37 个测试） |
 | `internal/backup` | `backup_test.go` | v0.4.0 数据备份恢复：serializeValue（6：nil/string/[]byte/bool/time.Time/int）+ parseTablesFilter（5：空/单/多/含空格/全空白）+ extractPayload（4：gzip/未压缩/缺分隔符/非法 JSON）+ CreateBackup（5：无加密无压缩/gzip/AES/表过滤/无效密钥）+ RestoreBackup（5：无加密/AES/checksum 不匹配/状态非 success/不存在）+ CleanupExpired（3：按保留天数/retention=0/已删除文件）+ VerifyChecksum（3：成功/失败/不存在）+ 常量（3）+ round-trip 集成（1）+ 边界（4）（全 PASS） |
 | `internal/monitor` | `monitor_test.go` | v0.4.0 监控告警：CompareWithOperator（6：>`<`>=`<=`== 浮点精度/未知运算符返回 false）+ FormatMetricName（4：小写/横杠/空格/混合）+ SaveMetrics（4：空/单条/多条/nil labels）+ GetAlertRules（2：默认/sys_config 覆盖）+ EvaluateAlerts（5：关闭/触发/未超阈值/静默期/自动恢复）+ ResolveStaleAlerts（3：2h 自动恢复/30min 不恢复/已 resolved 不重复）+ CleanupExpiredMetrics（3：按保留天数/retention=0/无过期）+ AckAlert（2：成功/不存在）+ GetMetricHistory（4：默认/过滤/limit 边界/limit=0 修正）+ GetActiveAlerts（1）+ sendNotification（4：未配置 webhook/200 成功/500 失败/不可达不阻塞）+ SendAlertNotification（1）+ IsAlertEnabled/GetCollectInterval（3）+ 常量（5：ConfigKey/MetricName/Severity/Status/Operator）+ 并发（1：5 goroutine 互斥锁无 panic）+ 集成（2：CollectSystemMetrics/CollectAndEvaluate 闭环）+ 边界（4：负数/零值/空字符串/多指标同时触发）（53 个测试） |
+| `internal/notify` | `notify_test.go` | v0.4.0 通知系统：Render（5：空变量/单/多/未提供保留/SSTI 安全）+ ValidateChannel（2：合法/大小写敏感+未知）+ ParseVariables（3：空/数组/非法 JSON）+ GenerateVerifyCode（3：默认长度/自定义/全数字）+ IsChannelEnabled（3：默认关+开/全开/未知渠道）+ CheckRateLimit（3：limit=0 不限/未超限/超限）+ GetTemplate（4：平台回退/租户优先/不存在/禁用跳过）+ Send（7：通道关闭/限流超限/模板未找到/InApp 成功+日志写入/SMS mock 成功/SMS mock 失败/Email mock 成功/空接收人）+ Retry（3：成功+retry_count 递增/非 failed 状态/超最大次数）+ GetStats（2：全状态+全渠道/按租户）+ 模板 CRUD（1，覆盖 Create/Get/Update/List/Delete 全流程）+ ListLogs（1，覆盖 channel/status/全部 3 种过滤）+ TestDispatch（1）+ 常量（1）（36 个测试） |
+| `internal/enduser` | `enduser_test.go` | v0.4.0 终端用户体系：Register（6：成功/注册关闭/用户名空/密码过短/重复用户名/不同租户同用户名）+ Login（4：成功/用户不存在/密码错误/用户封禁）+ ValidateAccessToken（4：合法/错误 secret/过期负 TTL/格式错误）+ parseUA（4：pc/mobile/bot/过长截断）+ RefreshToken 轮换（3：旧 token 失效+新 token 可用/非法/空）+ Logout/Revoke（4：Logout 成功/RevokeSession by jti/RevokeAllSessions/ListSessions 排除过期）+ BindCard（8：成功/卡密不存在/卡密封禁/卡密禁用/已绑他人/幂等/解绑后再绑/上限超出）+ UnbindCard（2：成功+end_user_id 清空/未绑定）+ ListMyCards/GetCardDetail（4：分页/空/详情/未归属）+ UpdateProfile（2：白名单过滤/全非法字段不报错）+ ChangePassword（3：成功+旧密码失效+旧 token 撤销/旧密码错误/新密码过短）+ ResetPassword（2：成功/过短）+ 辅助（4：IsRegisterEnabled/IsAnonymousQueryAllowed/常量/bcrypt 集成）+ 边界（3）（53 个测试） |
 
 #### 测试原则
 

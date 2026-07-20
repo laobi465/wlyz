@@ -162,6 +162,7 @@ type AppCard struct {
 	UsedCount        int        `gorm:"not null;default:0" json:"used_count"`
 	MaxUses          int        `gorm:"not null;default:1" json:"max_uses"`
 	BoundDeviceID    *uint64    `gorm:"index" json:"bound_device_id"`
+	EndUserID        *uint64    `gorm:"index" json:"end_user_id"` // v0.4.0 终端用户绑定（可空，向前兼容）
 	ActivatedAt      *time.Time `gorm:"index" json:"activated_at"`
 	ExpiresAt        *time.Time `gorm:"index" json:"expires_at"`
 	LastVerifyAt     *time.Time `json:"last_verify_at"`
@@ -643,3 +644,101 @@ type SystemAlert struct {
 }
 
 func (SystemAlert) TableName() string { return "system_alert" }
+
+// ============== v0.4.0 通知系统 ==============
+
+// NotifyTemplate 通知模板（v0.4.0）
+type NotifyTemplate struct {
+	ID        uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	Code      string    `gorm:"size:64;not null" json:"code"`                       // verify_code / order_paid / agent_commission
+	Name      string    `gorm:"size:128;not null" json:"name"`                      // 模板名称
+	Channel   string    `gorm:"size:16;not null" json:"channel"`                    // sms / email / inapp
+	Subject   string    `gorm:"size:255;not null;default:''" json:"subject"`         // 标题（email 用）
+	Content   string    `gorm:"type:text;not null" json:"content"`                   // 模板内容，{{var}} 占位符
+	Variables string    `gorm:"size:512;not null;default:'[]'" json:"variables"`      // 变量列表 JSON
+	TenantID  uint64    `gorm:"not null;default:0" json:"tenant_id"`                 // 0=平台通用模板
+	Status    string    `gorm:"size:16;not null;default:enabled" json:"status"`      // enabled / disabled
+	Remark    string    `gorm:"size:255;not null;default:''" json:"remark"`
+	CreatedAt time.Time `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+	UpdatedAt time.Time `gorm:"not null;default:CURRENT_TIMESTAMP;ON UPDATE:CURRENT_TIMESTAMP" json:"updated_at"`
+}
+
+func (NotifyTemplate) TableName() string { return "notify_template" }
+
+// NotifyLog 通知发送日志（v0.4.0）
+type NotifyLog struct {
+	ID            uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	TemplateID    uint64     `gorm:"not null;default:0" json:"template_id"`
+	TemplateCode  string     `gorm:"size:64;not null;default:''" json:"template_code"`
+	Channel       string     `gorm:"size:16;not null" json:"channel"`
+	Recipient     string     `gorm:"size:255;not null" json:"recipient"`
+	Subject       string     `gorm:"size:255;not null;default:''" json:"subject"`
+	Content       string     `gorm:"type:text;not null" json:"content"`
+	Status        string     `gorm:"size:16;not null;default:pending" json:"status"` // pending / sent / failed
+	ProviderMsgID string     `gorm:"size:128;not null;default:''" json:"provider_msgid"`
+	ErrorMessage  string     `gorm:"size:512;not null;default:''" json:"error_message"`
+	RetryCount    int        `gorm:"not null;default:0" json:"retry_count"`
+	Priority      int        `gorm:"not null;default:0" json:"priority"` // 0=普通 1=高 2=紧急
+	TenantID      uint64     `gorm:"not null;default:0" json:"tenant_id"`
+	SentAt        *time.Time `json:"sent_at"`
+	CreatedAt     time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+}
+
+func (NotifyLog) TableName() string { return "notify_log" }
+
+// ============== v0.4.0 终端用户体系 ==============
+
+// EndUser 终端用户（v0.4.0）
+type EndUser struct {
+	ID           uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	TenantID     uint64     `gorm:"index;not null" json:"tenant_id"`
+	AppID        uint64     `gorm:"index;not null" json:"app_id"`
+	Username     string     `gorm:"size:64;not null" json:"username"`
+	Phone        string     `gorm:"size:32;not null;default:''" json:"phone"`
+	Email        string     `gorm:"size:128;not null;default:''" json:"email"`
+	PasswordHash string     `gorm:"size:255;not null" json:"-"` // bcrypt(cost=12)
+	Nickname     string     `gorm:"size:64;not null;default:''" json:"nickname"`
+	AvatarURL    string     `gorm:"size:512;not null;default:''" json:"avatar_url"`
+	Status       string     `gorm:"size:16;not null;default:active" json:"status"` // active/banned/deleted
+	LastLoginAt  *time.Time `json:"last_login_at"`
+	LastLoginIP  string     `gorm:"size:64;not null;default:''" json:"last_login_ip"`
+	LastLoginUA  string     `gorm:"size:512;not null;default:''" json:"last_login_ua"`
+	LoginCount   int        `gorm:"not null;default:0" json:"login_count"`
+	Remark       string     `gorm:"size:255;not null;default:''" json:"remark"`
+	CreatedAt    time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+	UpdatedAt    time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP;ON UPDATE:CURRENT_TIMESTAMP" json:"updated_at"`
+}
+
+func (EndUser) TableName() string { return "end_user" }
+
+// EndUserCard 终端用户-卡密绑定关系（v0.4.0）
+type EndUserCard struct {
+	ID        uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	UserID    uint64     `gorm:"index;not null" json:"user_id"`
+	CardID    uint64     `gorm:"uniqueIndex;not null" json:"card_id"` // 一张卡只能绑一个用户
+	TenantID  uint64     `gorm:"index;not null" json:"tenant_id"`
+	AppID     uint64     `gorm:"index;not null" json:"app_id"`
+	BoundAt   time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP" json:"bound_at"`
+	UnboundAt *time.Time `json:"unbound_at"`
+	Status    string     `gorm:"size:16;not null;default:active" json:"status"` // active / unbound
+	CreatedAt time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+}
+
+func (EndUserCard) TableName() string { return "end_user_card" }
+
+// EndUserToken 终端用户 Refresh Token（v0.4.0，jti 单点踢出兼容）
+type EndUserToken struct {
+	ID           uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	UserID       uint64     `gorm:"index;not null" json:"user_id"`
+	JTI          string     `gorm:"uniqueIndex;size:64;not null" json:"jti"`
+	DeviceName   string     `gorm:"size:128;not null;default:''" json:"device_name"`
+	DeviceType   string     `gorm:"size:16;not null;default:''" json:"device_type"`
+	IP           string     `gorm:"size:64;not null;default:''" json:"ip"`
+	UserAgent    string     `gorm:"size:512;not null;default:''" json:"user_agent"`
+	RefreshToken string     `gorm:"size:255;not null" json:"-"` // SHA-512 哈希
+	ExpiresAt    time.Time  `gorm:"index;not null" json:"expires_at"`
+	RevokedAt    *time.Time `gorm:"index" json:"revoked_at"`
+	CreatedAt    time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+}
+
+func (EndUserToken) TableName() string { return "end_user_token" }

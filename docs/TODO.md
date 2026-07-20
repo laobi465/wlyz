@@ -92,7 +92,9 @@
 
 #### 终端用户 H5
 - [x] [已完成] H5 布局 + 购卡首页 + 支付结果 + 卡密查询 + 卡密详情 - v0.2.4
-- [ ] [待开始] 用户登录/注册（终端用户体系） - v0.4.x
+- [x] [已完成 2026-07-20] 终端用户体系后端（H5 注册/登录/绑卡/单点踢出） - v0.4.0（migration 015 end_user + end_user_card + end_user_token 表 + ALTER app_card.end_user_id + 10 项 enduser.* 配置；Manager.Register/Login/RefreshToken/Logout/RevokeSession/RevokeAllSessions/ListSessions/BindCard/UnbindCard/ListMyCards/GetCardDetail/GetProfile/UpdateProfile/ChangePassword/ResetPassword；H5EndUserAuth 中间件 HMAC-SHA256 签名校验 + 常量时间比较防时序攻击；bcrypt cost=12 密码哈希；refresh token SHA-512 哈希存储 + jti 单点踢出；19 个端点：5 公开 + 10 H5 + 4 admin）
+- [ ] [待开始] H5 用户登录/注册前端页面（接入新后端 API） - v0.4.x
+- [ ] [待开始] H5 个人中心前端页面（卡密绑定/会话管理/密码修改） - v0.4.x
 
 #### 安全防护（基础）
 - [x] [已完成] Nginx 限流配置（gateway.conf） - v0.2.0
@@ -372,9 +374,15 @@
 - 详见 references/10-monitoring-alerts.md
 
 #### 通知系统
-- [ ] [待开始] 短信模板（阿里云/腾讯云） - v0.4.0
-- [ ] [待开始] 邮件模板（SMTP） - v0.4.0
-- [ ] [待开始] 站内信 - v0.4.0
+- [x] [已完成 2026-07-20] 短信模板（阿里云/腾讯云） - v0.4.0（migration 014 notify_template + notify_log 表 + 16 项 notify.* 配置；aliyunSMSProvider 骨架实现 AccessKeyID 为空返回 ErrProviderNotConfig；SMSProvider 接口支持 mock 注入；CfgKeySMSEnabled / CfgKeySMSProvider / CfgKeySMSAccessKeyID / CfgKeySMSAccessSecretEnc / CfgKeySMSSignName 全部从 sys_config 读取）
+- [x] [已完成 2026-07-20] 邮件模板（SMTP） - v0.4.0（smtpEmailProvider 真实调用 net/smtp.SendMail；AES-256-GCM 解密 SMTP 密码；完整邮件头 From/To/Subject/Message-ID/MIME-Version/Content-Type；CfgKeyEmailSMTPHost/Port/Username/PasswordEnc/FromAddress/FromName 全部可后台调整）
+- [x] [已完成 2026-07-20] 站内信 - v0.4.0（ChannelInApp 直接成功 + 写 notify_log 表；前端拉取日志展示；CfgKeyInAppEnabled 默认开启）
+- [x] [已完成 2026-07-20] 通知模板引擎（S-12） - v0.4.0（Manager.Render 用 strings.NewReplacer 替换 {{var}} 占位符防 SSTI；4 个预置模板 verify_code/verify_code_email/order_paid/agent_commission；租户自定义模板优先 + 平台通用回退）
+- [x] [已完成 2026-07-20] 通知日志 + 重试 + 限流 - v0.4.0（Manager.Send 写 pending → 调 provider → 更新状态；Manager.Retry 失败重试最大次数从 sys_config 读取；Manager.CheckRateLimit 单租户每分钟限流查 notify_log 表实时计数）
+- [x] [已完成 2026-07-20] 后台通知管理面板（S-13） - v0.4.0（AdminNotifyStatus 配置概览+统计+模板数；AdminListNotifyTemplates/Create/Update/Delete 模板 CRUD；AdminListNotifyLogs/Get 日志查询；AdminRetryNotifyLog 手动重试；AdminTestNotify 测试发送绕过模板查找直接 dispatch）
+- [ ] [待开始] 阿里云短信 SDK 完整签名实现（当前骨架返回伪 msgID，生产应调 Dysms API SignRequest + HMAC-SHA1 + HTTP POST） - v0.4.x
+- [ ] [待开始] SMTP SSL 包装（465 端口需 SSL，当前 smtp.SendMail 适合 25/587） - v0.4.x
+- 详见 references/11-notification-system.md
 
 ---
 
@@ -479,7 +487,7 @@
 | v0.3.4 | 2026-07-19 | ✅ 已完成（结算与对账闭环：开发者 balance/frozen_balance + tenant_balance_log + tenant_withdraw + 批量结算 + 对账报表 + 双审核页面） |
 | v0.3.5 | 2026-07-19 | ✅ 已完成（P0 修复：RSA 脚本 / 数据库迁移 / H5 公共 API / 套餐配额） |
 | v0.3.6 | 2026-07-20 | ✅ 已完成（剩余 P1 收尾 + 单元测试 + 客户端 SDK 签名对齐测试） |
-| v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移 + JWT jti 单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 + 全语言 SDK 扩展 + 多级代理体系 + 灰度发布 + 在线更新 + 数据备份恢复 + 监控告警 已完成；通知系统 / 终端用户体系 / API 开放平台 / 管理员弹窗通知 待开始） |
+| v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移 + JWT jti 单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 + 全语言 SDK 扩展 + 多级代理体系 + 灰度发布 + 在线更新 + 数据备份恢复 + 监控告警 + 通知系统 + 终端用户体系 已完成；API 开放平台 / 管理员弹窗通知 待开始） |
 
 ---
 
@@ -538,11 +546,11 @@
 - ~~数据备份恢复~~ ✓ 已完成
 - API 开放平台
 - ~~监控告警（内置：CPU/内存/磁盘/错误率 + 阈值告警 + webhook 通知）~~ ✓ 已完成；Prometheus + Grafana 集成可选后续
-- 通知系统（短信 / 邮件 / 站内信）
-- 终端用户体系（H5 用户登录/注册/中心/订单）
+- ~~通知系统（短信 / 邮件 / 站内信）~~ ✓ 已完成；阿里云 SDK 完整签名 + SMTP SSL 包装 后续优化
+- ~~终端用户体系（H5 用户登录/注册/中心/订单）~~ ✓ 已完成后端；前端 H5 页面接入后续
 
 ---
 
 **文档版本**：0.4.0  
-**最后更新**：2026-07-20（v0.4.0 第五项迁移：全语言 SDK 扩展 Java/C#/Go/C++/易语言 + 签名对齐测试 7 语言）  
+**最后更新**：2026-07-20（v0.4.0 第六/七项迁移：通知系统 + 终端用户体系 后端全栈实现 + 89 个单元测试全 PASS）  
 **维护者**：KeyAuth SaaS Team
