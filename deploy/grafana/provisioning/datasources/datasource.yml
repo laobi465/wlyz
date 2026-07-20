@@ -1,0 +1,15 @@
+# v0.4.x Grafana 数据源自动配置
+# 铁律 04：Prometheus URL 用服务名 prometheus:9090（同 docker network）
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: "15s"
+      httpMethod: "POST"

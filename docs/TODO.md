@@ -370,7 +370,7 @@
 - [x] [已完成 2026-07-20] 错误率 > 1% 告警 - v0.4.0（CfgKeyThresholdErrorRate 默认 10% 可后台调整为 1% + EvaluateAlerts 自动触发）
 - [x] [已完成 2026-07-20] CPU/磁盘阈值告警 - v0.4.0（CfgKeyThresholdCPU 默认 90% / CfgKeyThresholdDisk 默认 85% + 4 条规则从 sys_config 动态构造）
 - [x] [已完成 2026-07-20] 后台监控面板（S-11） - v0.4.0（AdminMonitorStatus 配置+活跃告警+24h聚合+最近采集；AdminCollectNow 手动触发；AdminMetricHistory 历史查询；AdminListAlerts 分页；AdminAckAlert 确认告警；AdminResendAlert 重发；AdminCleanupMetrics 清理过期）
-- [ ] [待开始] Prometheus + Grafana 集成 - v0.4.x（可选，当前已实现内置监控；后续可暴露 /metrics 端点对接 Prometheus）
+- [x] [已完成 2026-07-20] Prometheus + Grafana 集成 - v0.4.x（internal/metrics 包定义 HTTP/业务/系统三类指标；internal/middleware/prometheus.go 采集 HTTP 指标 + 路径规范化避免 label 爆炸；handler/metrics.go 暴露 /metrics 端点（开关+BasicAuth+路径全走 sys_config monitor.prometheus.*）；SystemCollector 自定义 Collector 从 monitor.Manager 拉取真实 CPU/内存/磁盘/在线设备/QPS/错误率；业务埋点 ClientVerify/dispatchPaidOrder/processAgentRegisterPaid/AgentGenerateCards；migration 029 添加 4 项 sys_config；docker-compose 新增 prometheus + grafana 服务（profile=monitoring 可选启用）；deploy/prometheus/ 含 prometheus.yml + rules.yml 7 条告警规则；deploy/grafana/ 含 provisioning + 15 面板综合监控仪表盘 JSON；3 个测试包 40+ 测试全 PASS）
 
 #### v0.4.x 收尾批次（S-04 / D-15 / U-11~14）✅ 2026-07-20 已完成
 - [x] [已完成 2026-07-20] S-04 应用审核（上架审核、违规下架） - v0.4.x（migration 023 app 加 audit_status/audit_remark/audited_at/audited_by 4 字段 + app.audit.enabled 配置；admin_business.go 4 端点：pending 列表/audit 审核/offline 下架/online 上架；client.go 验证 API 校验 audit_status=approved；6 个测试覆盖）
@@ -553,7 +553,7 @@
 - ~~灰度发布 + Webhook 自动更新~~ ✓ 已完成
 - ~~数据备份恢复~~ ✓ 已完成
 - ~~API 开放平台（开发者 API Token + Webhook 事件推送 + 第三方接入授权）~~ ✓ 已完成
-- ~~监控告警（内置：CPU/内存/磁盘/错误率 + 阈值告警 + webhook 通知）~~ ✓ 已完成；Prometheus + Grafana 集成可选后续
+- ~~监控告警（内置：CPU/内存/磁盘/错误率 + 阈值告警 + webhook 通知 + Prometheus + Grafana 集成）~~ ✓ 已完成（v0.4.0 + v0.4.x）
 - ~~通知系统（短信 / 邮件 / 站内信）~~ ✓ 已完成；阿里云 SDK 完整签名 + SMTP SSL 包装 已完成（v0.4.x）
 - ~~终端用户体系（H5 用户登录/注册/中心/订单）~~ ✓ 已完成后端；前端 H5 页面接入后续
 

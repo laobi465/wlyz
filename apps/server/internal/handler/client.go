@@ -18,6 +18,7 @@ import (
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/grayscale"
 	"github.com/your-org/keyauth-saas/apps/server/internal/heartbeat"
+	"github.com/your-org/keyauth-saas/apps/server/internal/metrics"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 	"github.com/your-org/keyauth-saas/apps/server/internal/quota"
@@ -346,6 +347,15 @@ func ClientVerify(deps *Deps) gin.HandlerFunc {
 		}
 
 		app := c.MustGet("app").(*model.App)
+
+		// v0.4.x Prometheus 业务埋点：按响应状态判定 success/fail
+		defer func() {
+			result := "fail"
+			if c.Writer.Status() == http.StatusOK {
+				result = "success"
+			}
+			metrics.IncVerifyRequest(app.ID, result)
+		}()
 
 		// v0.4.x S-04：审核状态校验（与 ClientLogin 一致）
 		if app.AuditStatus != "approved" {

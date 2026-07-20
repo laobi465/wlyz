@@ -1,11 +1,12 @@
 # ============================================================
 # KeyAuth SaaS —— Docker Compose 生产部署编排
-# 包含：mysql / redis / server / admin / nginx
+# 包含：mysql / redis / server / admin / nginx / prometheus / grafana
 # ============================================================
 # 使用方式：
 #   1. 复制 .env.example 为 .env，填入真实密钥
 #   2. docker compose up -d
 #   3. 首次启动后执行：bash scripts/reset_admin_password.sh
+#   4. 监控栈可选：docker compose --profile monitoring up -d
 # ============================================================
 
 version: "3.9"
@@ -19,6 +20,8 @@ volumes:
   redis-data:
   server-logs:
   admin-logs:
+  prometheus-data:
+  grafana-data:
 
 services:
   # ---------- 数据库 ----------
@@ -161,3 +164,50 @@ services:
       - ./deploy/nginx/logs:/var/log/nginx
     networks: [keyauth-net]
     profiles: ["production"]
+
+  # ---------- Prometheus 监控（可选，--profile monitoring 启用） ----------
+  # v0.4.x Prometheus 指标采集
+  # 抓取 server:8080/metrics，按 15s 周期采集
+  # 默认不暴露端口（仅内网），生产环境可通过 nginx 反代 /prometheus/
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: keyauth-prometheus
+    restart: unless-stopped
+    depends_on:
+      - server
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus/rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
+      - --web.enable-lifecycle
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    networks: [keyauth-net]
+    profiles: ["monitoring"]
+
+  # ---------- Grafana 可视化（可选，--profile monitoring 启用） ----------
+  # v0.4.x Grafana 仪表盘
+  # 默认账号 admin/admin（首次登录强制改密），数据源自动配置指向 Prometheus
+  grafana:
+    image: grafana/grafana:latest
+    container_name: keyauth-grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_INSTALL_PLUGINS: ""
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    networks: [keyauth-net]
+    profiles: ["monitoring"]

@@ -1,0 +1,43 @@
+# v0.4.x Prometheus 抓取配置
+# 严格遵循铁律 04：所有抓取目标 / 间隔 / 超时 均在此文件配置
+# 抓取目标：keyauth-server (server:8080/metrics)
+# 部署后修改：docker exec keyauth-prometheus kill -HUP 1（--web.enable-lifecycle 启用热重载）
+
+global:
+  scrape_interval: 15s       # 默认抓取间隔
+  evaluation_interval: 15s   # 告警规则评估间隔
+  external_labels:
+    monitor: "keyauth-saas"
+    env: "production"
+
+# 告警规则（可选）
+rule_files:
+  - "rules.yml"
+
+# 抓取目标
+scrape_configs:
+  # 1. KeyAuth SaaS 后端服务
+  - job_name: "keyauth-server"
+    metrics_path: /metrics
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    static_configs:
+      - targets: ["server:8080"]
+        labels:
+          service: "keyauth"
+          component: "api"
+
+  # 2. Prometheus 自身指标
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # 3. MySQL Exporter（可选，需另外部署 mysqld-exporter 容器）
+  # - job_name: "mysql"
+  #   static_configs:
+  #     - targets: ["mysql-exporter:9104"]
+
+  # 4. Redis Exporter（可选，需另外部署 redis-exporter 容器）
+  # - job_name: "redis"
+  #   static_configs:
+  #     - targets: ["redis-exporter:9121"]

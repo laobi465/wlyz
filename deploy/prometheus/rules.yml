@@ -1,0 +1,81 @@
+# v0.4.x Prometheus 告警规则
+# 严格遵循铁律 05：阈值与 sys_config 中 monitor.threshold.* 保持一致
+# 告警通知通过 Prometheus Alertmanager（需另行部署）或 Grafana 自带告警通道下发
+
+groups:
+  - name: keyauth-server-alerts
+    rules:
+      # 1. 服务宕机（1 分钟内 /metrics 不可达）
+      - alert: KeyAuthServerDown
+        expr: up{job="keyauth-server"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "KeyAuth 服务不可达"
+          description: "Prometheus 已 1 分钟无法抓取 {{ $labels.instance }} 的指标，服务可能宕机"
+
+      # 2. CPU 使用率 > 90% 持续 5 分钟
+      - alert: HighCPUUsage
+        expr: system_cpu_usage_percent > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU 使用率过高"
+          description: "CPU 使用率 {{ $value }}% 超过 90% 阈值持续 5 分钟"
+
+      # 3. 内存使用率 > 90% 持续 5 分钟
+      - alert: HighMemoryUsage
+        expr: system_memory_usage_percent > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "内存使用率过高"
+          description: "内存使用率 {{ $value }}% 超过 90% 阈值持续 5 分钟"
+
+      # 4. 磁盘使用率 > 85%
+      - alert: HighDiskUsage
+        expr: system_disk_usage_percent > 85
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "磁盘使用率过高"
+          description: "磁盘 {{ $labels.path }} 使用率 {{ $value }}% 超过 85% 阈值"
+
+      # 5. 验证错误率 > 10%
+      - alert: HighVerifyErrorRate
+        expr: verify_error_rate_percent > 10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "验证错误率过高"
+          description: "今日验证错误率 {{ $value }}% 超过 10% 阈值"
+
+      # 6. HTTP 5xx 错误率（近 5 分钟）> 5%
+      - alert: HighHTTP5xxRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m])) by (service)
+          / sum(rate(http_requests_total[5m])) by (service) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "HTTP 5xx 错误率过高"
+          description: "近 5 分钟 5xx 错误率 {{ $value | humanizePercentage }} 超过 5%"
+
+      # 7. HTTP P99 响应时间 > 2s
+      - alert: HighHTTPLatency
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le, path)
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "HTTP P99 响应时间过长"
+          description: "路径 {{ $labels.path }} 的 P99 响应时间 {{ $value }}s 超过 2s"

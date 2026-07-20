@@ -35,7 +35,7 @@
 - 灰度发布体系（v0.4.0 三策略 + Hash 桶稳定匹配 + 平台/渠道/地区白名单）
 - 在线更新体系（v0.4.0 GitHub Webhook 自动部署 + 双重锁防并发 + 失败自动回滚 + 完整审计日志）
 - 数据备份恢复体系（v0.4.0 全库 SQL 备份 + SHA-256 校验 + AES-256-GCM 加密 + gzip 压缩 + 异步恢复 + 过期清理）
-- 监控告警体系（v0.4.0 CPU/内存/磁盘/错误率采集 + 阈值告警 + webhook 通知 + 静默期去重 + 自动恢复 + 告警确认）
+- 监控告警体系（v0.4.0 CPU/内存/磁盘/错误率采集 + 阈值告警 + webhook 通知 + 静默期去重 + 自动恢复 + 告警确认；v0.4.x Prometheus + Grafana 集成：/metrics 端点 + HTTP/业务/系统三类指标 + 15 面板综合仪表盘 + 7 条告警规则）
 - 通知系统（v0.4.0 短信/邮件/站内信三通道 + 模板引擎 + 服务商抽象 + 失败重试 + 限流，Aliyun SMS + SMTP Email 双实现）
 - 终端用户体系（v0.4.0 H5 注册/登录/绑卡/个人中心 + HMAC-SHA256 access token + SHA-512 哈希 refresh token + jti 单点踢出 + bcrypt cost=12）
 - API 开放平台（v0.4.0 开发者 API Token + Webhook 事件推送 + 第三方接入授权；SHA-512 哈希存储 Token + HMAC-SHA256 签名 + AES-256-GCM 加密 Webhook secret + 退避重试 + 阈值自动 disable）
@@ -85,7 +85,7 @@
 | 数据库 | MySQL 8.0 + Redis 7 |
 | 部署 | Docker Compose + 宝塔面板 Docker |
 | 反代 | Nginx + Let's Encrypt |
-| 监控 | Prometheus + Grafana（可选） |
+| 监控 | Prometheus + Grafana（v0.4.x 已集成，docker compose --profile monitoring 启用） |
 | 日志 | Loki + Promtail（可选） |
 
 ### 2.3 核心模块依赖关系

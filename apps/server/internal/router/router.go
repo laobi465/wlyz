@@ -35,6 +35,9 @@ func Register(container *config.Container) *gin.Engine {
 	r.Use(middleware.CloudflareRealIP(container.ConfigCache()))
 	r.Use(middleware.IPBlacklist(container.Redis, container.DB))
 
+	// v0.4.x Prometheus HTTP 指标采集（铁律 05：开关在 sys_config monitor.prometheus.enabled）
+	r.Use(middleware.PrometheusMiddleware())
+
 	// 注入全局加密管理器
 	middleware.SetCryptoManager(container.Crypto)
 
@@ -42,6 +45,12 @@ func Register(container *config.Container) *gin.Engine {
 	r.GET("/health", func(c *gin.Context) {
 		middleware.Success(c, gin.H{"status": "ok"})
 	})
+
+	// v0.4.x Prometheus /metrics 端点（无鉴权 + 可选 BasicAuth，路径可配置）
+	// 铁律 05：路径 / 开关 / BasicAuth 凭据全部从 sys_config 读取
+	// 铁律 06：注册 SystemCollector（自定义业务/系统指标），重复注册会被忽略
+	handler.RegisterSystemCollector(container.DB, container.ConfigCache())
+	r.GET(handler.MetricsPath(container.ConfigCache()), handler.MetricsHandler(container.ConfigCache()))
 
 	// ============== API v1 ==============
 	v1 := r.Group("/api/v1")

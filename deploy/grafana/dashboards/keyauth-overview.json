@@ -1,0 +1,171 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "KeyAuth SaaS v0.4.x 综合监控仪表盘",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "title": "服务状态",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "up{job=\"keyauth-server\"}",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {"options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "UP", "color": "green"}}, "type": "value"}
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "green", "value": 1}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"}
+    },
+    {
+      "title": "今日验证次数",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "targets": [{"expr": "verify_count_today", "legendFormat": "", "refId": "A"}],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}}},
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}
+    },
+    {
+      "title": "在线设备数",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "targets": [{"expr": "online_devices", "legendFormat": "", "refId": "A"}],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}},
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}
+    },
+    {
+      "title": "验证错误率 (%)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "targets": [{"expr": "verify_error_rate_percent", "legendFormat": "", "refId": "A"}],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 5}, {"color": "red", "value": 10}]}, "unit": "percent"}},
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}
+    },
+    {
+      "title": "CPU 使用率 (%)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "targets": [{"expr": "system_cpu_usage_percent", "legendFormat": "CPU", "refId": "A"}],
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10, "stacking": {"mode": "none", "group": "A"}}, "unit": "percent", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 90}]}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}}
+    },
+    {
+      "title": "内存使用率 (%)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "targets": [
+        {"expr": "system_memory_usage_percent", "legendFormat": "使用率", "refId": "A"},
+        {"expr": "system_memory_used_bytes / 1024 / 1024 / 1024", "legendFormat": "已用 (GB)", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10}, "unit": "percent", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 90}]}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}}
+    },
+    {
+      "title": "HTTP QPS (按状态码)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "targets": [{"expr": "sum(rate(http_requests_total[1m])) by (status)", "legendFormat": "{{status}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10, "stacking": {"mode": "none", "group": "A"}}, "unit": "reqps"}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "title": "HTTP P95/P99 响应时间 (秒)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "P95", "refId": "A"},
+        {"expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "P99", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10}, "unit": "s"}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}}
+    },
+    {
+      "title": "卡密生成总数 (累计)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 20},
+      "targets": [{"expr": "sum(cards_generated_total)", "legendFormat": "", "refId": "A"}],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}}},
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}
+    },
+    {
+      "title": "支付订单总数 (按前缀)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 8, "x": 8, "y": 20},
+      "targets": [{"expr": "sum by (prefix) (pay_orders_total{status=\"success\"})", "legendFormat": "{{prefix}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "purple", "value": null}]}}},
+      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}
+    },
+    {
+      "title": "代理注册总数 (累计)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 20},
+      "targets": [{"expr": "agents_registered_total", "legendFormat": "", "refId": "A"}],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "orange", "value": null}]}}},
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}
+    },
+    {
+      "title": "Top 10 验证应用 (近 1h)",
+      "type": "table",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "targets": [{"expr": "topk(10, sum by (app_id) (increase(verify_requests_total[1h])))", "legendFormat": "{{app_id}}", "refId": "A", "format": "table", "instant": true}],
+      "fieldConfig": {"defaults": {"custom": {"align": "auto", "filterable": false}}},
+      "options": {"showHeader": true}
+    },
+    {
+      "title": "HTTP 错误率 (5xx)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "targets": [{"expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) / sum(rate(http_requests_total[5m])) * 100", "legendFormat": "5xx 错误率", "refId": "A"}],
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 20, "stacking": {"mode": "none", "group": "A"}}, "unit": "percent", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 5}]}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}}
+    },
+    {
+      "title": "当前在飞请求数",
+      "type": "gauge",
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 32},
+      "targets": [{"expr": "http_requests_in_flight", "legendFormat": "", "refId": "A"}],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 50}, {"color": "red", "value": 200}]}}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}
+    },
+    {
+      "title": "磁盘使用率 (%)",
+      "type": "timeseries",
+      "gridPos": {"h": 6, "w": 18, "x": 6, "y": 32},
+      "targets": [{"expr": "system_disk_usage_percent", "legendFormat": "{{path}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10}, "unit": "percent", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 85}]}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}}
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["keyauth", "v0.4.x"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "KeyAuth SaaS 综合监控",
+  "uid": "keyauth-overview",
+  "version": 1,
+  "weekStart": ""
+}

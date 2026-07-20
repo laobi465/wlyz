@@ -18,6 +18,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/your-org/keyauth-saas/apps/server/internal/metrics"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 	"github.com/your-org/keyauth-saas/apps/server/internal/multilevel"
@@ -691,6 +692,10 @@ func AgentGenerateCards(deps *Deps) gin.HandlerFunc {
 	if len(crossCommissions) > 0 {
 		resp["cross_commissions"] = crossCommissions
 	}
+
+	// v0.4.x Prometheus 业务埋点：卡密生成（按代理购卡路径）
+	metrics.IncCardsGenerated(tenantID, ct.AppID, req.Quantity)
+
 	middleware.Success(c, resp)
 	}
 }

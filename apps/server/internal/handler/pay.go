@@ -17,6 +17,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
+	"github.com/your-org/keyauth-saas/apps/server/internal/metrics"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 	"github.com/your-org/keyauth-saas/apps/server/internal/multilevel"
@@ -434,18 +435,42 @@ func EpayNotify(deps *Deps) gin.HandlerFunc {
 //   - REG → 代理注册付费（processAgentRegisterPaid）
 //   - MFD → 开发者月度服务费（processMonthlyFeePaid，v0.4.x）
 func dispatchPaidOrder(deps *Deps, notify *epay.NotifyParams) error {
+	// v0.4.x Prometheus 业务埋点：按订单前缀 + 处理结果统计支付订单总数
+	// 铁律 06：status=success/fail 由 err 是否为 nil 决定
+	var prefix string
+	var err error
 	switch {
 	case strings.HasPrefix(notify.OutTradeNo, "REG"):
-		return processAgentRegisterPaid(deps, notify)
+		prefix = "REG"
+		err = processAgentRegisterPaid(deps, notify)
 	case strings.HasPrefix(notify.OutTradeNo, "MFD"):
-		return processMonthlyFeePaid(deps, notify)
+		prefix = "MFD"
+		err = processMonthlyFeePaid(deps, notify)
 	case strings.HasPrefix(notify.OutTradeNo, "TOP"):
-		return processTenantOwnPaidOrder(deps, notify)
+		prefix = "TOP"
+		err = processTenantOwnPaidOrder(deps, notify)
 	case strings.HasPrefix(notify.OutTradeNo, "ORD"):
-		return processPaidOrder(deps, notify)
+		prefix = "ORD"
+		err = processPaidOrder(deps, notify)
 	default:
-		return fmt.Errorf("未知订单前缀: %s", notify.OutTradeNo)
+		prefix = "UNKNOWN"
+		err = fmt.Errorf("未知订单前缀: %s", notify.OutTradeNo)
 	}
+
+	status := "success"
+	if err != nil {
+		status = "fail"
+	}
+	metrics.IncPayOrder(prefix, status)
+
+	// 金额累计（成功时按分计入 PayOrderAmountTotal）
+	if err == nil {
+		if moneyFloat, e := strconv.ParseFloat(notify.Money, 64); e == nil {
+			metrics.AddPayOrderAmount(prefix, moneyFloat*100)
+		}
+	}
+
+	return err
 }
 
 // collectNotifyParams 合并 GET + POST + Form 参数
@@ -768,6 +793,9 @@ func processAgentRegisterPaid(deps *Deps, notify *epay.NotifyParams) error {
 		"pay_trade_no":   notify.TradeNo,
 		"registered_at":  now.Unix(),
 	})
+
+	// v0.4.x Prometheus 业务埋点：代理注册成功 +1
+	metrics.IncAgentRegistered()
 
 	return nil
 }
