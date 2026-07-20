@@ -14,7 +14,7 @@
 #### 项目骨架搭建 ✅ 已完成
 - [x] [已完成] 初始化 Go 项目结构（cmd/internal/pkg/migrations） - v0.2.0
 - [x] [已完成] 初始化 Vue3 admin 项目（超管/开发者/代理三布局） - v0.2.0
-- [ ] [待开始] 初始化 Vue3 H5 项目（终端用户） - v0.2.0
+- [x] [已完成 2026-07-19] 初始化 Vue3 H5 项目（终端用户） - v0.2.4（apps/admin/src/layouts/H5Layout.vue + views/h5/{Home,Query,PayResult,CardDetail}.vue + 路由 /h5，H5 作为 admin 子应用而非独立工程）
 - [x] [已完成] 编写 docker-compose.yml（mysql/redis/api/admin/nginx） - v0.2.0
 - [x] [已完成] 编写 Dockerfile（多阶段构建） - v0.2.0
 - [x] [已完成] 编写宝塔面板安装脚本 baota_deploy.sh - v0.2.0
@@ -40,22 +40,22 @@
 - [x] [已完成] AppKey/AppSecret/SignSecret 生成 - v0.2.2
 - [x] [已完成] 密钥轮换（保留旧密钥 7 天） - v0.2.2
 - [x] [已完成] 应用配置（一机一卡/心跳/宽限/解绑扣时） - v0.2.2
-- [ ] [待开始] 应用列表/详情前端页面 - v0.2.0
+- [x] [已完成 2026-07-19] 应用列表/详情前端页面 - v0.2.4（apps/admin/src/views/tenant/Apps.vue 387 行：列表 + 新建/编辑/详情/重置密钥/删除对话框）
 
 #### 卡密体系
 - [x] [已完成] 卡类套餐 CRUD - v0.2.2
 - [x] [已完成] 卡密批量生成算法（SecureRandom + SHA-512 校验位） - v0.2.0
 - [x] [已完成] 卡密查询/封禁/解封/删除 - v0.2.2
-- [ ] [待开始] 卡密导入导出 CSV - v0.2.0
+- [x] [已完成 2026-07-20] 卡密导入导出 CSV - v0.3.6（card.go TenantExportCardsCSV/TenantImportCardsCSV + 前端 Cards.vue 导出/导入对话框）
 - [x] [已完成] 卡密状态机（unused/active/expired/banned/disabled） - v0.2.2
-- [ ] [待开始] 卡密批量生成前端页面（含弹窗） - v0.2.0
+- [x] [已完成 2026-07-19] 卡密批量生成前端页面（含弹窗） - v0.2.4（apps/admin/src/views/tenant/Cards.vue 567 行：批量生成对话框 + 表单校验 + 生成结果展示 + 复制全部 + CSV 导入导出 v0.3.6）
 
 #### 设备绑定
 - [x] [已完成] 设备指纹生成算法（CPU+主板+MAC+磁盘哈希） - v0.2.2
 - [x] [已完成] 一机一卡密绑定逻辑 - v0.2.2
 - [x] [已完成] 设备解绑扣时逻辑 - v0.2.2
-- [ ] [待开始] 设备强制下线 - v0.2.0
-- [ ] [待开始] 设备列表/封禁前端页面 - v0.2.0
+- [x] [已完成 2026-07-20] 设备强制下线 - v0.3.6（card.go TenantBanCard 联动 heartbeat.Remove 清 Redis 心跳 + DB 标记 banned；tenant_business.go TenantKickDevice 强制下线单设备；client.go unbind 流程）
+- [x] [已完成 2026-07-19] 设备列表/封禁前端页面 - v0.2.7（apps/admin/src/views/tenant/Devices.vue 180 行：列表 + 应用/关键字/在线状态筛选 + 强制下线按钮 + 移动端卡片视图；后端 TenantBanCard 封禁卡密时级联将设备 status=banned）
 
 #### 客户端验证 API
 - [x] [已完成] HMAC-SHA256 签名中间件骨架 - v0.2.0
@@ -107,7 +107,7 @@
 - [x] [已完成] /health 健康检查接口 - v0.2.0
 - [x] [已完成] Docker healthcheck - v0.2.0
 - [x] [已完成] 部署文档（Docker Compose + 宝塔两种方式） - v0.2.0
-- [ ] [待开始] 安装向导页面（/install） - v0.2.0
+- [x] [已完成 2026-07-20] 安装向导页面（/install） - v0.3.6（前端 Install.vue 4 步向导：环境检测 → 超管账号 → 平台配置 → 完成；后端 install.go InstallStatus/Install；路由 /install public）
 
 ---
 
