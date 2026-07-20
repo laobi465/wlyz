@@ -34,6 +34,8 @@
 - 多级代理分销体系（v0.4.0 三级代理 + 跨级佣金自动分润）
 - 灰度发布体系（v0.4.0 三策略 + Hash 桶稳定匹配 + 平台/渠道/地区白名单）
 - 在线更新体系（v0.4.0 GitHub Webhook 自动部署 + 双重锁防并发 + 失败自动回滚 + 完整审计日志）
+- 数据备份恢复体系（v0.4.0 全库 SQL 备份 + SHA-256 校验 + AES-256-GCM 加密 + gzip 压缩 + 异步恢复 + 过期清理）
+- 监控告警体系（v0.4.0 CPU/内存/磁盘/错误率采集 + 阈值告警 + webhook 通知 + 静默期去重 + 自动恢复 + 告警确认）
 - 心跳保活 + 离线宽限期
 - 云变量远程下发
 - 多语言 SDK（Python / Node.js / Java / C# / Go / PHP / C++ / 易语言）
@@ -142,9 +144,9 @@ SDK 校验签名 → 通过则解锁功能
 | S-08 | 通知模板 | ☐ | 短信/邮件/站内信模板（v0.4.x） |
 | S-09 | 安全防护 | ✅ | 全局 IP 黑名单 + 登录失败日志 + 安全中心统计（v0.3.1） |
 | S-10 | 操作日志 | ✅ | 三表独立查询（操作/验证/登录失败）+ CSV 导出（v0.3.3） |
-| S-11 | 系统监控 | ☐ | 服务器状态、QPS、慢查询（v0.4.x Prometheus） |
-| S-12 | 数据备份 | ☐ | 数据库备份、恢复、导出（v0.4.x） |
-| S-13 | 更新管理 | ☐ | 在线更新、版本回滚（v0.4.x） |
+| S-11 | 系统监控 | ✅ | CPU/内存/磁盘/在线设备/QPS/错误率采集 + 阈值告警 + webhook 通知 + 静默期 + 自动恢复 + 告警确认/重发 + 24h 聚合（v0.4.0） |
+| S-12 | 数据备份 | ✅ | 全库 SQL 备份 + SHA-256 校验 + AES-256-GCM 加密 + gzip 压缩 + 异步恢复 + 下载校验 + 过期清理（v0.4.0） |
+| S-13 | 更新管理 | ✅ | GitHub Webhook 自动部署 + 手动触发 + 失败自动回滚 + 完整审计日志 + 双重锁防并发（v0.4.0） |
 | S-14 | 管理员管理 | ✅ | 超管账号 + 2FA TOTP + 登录设备管理（v0.3.0）+ 安装向导首次配置（v0.3.6 `/install`） |
 | S-15 | 平台总公告管理 | ✅ | 公告 CRUD + 横幅开关 + 公开 API（v0.3.0） |
 | S-16 | 开发者公告管理 | ✅ | 公告 CRUD（v0.3.0） |
@@ -266,8 +268,10 @@ SDK 校验签名 → 通过则解锁功能
 | 代理 | `agent_invite_code.creator_type` / `agent_invite_code.creator_agent_id` | v0.4.0 邀请码创建者类型（tenant=开发者→一级 / agent=代理→creator.level+1，migration 009） | v0.4.0 |
 | 应用版本 | `app_version.release_strategy` / `grayscale_rate` / `grayscale_platforms` / `grayscale_regions` / `grayscale_channels` | v0.4.0 灰度发布体系（full / grayscale / canary 三策略 + 平台/渠道/地区白名单 + Hash 桶比例匹配，migration 010） | v0.4.0 |
 | 在线更新 | `system_update_log.trigger_source` / `trigger_by` / `commit_before` / `commit_after` / `status` / `steps_json` / `log_text` / `rolled_back_from` | v0.4.0 在线更新体系（GitHub Webhook + 自动部署 + 回滚 + 审计日志，migration 011） | v0.4.0 |
+| 数据备份 | `system_backup_log.backup_type` / `file_path` / `file_size` / `checksum` / `status` / `tables_count` / `rows_count` / `restored_from` | v0.4.0 数据备份恢复（全库 SQL 备份 + SHA-256 + AES-256-GCM + gzip + 过期清理，migration 012） | v0.4.0 |
+| 监控告警 | `system_metric.metric_name` / `metric_value` / `metric_unit` / `labels_json` / `collected_at` + `system_alert.alert_rule` / `severity` / `status` / `threshold` / `operator` / `fired_at` / `resolved_at` / `acked_by` / `notify_sent` | v0.4.0 监控告警（CPU/内存/磁盘/错误率采集 + 阈值告警 + webhook 通知 + 静默期 + 自动恢复，migration 013） | v0.4.0 |
 
-> migration 文件：`apps/server/migrations/` 共 11 套（001 ~ 011），由 `internal/migration/migrator.go` 在 `InitContainer` 阶段自动执行。
+> migration 文件：`apps/server/migrations/` 共 13 套（001 ~ 013），由 `internal/migration/migrator.go` 在 `InitContainer` 阶段自动执行。
 
 ### 4.2 Redis 缓存键设计
 

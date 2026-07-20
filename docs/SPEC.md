@@ -1312,6 +1312,124 @@ GitHub 算法：`HMAC-SHA256(secret, body)` → hex 编码 → 前缀 `sha256=`
 - 健康检查通过后才标记 success
 - 完整步骤日志（`steps_json` JSON 数组 + `log_text` 人类可读文本）
 
+### 7.4.4 数据备份恢复规范（v0.4.0）
+
+#### 数据模型
+
+- `system_backup_log` 表（migration 012）：
+  - `backup_type VARCHAR(16)`：类型（`manual` / `auto` / `restore_source`）
+  - `trigger_by BIGINT`：触发者 admin id
+  - `trigger_ip VARCHAR(45)`：触发者 IP
+  - `file_path VARCHAR(512)`：备份文件绝对路径
+  - `file_size BIGINT`：文件字节数
+  - `checksum CHAR(64)`：SHA-256 校验和
+  - `status VARCHAR(16)`：状态（`pending` / `success` / `failed` / `deleted`）
+  - `error_message VARCHAR(512)`：失败原因
+  - `duration_ms INT`：总耗时
+  - `tables_count INT`：备份表数
+  - `rows_count BIGINT`：备份行数
+  - `restored_from BIGINT`：若为恢复操作产生的日志，原备份 id（0=非恢复）
+- 3 个索引：`idx_backup_status` / `idx_backup_type` / `idx_backup_created`
+- 6 项 `backup.*` sys_config：`backup.dir` / `backup.retention_days` / `backup.auto_enabled` / `backup.encryption_key`（AES-256-GCM 密钥 hex，空=不加密）/ `backup.compress` / `backup.tables_filter`
+
+#### 备份格式
+
+- 文件结构：`[gzip_magic 0x1f 0x8b?] + [metadata_json]\n---PAYLOAD---\n[sql_data]`
+- metadata JSON 包含：`tables_count` / `rows_count` / `backup_type` / `created_at` / `compressed` / `encrypted`
+- SQL 数据：每行一条 `INSERT INTO <table> (col1, col2, ...) VALUES (v1, v2, ...);`
+- 值序列化规则（`serializeValue`）：
+  - `nil` → `NULL`
+  - `string` → `'...'`（单引号转义为 `''`）
+  - `[]byte` → `x'hex'`
+  - `bool` → `1` / `0`
+  - `time.Time` → `'YYYY-MM-DD HH:MM:SS'`
+  - `int*` / `float*` → 数字字面量
+  - 其他 → `'fmt.Sprint(v)'`
+
+#### 安全机制
+
+- 下载前强制 SHA-256 校验（损坏文件拒绝下载，返回 409）
+- 恢复前严格校验完整性（checksum + status=success 双校验）
+- 恢复事务化：每表 DELETE 后再 INSERT，防 PK 冲突
+- AES-256-GCM 加密密钥 hex 编码存 sys_config（仅 admin 可读）
+- 异步执行备份/恢复，避免长耗时阻塞 HTTP
+
+### 7.4.5 监控告警规范（v0.4.0）
+
+#### 数据模型
+
+- `system_metric` 表（migration 013）：
+  - `metric_name VARCHAR(64)`：指标名（`cpu_usage` / `memory_usage` / `disk_usage` / `qps` / `verify_count` / `online_devices` / `error_rate`）
+  - `metric_value DOUBLE`：指标值
+  - `metric_unit VARCHAR(16)`：单位（`%` / `count` / `ratio` / `mb`）
+  - `labels_json VARCHAR(512)`：标签 JSON（如 `{"host":"server1","used_mb":1024}`）
+  - `collected_at DATETIME`：采集时间
+- 2 个索引：`idx_metric_name_time` / `idx_metric_collected`
+- `system_alert` 表：
+  - `alert_rule VARCHAR(64)`：规则名（与 `metric_name` 对应）
+  - `severity VARCHAR(16)`：严重程度（`info` / `warning` / `critical` / `fatal`）
+  - `status VARCHAR(16)`：状态（`firing` / `resolved` / `silenced` / `acked`）
+  - `metric_value DOUBLE` / `threshold DOUBLE` / `operator VARCHAR(8)`（`>` / `<` / `>=` / `<=` / `==`）
+  - `message VARCHAR(512)`：告警消息
+  - `labels_json VARCHAR(512)`
+  - `fired_at DATETIME` / `resolved_at DATETIME NULL` / `acked_by BIGINT` / `acked_at DATETIME NULL` / `notify_sent INT`
+- 4 个索引：`idx_alert_status` / `idx_alert_rule_status` / `idx_alert_fired` / `idx_alert_severity`
+- 9 项 `monitor.*` sys_config：
+  - `monitor.collect_interval` = `60`（采集间隔秒）
+  - `monitor.alert_enabled` = `1`（告警总开关）
+  - `monitor.notify.webhook_url`（webhook 通知 URL）
+  - `monitor.silence_minutes` = `30`（静默期分钟数）
+  - `monitor.threshold.cpu_usage` = `90` / `memory_usage` = `90` / `disk_usage` = `85` / `error_rate` = `10`
+  - `monitor.retention_days` = `30`（指标保留天数，0=永久）
+
+#### 采集指标
+
+- **CPU 使用率**：gopsutil `cpu.Percent(1s, false)`（采样 1 秒）
+- **内存使用率**：gopsutil `mem.VirtualMemory().UsedPercent`
+- **磁盘使用率**：gopsutil `disk.Usage("/")`（根分区）
+- **在线设备数**：DB 查询 `app_device WHERE last_heartbeat_at > NOW() - heartbeat_timeout`
+- **今日验证数**：DB 查询 `log_verify WHERE created_at >= today_start`
+- **验证错误率**：DB 查询 `log_verify WHERE result != 'success'` 占比 × 100
+
+#### 阈值比较
+
+- 显式 `switch` 实现运算符（禁止字符串拼接 eval）：
+  - `>` `value > threshold`
+  - `<` `value < threshold`
+  - `>=` `value >= threshold`
+  - `<=` `value <= threshold`
+  - `==` 浮点精度容差 0.001
+  - 未知运算符默认返回 `false`
+
+#### 告警生命周期
+
+1. **触发**：指标超阈值 + 静默期内无同规则 firing 告警 → 创建新告警（status=firing）+ 发送 webhook 通知
+2. **静默**：同规则在 `silence_minutes` 内有 firing 告警 → 跳过新告警创建
+3. **自动恢复**：指标正常时 → 自动将对应 firing 告警改为 resolved + 写入 resolved_at
+4. **超时恢复**：firing 状态超 1 小时未变化 → 自动改为 resolved（防告警堆积）
+5. **手动确认**：管理员 POST `/admin/monitor/alerts/ack` → status=acked + 写入 acked_by/acked_at（停止后续通知）
+6. **手动重发**：管理员 POST `/admin/monitor/alerts/resend` → 重新调用 webhook
+
+#### Webhook 通知格式
+
+```json
+{
+  "alert_rule": "cpu_usage",
+  "severity": "warning",
+  "status": "firing",
+  "metric_value": 95.5,
+  "threshold": 90,
+  "operator": ">",
+  "message": "CPU 使用率超阈值: 95.50 > 90.00",
+  "labels": {"host": "server1"},
+  "fired_at": "2026-07-20T15:30:00Z"
+}
+```
+
+- HTTP POST + `Content-Type: application/json`
+- 自定义 Header：`User-Agent: KeyAuth-Monitor/1.0` / `X-Alert-Severity: <severity>`
+- 超时控制 10s；失败仅记录 `notify_sent=0`，不阻塞采集流程
+
 ### 7.5 测试规范（v0.3.6）
 
 #### 测试栈
@@ -1322,7 +1440,7 @@ GitHub 算法：`HMAC-SHA256(secret, body)` → hex 编码 → 前缀 `sha256=`
 | 内存 Redis | `github.com/alicebob/miniredis/v2` | v2.38.0 |
 | SQLite 内存库 | `gorm.io/driver/sqlite` + `github.com/mattn/go-sqlite3` | v1.6.0 + v1.14.22 |
 
-#### 测试覆盖（13 个包，0 失败）
+#### 测试覆盖（15 个包，0 失败）
 
 | 包 | 测试文件 | 覆盖范围 |
 |---|---|---|
@@ -1340,6 +1458,8 @@ GitHub 算法：`HMAC-SHA256(secret, body)` → hex 编码 → 前缀 `sha256=`
 | `internal/multilevel` | `multilevel_test.go` | v0.4.0 多级代理：DistributeCrossCommission（level 1/2/3 + 父级禁用跳过 + 零/负佣金 + nil agent + 自定义比例，7 个）/ CanCreateSubordinate（level vs max_level 矩阵 + agent_can_create flag + 禁用 + nil，6 个）/ ComputeSubordinateLevel（tenant 邀请码 → 1 / agent 邀请码 → 2 / level 3 超限 / 创建者不存在 / nil，5 个）/ BuildAgentTree（三级树 + maxDepth=0 + 不存在 + 租户隔离，4 个）/ ListSubordinates（单层 + 无子级 + 租户隔离，3 个）/ 边界（parent 链断裂，2 个）（27 个测试） |
 | `internal/grayscale` | `grayscale_test.go` | v0.4.0 灰度发布：Match full 策略（3）+ 全局开关（1）+ 平台过滤（4）+ 渠道过滤（3）+ 地区过滤（3）+ 比例（4）+ HashBucket 稳定性/范围/salt/appID（4）+ ParseList 空/单/多/空格/大小写/仅逗号（6）+ DefaultRate/IsEnabled（4）+ 边界匿名 clientID/canary/多过滤全过/多过滤失败（4）（33 个测试） |
 | `internal/update` | `update_test.go` | v0.4.0 在线更新：VerifyWebhookSignature（7：有效/错误 secret/空 secret 跳过/空签名拒绝/错误前缀/篡改 body/空 body）+ ParsePushEvent（4：有效/非法 JSON/空 ref/缺失 ref）+ BranchMatches（5：短形式/完整形式/不匹配/空分支/tag ref）+ AcquireLock/ReleaseLock（5：首次成功/二次失败/释放后重新获取/Redis key SET/DEL/多 Manager 共享 lockKey 互斥）+ HealthCheck（6：2xx/3xx 禁用重定向/5xx/4xx/连接拒绝/超时尊重）+ 状态机常量（4：TriggerSource/Status/StepStatus/8 个 ConfigKey 互不冲突 + 全部 update. 前缀）+ IsAutoUpdateEnabled/IsLocked（4：默认 false/true/未锁/已锁）+ 边界（6：大 body 10KB/额外字段忽略/分支名特殊字符/不同 lockKey/多次校验一致性/JSON round-trip）+ 并发压力（1：10 goroutine 抢锁无 panic 无死锁）（37 个测试） |
+| `internal/backup` | `backup_test.go` | v0.4.0 数据备份恢复：serializeValue（6：nil/string/[]byte/bool/time.Time/int）+ parseTablesFilter（5：空/单/多/含空格/全空白）+ extractPayload（4：gzip/未压缩/缺分隔符/非法 JSON）+ CreateBackup（5：无加密无压缩/gzip/AES/表过滤/无效密钥）+ RestoreBackup（5：无加密/AES/checksum 不匹配/状态非 success/不存在）+ CleanupExpired（3：按保留天数/retention=0/已删除文件）+ VerifyChecksum（3：成功/失败/不存在）+ 常量（3）+ round-trip 集成（1）+ 边界（4）（全 PASS） |
+| `internal/monitor` | `monitor_test.go` | v0.4.0 监控告警：CompareWithOperator（6：>`<`>=`<=`== 浮点精度/未知运算符返回 false）+ FormatMetricName（4：小写/横杠/空格/混合）+ SaveMetrics（4：空/单条/多条/nil labels）+ GetAlertRules（2：默认/sys_config 覆盖）+ EvaluateAlerts（5：关闭/触发/未超阈值/静默期/自动恢复）+ ResolveStaleAlerts（3：2h 自动恢复/30min 不恢复/已 resolved 不重复）+ CleanupExpiredMetrics（3：按保留天数/retention=0/无过期）+ AckAlert（2：成功/不存在）+ GetMetricHistory（4：默认/过滤/limit 边界/limit=0 修正）+ GetActiveAlerts（1）+ sendNotification（4：未配置 webhook/200 成功/500 失败/不可达不阻塞）+ SendAlertNotification（1）+ IsAlertEnabled/GetCollectInterval（3）+ 常量（5：ConfigKey/MetricName/Severity/Status/Operator）+ 并发（1：5 goroutine 互斥锁无 panic）+ 集成（2：CollectSystemMetrics/CollectAndEvaluate 闭环）+ 边界（4：负数/零值/空字符串/多指标同时触发）（53 个测试） |
 
 #### 测试原则
 

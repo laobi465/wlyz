@@ -343,9 +343,11 @@
 - [x] [已完成 2026-07-20] 灰度规则配置（按地区/比例） - v0.4.0（平台/渠道/地区白名单 + Hash 桶 SHA-256(salt:appID:clientID) % 100 + 全局开关 + default_rate/hash_salt 可后台调整 + TenantUpdateVersion 编辑接口 + AdminListVersions/AdminGetVersion 跨租户查询 + 33 个测试全 PASS）
 
 #### 数据备份与恢复
-- [ ] [待开始] 数据库自动备份（每日全量+每小时增量） - v0.4.0
-- [ ] [待开始] 一键恢复面板 - v0.4.0
-- [ ] [待开始] 备份文件下载 - v0.4.0
+- [x] [已完成 2026-07-20] 数据库自动备份 - v0.4.0（migration 012 system_backup_log 表 + 6 项 backup.* 配置；Manager.CreateBackup 全库 SQL INSERT 序列化 + gzip 压缩 + AES-256-GCM 加密 + SHA-256 checksum + 文件写入 + 审计日志）
+- [x] [已完成 2026-07-20] 一键恢复面板 - v0.4.0（Manager.RestoreBackup SHA-256 校验 + AES 解密 + gunzip + 事务化 DELETE+INSERT 防 PK 冲突 + restored_from 关联原备份；AdminRestoreBackup 异步触发 + status 校验）
+- [x] [已完成 2026-07-20] 备份文件下载 - v0.4.0（AdminDownloadBackup 下载前强制 checksum 校验，损坏文件拒绝下载；AdminListBackups 分页 + status/backup_type 筛选；AdminBackupStatus 配置+统计+最近成功备份）
+- [x] [已完成 2026-07-20] 过期备份清理 - v0.4.0（Manager.CleanupExpired 按 retention_days 清理文件 + 更新审计日志状态为 deleted；AdminCleanupBackups 手动触发）
+- 详见 references/09-database-backup-restore.md
 
 #### 在线更新系统
 - [x] [已完成 2026-07-20] Webhook 接收 GitHub Push - v0.4.0（GitHubWebhook handler POST /api/v1/public/update/webhook；HMAC-SHA256 签名校验 + X-GitHub-Event 事件类型过滤 + push event 解析 + 分支匹配）
@@ -361,10 +363,13 @@
 - [ ] [待开始] 开发者 API Token 管理 - v0.4.0
 
 #### 监控告警
-- [ ] [待开始] Prometheus + Grafana 集成 - v0.4.0
-- [ ] [待开始] 异常 QPS 告警 - v0.4.0
-- [ ] [待开始] 错误率 > 1% 告警 - v0.4.0
-- [ ] [待开始] CPU/磁盘阈值告警 - v0.4.0
+- [x] [已完成 2026-07-20] 系统监控（CPU/内存/磁盘）+ 阈值告警 - v0.4.0（migration 013 system_metric + system_alert 表 + 9 项 monitor.* 配置；Manager.CollectSystemMetrics gopsutil 采集 + DB 查询在线设备/验证数/错误率；EvaluateAlerts 显式 switch 阈值比较 + 静默期去重 + 自动恢复 + webhook 通知）
+- [x] [已完成 2026-07-20] 异常 QPS 告警 - v0.4.0（verify_count 指标 + error_rate 阈值告警 + webhook POST JSON 通知 + 静默期去重）
+- [x] [已完成 2026-07-20] 错误率 > 1% 告警 - v0.4.0（CfgKeyThresholdErrorRate 默认 10% 可后台调整为 1% + EvaluateAlerts 自动触发）
+- [x] [已完成 2026-07-20] CPU/磁盘阈值告警 - v0.4.0（CfgKeyThresholdCPU 默认 90% / CfgKeyThresholdDisk 默认 85% + 4 条规则从 sys_config 动态构造）
+- [x] [已完成 2026-07-20] 后台监控面板（S-11） - v0.4.0（AdminMonitorStatus 配置+活跃告警+24h聚合+最近采集；AdminCollectNow 手动触发；AdminMetricHistory 历史查询；AdminListAlerts 分页；AdminAckAlert 确认告警；AdminResendAlert 重发；AdminCleanupMetrics 清理过期）
+- [ ] [待开始] Prometheus + Grafana 集成 - v0.4.x（可选，当前已实现内置监控；后续可暴露 /metrics 端点对接 Prometheus）
+- 详见 references/10-monitoring-alerts.md
 
 #### 通知系统
 - [ ] [待开始] 短信模板（阿里云/腾讯云） - v0.4.0
@@ -474,7 +479,7 @@
 | v0.3.4 | 2026-07-19 | ✅ 已完成（结算与对账闭环：开发者 balance/frozen_balance + tenant_balance_log + tenant_withdraw + 批量结算 + 对账报表 + 双审核页面） |
 | v0.3.5 | 2026-07-19 | ✅ 已完成（P0 修复：RSA 脚本 / 数据库迁移 / H5 公共 API / 套餐配额） |
 | v0.3.6 | 2026-07-20 | ✅ 已完成（剩余 P1 收尾 + 单元测试 + 客户端 SDK 签名对齐测试） |
-| v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移 + JWT jti 单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 + 全语言 SDK 扩展 + 多级代理体系 + 灰度发布 + 在线更新 已完成；数据备份 / 监控告警 / 通知系统 / 终端用户体系 / API 开放平台等待开始） |
+| v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移 + JWT jti 单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 + 全语言 SDK 扩展 + 多级代理体系 + 灰度发布 + 在线更新 + 数据备份恢复 + 监控告警 已完成；通知系统 / 终端用户体系 / API 开放平台 / 管理员弹窗通知 待开始） |
 
 ---
 
@@ -529,10 +534,10 @@
 - ~~多级代理（二级 + 三级 + 跨级佣金）~~ ✓ 已完成
 - ~~全语言 SDK（Java / C# / Go / C++ / 易语言）~~ ✓ 已完成
 - 高级安全（异地登录告警 + 风控引擎 + Cloudflare WAF）
-- 灰度发布 + Webhook 自动更新
-- 数据备份恢复
+- ~~灰度发布 + Webhook 自动更新~~ ✓ 已完成
+- ~~数据备份恢复~~ ✓ 已完成
 - API 开放平台
-- 监控告警（Prometheus + Grafana）
+- ~~监控告警（内置：CPU/内存/磁盘/错误率 + 阈值告警 + webhook 通知）~~ ✓ 已完成；Prometheus + Grafana 集成可选后续
 - 通知系统（短信 / 邮件 / 站内信）
 - 终端用户体系（H5 用户登录/注册/中心/订单）
 

@@ -11,6 +11,210 @@
 
 ## [0.4.0] - 2026-07-20（v0.4.x 迁移项推进）
 
+### [新增] 监控告警体系（v0.4.x 第十项：系统指标采集 + 阈值告警 + Webhook 通知 + 静默期 + 自动恢复）
+
+#### 背景
+
+- v0.3.x 仅有 `log_verify` / `log_operation` / `log_login_failed` 三类业务日志，无系统级资源指标采集
+- 商业化诉求：CPU/内存/磁盘超阈值自动告警；错误率突增通知；告警 webhook 集成钉钉/企业微信/飞书
+- TODO.md `[迁移] 监控告警 → v0.4.x 系统监控（CPU/内存/磁盘/QPS）+ 阈值告警 + webhook 通知`
+
+#### 实现
+
+**`migrations/013_v0.4.0_monitoring_alerts.up.sql`**：
+- 新建 `system_metric` 表：时序指标数据（metric_name / metric_value / metric_unit / labels_json / collected_at）
+- 2 个索引：`idx_metric_name_time`（metric_name + collected_at）/ `idx_metric_collected`
+- 新建 `system_alert` 表：告警事件（alert_rule / severity / status / metric_value / threshold / operator / message / labels_json / fired_at / resolved_at / acked_by / acked_at / notify_sent）
+- 4 个索引：`idx_alert_status` / `idx_alert_rule_status` / `idx_alert_fired` / `idx_alert_severity`
+- `sys_config` 新增 9 项 `monitor.*` 配置：
+  - `monitor.collect_interval` = `60`（采集间隔秒）
+  - `monitor.alert_enabled` = `1`（告警总开关）
+  - `monitor.notify.webhook_url`（告警通知 webhook URL）
+  - `monitor.silence_minutes` = `30`（静默期分钟数）
+  - `monitor.threshold.cpu_usage` = `90`（CPU 使用率阈值 %）
+  - `monitor.threshold.memory_usage` = `90`（内存使用率阈值 %）
+  - `monitor.threshold.disk_usage` = `85`（磁盘使用率阈值 %）
+  - `monitor.threshold.error_rate` = `10`（验证错误率阈值 %）
+  - `monitor.retention_days` = `30`（指标保留天数，0=永久）
+- 配套 `013_v0.4.0_monitoring_alerts.down.sql` 回滚
+
+**`internal/model/model.go`**：
+- 新增 `SystemMetric` struct + `TableName() = "system_metric"`
+- 新增 `SystemAlert` struct + `TableName() = "system_alert"`
+
+**`internal/monitor/monitor.go`**（新建包，核心监控管理器）：
+- `CompareWithOperator(value, threshold float64, operator string) bool`：通用阈值比较（显式 switch 实现 `>` / `<` / `>=` / `<=` / `==`，禁止字符串拼接 eval）
+- `Manager.CollectSystemMetrics(ctx)`：gopsutil 采集 CPU/内存/磁盘使用率 + DB 查询在线设备数 / 今日验证数 / 验证错误率
+- `Manager.SaveMetrics(ctx, samples)`：批量写入 `system_metric` 表（labels JSON 序列化）
+- `Manager.GetAlertRules(ctx)`：动态从 sys_config 构造 4 条规则（CPU/内存/磁盘/错误率）
+- `Manager.EvaluateAlerts(ctx, samples)`：阈值比较 + 静默期去重 + 自动恢复 + webhook 通知
+- `Manager.ResolveStaleAlerts(ctx)`：自动恢复超过 1 小时未变化的 firing 告警（防告警堆积）
+- `Manager.sendNotification(ctx, alert)`：HTTP POST JSON 到 webhook URL（10s 超时控制；失败不阻塞主流程）
+- `Manager.CollectAndEvaluate(ctx)`：一体化入口（采集 → 写入 → 评估 → 自动恢复 → 清理过期），互斥锁防并发
+- `Manager.CleanupExpiredMetrics(ctx)`：按保留天数清理过期指标
+- `Manager.GetMetricHistory(ctx, name, from, to, limit)`：指标历史查询（按时间倒序，limit 自动校正边界）
+- `Manager.GetActiveAlerts(ctx)` / `AckAlert(ctx, id, adminID)` / `SendAlertNotification(ctx, id)`
+- 常量：9 个 ConfigKey + 7 个 MetricName + 4 个 Severity + 4 个 Status + 5 个 Operator
+- 类型：`MetricSample` / `AlertRule` / `AlertPayload` / `CollectResult`
+
+**`internal/handler/monitor.go`**（新建）：
+- `AdminMonitorStatus` GET `/admin/monitor/status`：配置概览 + 活跃告警 + 24h 指标聚合 + 最近采集
+- `AdminCollectNow` POST `/admin/monitor/collect`：手动触发采集 + 评估（同步返回结果）
+- `AdminMetricHistory` GET `/admin/monitor/metrics?name=&hours=&limit=`：指标历史查询（默认 24h，limit≤1000）
+- `AdminListAlerts` GET `/admin/monitor/alerts?status=&severity=&page=&page_size=`：分页查询告警事件
+- `AdminAckAlert` POST `/admin/monitor/alerts/ack`：管理员确认告警（标记 acked，停止通知）
+- `AdminResendAlert` POST `/admin/monitor/alerts/resend`：手动重发告警通知到 webhook
+- `AdminCleanupMetrics` POST `/admin/monitor/cleanup`：手动触发清理过期指标
+
+**`internal/router/router.go`**：注册 7 条新路由（全部 adminAuth 鉴权）
+
+#### 测试（`internal/monitor/monitor_test.go`，53 个用例全 PASS）
+
+- CompareWithOperator（6 个）：`>` / `<` / `>=` / `<=` / `==`（浮点精度 0.001）/ 未知运算符返回 false
+- FormatMetricName（4 个）：大写转小写 / 横杠转下划线 / 空格转下划线 / 混合
+- SaveMetrics（4 个）：空切片 / 单条带 labels / 多条 / nil labels 默认 `{}`
+- GetAlertRules（2 个）：默认 4 条规则阈值 / sys_config 覆盖阈值
+- EvaluateAlerts（5 个）：告警关闭不触发 / 触发告警写入 / 未超阈值不触发 / 静默期去重 / 指标恢复自动 resolved
+- ResolveStaleAlerts（3 个）：2h 前自动恢复 / 30min 不恢复 / 已 resolved 不重复处理
+- CleanupExpiredMetrics（3 个）：按保留天数清理 / retention=0 不清理 / 无过期不删除
+- AckAlert（2 个）：成功更新 status/acked_by/acked_at / 不存在 ID 无错误
+- GetMetricHistory（4 个）：默认查询按时间倒序 / 按 name 过滤 / limit 边界 / limit=0 修正为 100
+- GetActiveAlerts（1 个）：仅返回 firing 状态
+- sendNotification（4 个）：未配置 webhook 返回 false / 200 成功 / 500 失败 / 不可达不阻塞
+- SendAlertNotification（1 个）：不存在 ID 返回 error
+- IsAlertEnabled / GetCollectInterval（3 个）：true / false / 自定义间隔
+- 常量（5 个）：9 个 ConfigKey + 7 个 MetricName + 4 个 Severity + 4 个 Status + 5 个 Operator
+- 并发（1 个）：5 goroutine 并发 CollectAndEvaluate 互斥锁无 panic
+- 集成（2 个）：CollectSystemMetrics 返回 ≥2 指标 / CollectAndEvaluate 闭环
+- 边界（4 个）：负数比较 / 零值比较 / 空字符串 / 多指标同时触发
+
+测试栈：SQLite in-memory（system_metric + system_alert + sys_config + app_device + log_verify AutoMigrate）+ miniredis + 真实 ConfigCache（预置 9 项 monitor.* 配置）+ httptest.Server 模拟 webhook 端点
+
+#### 铁律遵守
+
+- **铁律 04（无硬编码）**：9 项配置全部从 sys_config 读取；常量化 7 个 MetricName / 4 个 Severity / 4 个 Status / 5 个 Operator
+- **铁律 05（配置走后端）**：采集间隔 / 告警开关 / webhook URL / 静默期 / 4 个阈值 / 保留天数 全部可后台实时调整
+- **铁律 06（反幻觉）**：阈值比较用显式 switch 不依赖字符串拼接 eval；webhook 通知超时控制 10s 失败不阻塞主流程；告警写入 + 通知 + 静默期 + 自动恢复 + 清理 全路径覆盖测试
+
+#### 可靠性保障
+
+- 采集互斥锁防并发触发
+- 静默期去重（同规则 silence_minutes 内不重复告警）
+- 自动恢复超 1h 未变化的 firing 告警（防告警堆积）
+- 指标正常时自动 resolved 对应 firing 告警
+- webhook 通知失败仅记录 notify_sent=0，不阻塞采集流程
+- 指标数据按保留天数自动清理（防表膨胀）
+
+#### 验证
+
+- `go test ./internal/monitor/`：53 个用例全 PASS
+- `go test ./...`：15 个测试包全 PASS（无回归）
+- `go build ./...`：通过
+
+---
+
+### [新增] 数据备份恢复体系（v0.4.x 第九项：全库 SQL 备份 + SHA-256 校验 + AES-256-GCM 加密 + gzip 压缩 + 过期清理）
+
+#### 背景
+
+- v0.3.x 无任何数据库备份机制，灾难恢复需手动 mysqldump
+- 商业化诉求：管理员后台一键备份/恢复；备份文件加密压缩存储；定期自动备份；下载前 checksum 校验；恢复前完整性验证
+- TODO.md `[迁移] 数据备份 → v0.4.x 数据库自动备份（每日/每周）+ 备份文件加密压缩存储 + 一键恢复`
+
+#### 实现
+
+**`migrations/012_v0.4.0_backup_restore.up.sql`**：
+- 新建 `system_backup_log` 表：审计日志（backup_type / trigger_by / trigger_ip / file_path / file_size / checksum / status / error_message / duration_ms / tables_count / rows_count / restored_from + timestamps）
+- 3 个索引：`idx_backup_status` / `idx_backup_type` / `idx_backup_created`
+- `sys_config` 新增 6 项 `backup.*` 配置：
+  - `backup.dir` = `data/backups`（备份文件存储目录）
+  - `backup.retention_days` = `30`（保留天数）
+  - `backup.auto_enabled` = `0`（自动备份开关）
+  - `backup.encryption_key`（AES-256-GCM 加密密钥 hex，空=不加密）
+  - `backup.compress` = `1`（gzip 压缩开关）
+  - `backup.tables_filter`（表名白名单，逗号分隔，空=全库）
+- 配套 `012_v0.4.0_backup_restore.down.sql` 回滚
+
+**`internal/model/model.go`**：
+- 新增 `SystemBackupLog` struct + `TableName() = "system_backup_log"`
+
+**`internal/backup/backup.go`**（新建包，核心备份管理器）：
+- `Manager.CreateBackup(ctx, opts)`：完整备份流程
+  1. 收集目标表（按 tables_filter 过滤）
+  2. 逐表序列化为 SQL INSERT 语句（`serializeValue` 处理 nil/string/[]byte/bool/time.Time/int/float）
+  3. 可选 gzip 压缩（magic 0x1f 0x8b 检测）
+  4. 可选 AES-256-GCM 加密（nonce + ciphertext 拼接）
+  5. 计算 SHA-256 checksum
+  6. 写入文件 + 审计日志
+- `Manager.RestoreBackup(ctx, opts)`：完整恢复流程
+  1. 读取备份文件
+  2. SHA-256 校验完整性
+  3. 可选 AES 解密
+  4. 可选 gunzip 解压
+  5. 解析 metadata JSON + SQL 数据
+  6. 事务执行：每个表先 DELETE 再 INSERT（防 PK 冲突）
+  7. 审计日志记录 restored_from
+- `Manager.CleanupExpired(ctx)`：清理过期备份文件 + 更新审计日志状态为 deleted
+- `Manager.VerifyChecksum(ctx, id)` / `GetBackupFilePath(ctx, id)` / `IsAutoBackupEnabled(ctx)`
+- `parseTablesFilter` / `extractTableName` / `extractPayload` / `executeSQLStatements`
+- 常量：6 个 ConfigKey + 3 个 BackupType + 3 个 Status
+
+**`internal/handler/backup.go`**（新建）：
+- `AdminCreateBackup` POST `/admin/backup/create`：异步触发备份
+- `AdminListBackups` GET `/admin/backup/list`：分页查询（支持 status / backup_type 筛选）
+- `AdminGetBackup` GET `/admin/backup/:id`：单条详情
+- `AdminDownloadBackup` GET `/admin/backup/:id/download`：下载前强制 checksum 校验
+- `AdminRestoreBackup` POST `/admin/backup/restore`：异步触发恢复（仅 status=success 的备份可恢复）
+- `AdminCleanupBackups` POST `/admin/backup/cleanup`：手动触发清理过期
+- `AdminBackupStatus` GET `/admin/backup/status`：配置概览 + 统计 + 最近成功备份
+
+**`internal/router/router.go`**：注册 7 条新路由（全部 adminAuth 鉴权）
+
+#### 测试（`internal/backup/backup_test.go`，全 PASS）
+
+- serializeValue（6 个）：nil→NULL / string 转义单引号 / []byte→x'hex' / bool→0/1 / time.Time→格式化 / int
+- parseTablesFilter（5 个）：空 / 单 / 多 / 含空格 / 全空白
+- extractPayload（4 个）：gzip 压缩 / 未压缩 / 缺少分隔符 / 非法 metadata JSON
+- CreateBackup（5 个）：无加密无压缩 / gzip 压缩 / AES 加密 / 表过滤 / 无效 AES 密钥
+- RestoreBackup（5 个）：无加密 / AES 加密 / checksum 不匹配 / 状态非 success / 不存在
+- CleanupExpired（3 个）：按保留天数清理 / retention=0 不清理 / 已删除文件清理
+- VerifyChecksum（3 个）：成功 / 失败 / 不存在
+- 常量（3 个）：ConfigKey / BackupType / Status
+- round-trip 集成（1 个）：备份→恢复完整闭环
+- 边界（4 个）：空数据库 / 多表 / 大字段 / 错误恢复
+
+测试栈：SQLite in-memory（system_backup_log + sys_config + app + app_card AutoMigrate）+ miniredis + 真实 ConfigCache + 临时备份目录
+
+#### 铁律遵守
+
+- **铁律 04（无硬编码）**：6 项配置全部从 sys_config 读取；常量化 6 个 ConfigKey / 3 个 BackupType / 3 个 Status
+- **铁律 05（配置走后端）**：备份目录 / 保留天数 / 自动开关 / 加密密钥 / 压缩开关 / 表过滤 全部可后台实时调整
+- **铁律 06（反幻觉）**：下载前强制 SHA-256 校验；恢复前严格校验文件完整性；SQL 序列化显式处理各类型（不依赖反射）；事务执行 DELETE+INSERT 防 PK 冲突
+
+#### 安全机制
+
+- 备份文件可选 AES-256-GCM 加密（密钥 hex 编码存 sys_config，仅 admin 可读）
+- 下载前强制 checksum 校验（损坏文件拒绝下载）
+- 恢复前严格校验文件完整性（checksum + status=success）
+- 异步执行备份/恢复（避免长耗时阻塞 HTTP 请求）
+- 备份/恢复/清理/下载 全部写操作日志（操作人 + IP + 备份 ID）
+
+#### 可靠性保障
+
+- 备份文件 SHA-256 checksum 持久化（审计日志 + 下载前双校验）
+- 恢复事务化（DELETE+INSERT 原子提交）
+- 过期备份清理（删除文件 + 更新审计日志状态为 deleted）
+- 异步备份/恢复不阻塞 HTTP（通过 list 接口查看进度）
+- restored_from 字段关联原备份 ID（恢复操作可追溯）
+
+#### 验证
+
+- `go test ./internal/backup/`：全 PASS
+- `go test ./...`：15 个测试包全 PASS（无回归）
+- `go build ./...`：通过
+
+---
+
 ### [新增] 在线更新体系（v0.4.x 第八项：GitHub Webhook + 自动部署 + 回滚 + 审计）
 
 #### 背景

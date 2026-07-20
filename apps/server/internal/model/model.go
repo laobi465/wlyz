@@ -584,3 +584,62 @@ type SystemUpdateLog struct {
 }
 
 func (SystemUpdateLog) TableName() string { return "system_update_log" }
+
+// ============== v0.4.0 数据备份恢复 ==============
+
+// SystemBackupLog 备份审计日志（v0.4.0）
+type SystemBackupLog struct {
+	ID            uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	BackupType    string    `gorm:"size:32;not null;default:manual" json:"backup_type"` // manual / auto / restore_source
+	TriggerBy     uint64    `gorm:"not null;default:0" json:"trigger_by"`
+	TriggerIP     string    `gorm:"size:45;not null;default:''" json:"trigger_ip"`
+	FilePath      string    `gorm:"size:512;not null;default:''" json:"file_path"`
+	FileSize      int64     `gorm:"not null;default:0" json:"file_size"`
+	Checksum      string    `gorm:"size:64;not null;default:''" json:"checksum"`
+	Status        string    `gorm:"size:32;not null;default:pending" json:"status"` // pending / running / success / failed / deleted
+	ErrorMessage  string    `gorm:"size:512;not null;default:''" json:"error_message"`
+	DurationMs    int       `gorm:"not null;default:0" json:"duration_ms"`
+	TablesCount   int       `gorm:"not null;default:0" json:"tables_count"`
+	RowsCount     int64     `gorm:"not null;default:0" json:"rows_count"`
+	RestoredFrom  uint64    `gorm:"not null;default:0" json:"restored_from"`
+	CreatedAt     time.Time `gorm:"index;not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+	UpdatedAt     time.Time `gorm:"not null;default:CURRENT_TIMESTAMP;ON UPDATE:CURRENT_TIMESTAMP" json:"updated_at"`
+}
+
+func (SystemBackupLog) TableName() string { return "system_backup_log" }
+
+// ============== v0.4.0 监控告警 ==============
+
+// SystemMetric 系统指标时序数据（v0.4.0）
+type SystemMetric struct {
+	ID          uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	MetricName  string    `gorm:"size:64;not null" json:"metric_name"` // cpu_usage/memory_usage/disk_usage/qps/verify_count/online_devices/error_rate
+	MetricValue float64   `gorm:"not null" json:"metric_value"`
+	MetricUnit  string    `gorm:"size:16;not null;default:''" json:"metric_unit"` // %/count/ratio/mb
+	LabelsJSON  string    `gorm:"size:512;not null;default:'{}'" json:"labels_json"`
+	CollectedAt time.Time `gorm:"not null;default:CURRENT_TIMESTAMP" json:"collected_at"`
+}
+
+func (SystemMetric) TableName() string { return "system_metric" }
+
+// SystemAlert 告警事件（v0.4.0）
+type SystemAlert struct {
+	ID          uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	AlertRule   string     `gorm:"size:64;not null" json:"alert_rule"` // 与 metric_name 对应
+	Severity    string     `gorm:"size:16;not null;default:warning" json:"severity"` // info/warning/critical/fatal
+	Status      string     `gorm:"size:16;not null;default:firing" json:"status"` // firing/resolved/silenced/acked
+	MetricValue float64    `gorm:"not null" json:"metric_value"`
+	Threshold   float64    `gorm:"not null" json:"threshold"`
+	Operator    string     `gorm:"size:8;not null;default:'>'" json:"operator"` // > / < / >= / <= / ==
+	Message     string     `gorm:"size:512;not null;default:''" json:"message"`
+	LabelsJSON  string     `gorm:"size:512;not null;default:'{}'" json:"labels_json"`
+	FiredAt     time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP" json:"fired_at"`
+	ResolvedAt  *time.Time `json:"resolved_at"`
+	AckedBy     uint64     `gorm:"not null;default:0" json:"acked_by"`
+	AckedAt     *time.Time `json:"acked_at"`
+	NotifySent  int        `gorm:"not null;default:0" json:"notify_sent"` // 0=未发送 1=已发送
+	CreatedAt   time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+	UpdatedAt   time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP;ON UPDATE:CURRENT_TIMESTAMP" json:"updated_at"`
+}
+
+func (SystemAlert) TableName() string { return "system_alert" }

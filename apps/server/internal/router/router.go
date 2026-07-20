@@ -103,6 +103,24 @@ func Register(container *config.Container) *gin.Engine {
 		adminAuth.POST("/update/rollback", handler.AdminRollbackUpdate(deps))
 		adminAuth.GET("/update/logs/:id", handler.AdminGetUpdateLog(deps))
 
+		// 数据备份恢复（v0.4.0 全库 SQL 备份 + SHA-256 校验 + AES-256-GCM 加密 + gzip 压缩 + 过期清理）
+		adminAuth.GET("/backup/status", handler.AdminBackupStatus(deps))
+		adminAuth.POST("/backup/create", handler.AdminCreateBackup(deps))
+		adminAuth.GET("/backup/list", handler.AdminListBackups(deps))
+		adminAuth.GET("/backup/:id", handler.AdminGetBackup(deps))
+		adminAuth.GET("/backup/:id/download", handler.AdminDownloadBackup(deps))
+		adminAuth.POST("/backup/restore", handler.AdminRestoreBackup(deps))
+		adminAuth.POST("/backup/cleanup", handler.AdminCleanupBackups(deps))
+
+		// 监控告警（v0.4.0 系统指标采集 + 阈值告警 + Webhook 通知 + 静默期 + 自动恢复）
+		adminAuth.GET("/monitor/status", handler.AdminMonitorStatus(deps))
+		adminAuth.POST("/monitor/collect", handler.AdminCollectNow(deps))
+		adminAuth.GET("/monitor/metrics", handler.AdminMetricHistory(deps))
+		adminAuth.GET("/monitor/alerts", handler.AdminListAlerts(deps))
+		adminAuth.POST("/monitor/alerts/ack", handler.AdminAckAlert(deps))
+		adminAuth.POST("/monitor/alerts/resend", handler.AdminResendAlert(deps))
+		adminAuth.POST("/monitor/cleanup", handler.AdminCleanupMetrics(deps))
+
 		// 公告管理
 		adminAuth.GET("/notices", handler.AdminListNotices(deps))
 		adminAuth.POST("/notices", handler.AdminCreateNotice(deps))
