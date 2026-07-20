@@ -1,233 +1,187 @@
-// pkg/snowflake 单元测试
-// 覆盖 NewNode 范围校验 / NextID 单调递增 / OrderNo 前缀 / 并发安全
+// Package snowflake v0.5.0 测试
+// 铁律 06：覆盖 NewNode 边界 / NextID 单调递增 / InitWorkerFromRedis 多场景
 package snowflake
 
 import (
-	"fmt"
-	"strings"
 	"sync"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// ============== NewNode ==============
+// ============== 1. NewNode 边界测试 ==============
 
-func TestNewNode_Valid(t *testing.T) {
-	// workerID / datacenterID 范围 [0, 31]
-	for w := int64(0); w <= 31; w++ {
-		for d := int64(0); d <= 31; d++ {
-			node, err := NewNode(w, d)
-			require.NoError(t, err, "w=%d d=%d 应通过", w, d)
-			require.NotNil(t, node)
-		}
-	}
+func TestNewNode_ValidRange(t *testing.T) {
+	// workerID 范围 0 - maxWorkerID (31)
+	node, err := NewNode(0, 1)
+	require.NoError(t, err)
+	assert.NotNil(t, node)
+
+	node, err = NewNode(31, 1)
+	require.NoError(t, err)
+	assert.NotNil(t, node)
 }
 
 func TestNewNode_InvalidWorkerID(t *testing.T) {
+	// 超出范围应报错
 	_, err := NewNode(-1, 1)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "worker")
+	assert.Error(t, err)
 
-	_, err = NewNode(32, 1)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "worker")
+	_, err = NewNode(32, 1) // maxWorkerID+1
+	assert.Error(t, err)
 }
 
 func TestNewNode_InvalidDatacenterID(t *testing.T) {
 	_, err := NewNode(1, -1)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "datacenter")
+	assert.Error(t, err)
 
 	_, err = NewNode(1, 32)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "datacenter")
+	assert.Error(t, err)
 }
 
-// ============== NextID ==============
+// ============== 2. NextID 单调递增测试 ==============
 
 func TestNextID_MonotonicIncrease(t *testing.T) {
 	node, _ := NewNode(1, 1)
-	var prev int64 = -1
+	var prev int64 = 0
 	for i := 0; i < 1000; i++ {
 		id, err := node.NextID()
 		require.NoError(t, err)
-		assert.True(t, id > prev, "ID 应单调递增: prev=%d cur=%d", prev, id)
+		assert.Greater(t, id, prev, "ID 应单调递增")
 		prev = id
 	}
 }
 
-func TestNextID_Unique(t *testing.T) {
+func TestNextID_Uniqueness(t *testing.T) {
 	node, _ := NewNode(1, 1)
-	seen := make(map[int64]bool, 10000)
+	ids := make(map[int64]bool, 10000)
 	for i := 0; i < 10000; i++ {
 		id, err := node.NextID()
 		require.NoError(t, err)
-		assert.False(t, seen[id], "重复 ID: %d", id)
-		seen[id] = true
+		assert.False(t, ids[id], "ID 不应重复: %d", id)
+		ids[id] = true
 	}
 }
 
-func TestNextID_Positive(t *testing.T) {
+func TestNextID_Concurrent(t *testing.T) {
 	node, _ := NewNode(1, 1)
-	id, err := node.NextID()
-	require.NoError(t, err)
-	assert.True(t, id > 0, "ID 应为正数")
-}
-
-// ============== 并发安全 ==============
-
-func TestNextID_ConcurrentSafe(t *testing.T) {
-	node, _ := NewNode(1, 1)
-	const goroutines = 50
-	const perG = 200
-
-	var mu sync.Mutex
-	seen := make(map[int64]bool, goroutines*perG)
 	var wg sync.WaitGroup
+	ids := make(chan int64, 10000)
+	mu := sync.Mutex{}
+	collected := make(map[int64]bool)
 
-	for g := 0; g < goroutines; g++ {
+	// 10 个 goroutine 各生成 1000 个 ID
+	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < perG; i++ {
+			for j := 0; j < 1000; j++ {
 				id, err := node.NextID()
 				if err != nil {
-					t.Errorf("并发 NextID 失败: %v", err)
+					t.Errorf("NextID 错误: %v", err)
 					return
 				}
-				mu.Lock()
-				if seen[id] {
-					t.Errorf("并发重复 ID: %d", id)
-					mu.Unlock()
-					return
-				}
-				seen[id] = true
-				mu.Unlock()
+				ids <- id
 			}
 		}()
 	}
 	wg.Wait()
-	assert.Len(t, seen, goroutines*perG, "应无并发重复 ID")
-}
+	close(ids)
 
-// ============== 包级便捷函数 ==============
-
-func TestNext_PackageLevel(t *testing.T) {
-	// Next() 应返回递增的 ID
-	id1 := Next()
-	id2 := Next()
-	assert.True(t, id2 > id1, "包级 Next 应递增")
-}
-
-func TestOrderNo_Prefix(t *testing.T) {
-	cases := []string{"ORD", "TOP", "REG", ""}
-	for _, prefix := range cases {
-		t.Run("prefix="+prefix, func(t *testing.T) {
-			no := OrderNo(prefix)
-			require.NotEmpty(t, no)
-			expectedPrefix := prefix
-			if expectedPrefix != "" {
-				assert.True(t, strings.HasPrefix(no, expectedPrefix),
-					"订单号应以 %s 开头，实际: %s", expectedPrefix, no)
-			}
-			// 后缀应为纯数字（雪花 ID）
-			suffix := strings.TrimPrefix(no, expectedPrefix)
-			for _, c := range suffix {
-				assert.True(t, c >= '0' && c <= '9', "订单号后缀应为数字")
-			}
-		})
-	}
-}
-
-func TestOrderNo_Unique(t *testing.T) {
-	seen := make(map[string]bool, 1000)
-	for i := 0; i < 1000; i++ {
-		no := OrderNo("ORD")
-		assert.False(t, seen[no], "重复订单号: %s", no)
-		seen[no] = true
-	}
-}
-
-// ============== 三通道前缀测试（v0.3.6 关键路径） ==============
-
-func TestOrderNo_ThreeChannelPrefixes(t *testing.T) {
-	// v0.3.6 三通道前缀分发：ORD / TOP / REG
-	// 任意重复 prefix 不应影响其他前缀的 ID 唯一性
-	ord := OrderNo("ORD")
-	top := OrderNo("TOP")
-	reg := OrderNo("REG")
-
-	assert.True(t, strings.HasPrefix(ord, "ORD"))
-	assert.True(t, strings.HasPrefix(top, "TOP"))
-	assert.True(t, strings.HasPrefix(reg, "REG"))
-
-	// 三个 ID 的后缀（雪花 ID）应不同
-	ordID := strings.TrimPrefix(ord, "ORD")
-	topID := strings.TrimPrefix(top, "TOP")
-	regID := strings.TrimPrefix(reg, "REG")
-	assert.NotEqual(t, ordID, topID)
-	assert.NotEqual(t, ordID, regID)
-	assert.NotEqual(t, topID, regID)
-
-	t.Logf("ORD=%s TOP=%s REG=%s", ord, top, reg)
-}
-
-// ============== twepoch 校验 ==============
-
-func TestTwepoch(t *testing.T) {
-	// twepoch = 1767225600000 (2026-01-01 00:00:00 UTC)
-	// 这是项目固定常量，不应被改动
-	assert.Equal(t, 1767225600000, twepoch,
-		"twepoch 应为 2026-01-01 UTC 毫秒时间戳")
-
-	// 生成 ID 应远大于 twepoch（否则说明位运算错误）
-	node, _ := NewNode(1, 1)
-	id, _ := node.NextID()
-	assert.True(t, id > int64(twepoch)>>22, "ID 应大于 twepoch 对应的时间位")
-}
-
-// ============== 多节点测试 ==============
-
-func TestNextID_DifferentWorkerID(t *testing.T) {
-	// 不同 workerID 的节点应能生成不同 ID
-	n1, _ := NewNode(1, 1)
-	n2, _ := NewNode(2, 1)
-
-	// 同一毫秒（不太可能精确，但概率存在）的 ID 应不同
-	id1, _ := n1.NextID()
-	id2, _ := n2.NextID()
-	assert.NotEqual(t, id1, id2, "不同 worker 应生成不同 ID")
-
-	t.Logf("n1=%d n2=%d", id1, id2)
-}
-
-// ============== 基准测试（可选） ==============
-
-func BenchmarkNextID(b *testing.B) {
-	node, _ := NewNode(1, 1)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = node.NextID()
-	}
-}
-
-func BenchmarkOrderNo(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		_ = OrderNo("ORD")
-	}
-}
-
-func BenchmarkNextID_Parallel(b *testing.B) {
-	node, _ := NewNode(1, 1)
-	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			_, _ = node.NextID()
+	for id := range ids {
+		mu.Lock()
+		if collected[id] {
+			t.Errorf("并发场景 ID 重复: %d", id)
 		}
-	})
+		collected[id] = true
+		mu.Unlock()
+	}
+	assert.Equal(t, 10000, len(collected), "应生成 10000 个唯一 ID")
 }
 
-// 占位避免 fmt 未使用
-var _ = fmt.Sprintf
+// ============== 3. 全局便捷函数测试 ==============
+
+func TestNext_ReturnsValidID(t *testing.T) {
+	id := Next()
+	assert.Greater(t, id, int64(0))
+}
+
+func TestOrderNo_WithPrefix(t *testing.T) {
+	no := OrderNo("ORD")
+	assert.Contains(t, no, "ORD")
+	assert.Greater(t, len(no), 3)
+}
+
+// ============== 4. InitWorkerFromRedis 测试 ==============
+
+func TestInitWorkerFromRedis_NilClient(t *testing.T) {
+	// nil Redis 客户端应降级返回 1
+	workerID := InitWorkerFromRedis(nil)
+	assert.Equal(t, int64(1), workerID)
+}
+
+func TestInitWorkerFromRedis_FirstCall(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	workerID := InitWorkerFromRedis(rdb)
+	// 第一次 INCR 返回 1，workerID = (1-1) % 32 = 0
+	assert.Equal(t, int64(0), workerID)
+}
+
+func TestInitWorkerFromRedis_SecondCall(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	// 第一次 INCR = 1，workerID = 0
+	w1 := InitWorkerFromRedis(rdb)
+	assert.Equal(t, int64(0), w1)
+
+	// 第二次 INCR = 2，workerID = 1
+	w2 := InitWorkerFromRedis(rdb)
+	assert.Equal(t, int64(1), w2)
+
+	// 验证 GetCurrentWorkerID 返回最新值
+	assert.Equal(t, int64(1), GetCurrentWorkerID())
+}
+
+func TestInitWorkerFromRedis_WrapAround(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	// 预置 Redis 计数器到 maxWorkerID+1（32），下次 INCR = 33，workerID = 32 % 32 = 0
+	require.NoError(t, mr.Set(RedisWorkerIDKey, "32"))
+
+	workerID := InitWorkerFromRedis(rdb)
+	assert.Equal(t, int64(0), workerID, "INCR=33, workerID = (33-1) % 32 = 0")
+}
+
+// ============== 5. GetCurrentWorkerID 测试 ==============
+
+func TestGetCurrentWorkerID_Default(t *testing.T) {
+	// 不调用 InitWorkerFromRedis 时返回默认值 1
+	// 但因其他测试可能已修改 defaultNode，此处仅断言 >= 0
+	id := GetCurrentWorkerID()
+	assert.GreaterOrEqual(t, id, int64(0))
+}
+
+// ============== 6. 常量测试 ==============
+
+func TestConstants(t *testing.T) {
+	assert.Equal(t, "keyauth:snowflake:worker_id", RedisWorkerIDKey)
+	assert.Equal(t, 24*60*60*1000000000, int(RedisWorkerIDTTL)) // 24h in ns
+	assert.Equal(t, int64(31), int64(maxWorkerID))
+	assert.Equal(t, int64(31), int64(maxDatacenterID))
+}

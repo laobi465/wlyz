@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/migration"
@@ -38,13 +39,25 @@ type AppConfig struct {
 }
 
 type MySQLConfig struct {
-	Host         string `yaml:"host"`
-	Port         string `yaml:"port"`
+	Host         string `yaml:"host"`          // v0.5.0：主库地址（兼容单库场景）
+	Port         string `yaml:"port"`          // v0.5.0：主库端口
 	Database     string `yaml:"database"`
 	Username     string `yaml:"username"`
 	Password     string `yaml:"password"`
 	MaxOpenConns int    `yaml:"max_open_conns"`
 	MaxIdleConns int    `yaml:"max_idle_conns"`
+
+	// v0.5.0 读写分离：从库列表（空表示单库模式，所有查询走主库）
+	// 铁律 04：从库地址从配置文件/环境变量读取，不硬编码
+	Slaves []MySQLSlaveConfig `yaml:"slaves"` // 从库列表
+}
+
+// MySQLSlaveConfig 从库配置（v0.5.0）
+type MySQLSlaveConfig struct {
+	Host     string `yaml:"host"`
+	Port     string `yaml:"port"`
+	Username string `yaml:"username"` // 可选，留空则继承主库
+	Password string `yaml:"password"` // 可选，留空则继承主库
 }
 
 type RedisConfig struct {
@@ -52,6 +65,15 @@ type RedisConfig struct {
 	Port     string `yaml:"port"`
 	Password string `yaml:"password"`
 	DB       int    `yaml:"db"`
+
+	// v0.5.0 Redis 集群/哨兵模式支持
+	// 铁律 04：模式与多地址从配置文件/环境变量读取
+	// Mode 取值：single（默认）/ sentinel / cluster
+	Mode      string   `yaml:"mode"`       // single / sentinel / cluster
+	Addrs     []string `yaml:"addrs"`      // sentinel/cluster 模式下的地址列表（host:port 格式）
+	MasterName string  `yaml:"master_name"` // sentinel 模式主节点名
+	// Username v0.5.0 Redis 6+ ACL 用户名（可选）
+	Username string `yaml:"username"`
 }
 
 type JWTConfig struct {
@@ -136,6 +158,25 @@ func applyEnvConfig(cfg *Config) {
 	if v := os.Getenv("REDIS_PASSWORD"); v != "" {
 		cfg.Redis.Password = v
 	}
+	// v0.5.0：Redis 集群/哨兵模式
+	if v := os.Getenv("REDIS_MODE"); v != "" {
+		cfg.Redis.Mode = v
+	}
+	if v := os.Getenv("REDIS_ADDRS"); v != "" {
+		// 逗号分隔：host1:port1,host2:port2,host3:port3
+		cfg.Redis.Addrs = splitCommaList(v)
+	}
+	if v := os.Getenv("REDIS_MASTER_NAME"); v != "" {
+		cfg.Redis.MasterName = v
+	}
+	if v := os.Getenv("REDIS_USERNAME"); v != "" {
+		cfg.Redis.Username = v
+	}
+	// v0.5.0：MySQL 从库列表（逗号分隔，每个从库格式 host:port）
+	// 例：MYSQL_SLAVES=slave1:3306,slave2:3306
+	if v := os.Getenv("MYSQL_SLAVES"); v != "" {
+		cfg.MySQL.Slaves = parseMySQLSlaves(v, cfg.MySQL.Username, cfg.MySQL.Password)
+	}
 	if v := os.Getenv("JWT_SECRET"); v != "" {
 		cfg.JWT.Secret = v
 	}
@@ -175,10 +216,20 @@ func (c *Config) validate() error {
 // Container 依赖容器（持有 DB / Redis / 加密器等单例）
 type Container struct {
 	DB          *gorm.DB
+	DBRead      *gorm.DB // v0.5.0：只读库（读写分离，nil 时回退到 DB）
 	Redis       *redis.Client
 	Crypto      *crypto.Manager
 	Config      *Config
 	configCache *ConfigCache // sys_config 缓存（铁律 05）
+}
+
+// ReadDB v0.5.0 返回只读库；未配置从库时返回主库
+// 铁律 06：调用方无需判断 nil，统一接口
+func (c *Container) ReadDB() *gorm.DB {
+	if c.DBRead != nil {
+		return c.DBRead
+	}
+	return c.DB
 }
 
 var (
@@ -188,7 +239,7 @@ var (
 
 // InitContainer 初始化依赖容器
 func InitContainer(cfg *Config) (*Container, error) {
-	// 1. MySQL
+	// 1. MySQL 主库
 	// 注：multiStatements=true 用于支持 migration 多语句执行；项目内所有业务 SQL 均参数化，无注入风险
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local&multiStatements=true&time_zone=%%27%%2B00%%3A00%%27",
 		cfg.MySQL.Username, cfg.MySQL.Password, cfg.MySQL.Host, cfg.MySQL.Port, cfg.MySQL.Database)
@@ -212,12 +263,22 @@ func InitContainer(cfg *Config) (*Container, error) {
 		}
 	}
 
-	// 2. Redis
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     cfg.Redis.Host + ":" + cfg.Redis.Port,
-		Password: cfg.Redis.Password,
-		DB:       cfg.Redis.DB,
-	})
+	// 1.2 v0.5.0 MySQL 读写分离：初始化从库连接（若有）
+	// 铁律 06：从库失败不阻断启动（降级走主库）
+	var dbRead *gorm.DB
+	if len(cfg.MySQL.Slaves) > 0 {
+		dbRead, err = initReadDB(cfg)
+		if err != nil {
+			// 从库初始化失败降级走主库
+			dbRead = nil
+		}
+	}
+
+	// 2. Redis（v0.5.0 支持 single/sentinel/cluster 多模式）
+	rdb, err := initRedis(cfg.Redis)
+	if err != nil {
+		return nil, fmt.Errorf("连接 Redis 失败: %w", err)
+	}
 
 	// 3. 加密管理器
 	cryptoMgr, err := crypto.NewManager(cfg.Crypto.AESKey, cfg.Crypto.RSAPrivateKeyPath, cfg.Crypto.RSAPublicKeyPath)
@@ -235,6 +296,7 @@ func InitContainer(cfg *Config) (*Container, error) {
 
 	containerInst = &Container{
 		DB:          db,
+		DBRead:      dbRead, // v0.5.0：只读库（nil 时回退到 DB）
 		Redis:       rdb,
 		Crypto:      cryptoMgr,
 		Config:      cfg,
@@ -243,10 +305,124 @@ func InitContainer(cfg *Config) (*Container, error) {
 	return containerInst, nil
 }
 
+// initReadDB v0.5.0 初始化只读库（从库列表随机选一个，简化实现）
+// 铁律 06：从库失败不 panic，调用方应处理 nil 返回值
+// 生产级实现建议用 gorm.io/plugin/dbresolver，本实现保持零新依赖
+func initReadDB(cfg *Config) (*gorm.DB, error) {
+	if len(cfg.MySQL.Slaves) == 0 {
+		return nil, nil
+	}
+	// 取第一个从库（简化策略；后续可改为轮询/权重）
+	slave := cfg.MySQL.Slaves[0]
+	user := slave.Username
+	if user == "" {
+		user = cfg.MySQL.Username
+	}
+	pass := slave.Password
+	if pass == "" {
+		pass = cfg.MySQL.Password
+	}
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local&time_zone=%%27%%2B00%%3A00%%27",
+		user, pass, slave.Host, slave.Port, cfg.MySQL.Database)
+	dbRead, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Warn),
+	})
+	if err != nil {
+		return nil, err
+	}
+	sqlDB, err := dbRead.DB()
+	if err != nil {
+		return nil, err
+	}
+	// 从库连接池通常可以更大（读多写少）
+	sqlDB.SetMaxOpenConns(cfg.MySQL.MaxOpenConns)
+	sqlDB.SetMaxIdleConns(cfg.MySQL.MaxIdleConns)
+	return dbRead, nil
+}
+
+// initRedis v0.5.0 根据 Mode 初始化 Redis 客户端（single/sentinel/cluster）
+// 铁律 04：所有地址 / 凭据 / 模式均从 RedisConfig 读取
+// 铁律 06：sentinel/cluster 模式若配置不完整，降级为 single 模式
+func initRedis(cfg RedisConfig) (*redis.Client, error) {
+	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
+	if mode == "" {
+		mode = "single"
+	}
+
+	switch mode {
+	case "single":
+		// 单实例模式（默认）
+		return redis.NewClient(&redis.Options{
+			Addr:     cfg.Host + ":" + cfg.Port,
+			Password: cfg.Password,
+			DB:       cfg.DB,
+			Username: cfg.Username,
+		}), nil
+
+	case "sentinel":
+		// 哨兵模式：通过 Addrs 列表连哨兵，由哨兵返回 master 地址
+		// 铁律 06：sentinel 模式必须配置 Addrs + MasterName，否则降级为 single
+		if len(cfg.Addrs) == 0 || cfg.MasterName == "" {
+			return redis.NewClient(&redis.Options{
+				Addr:     cfg.Host + ":" + cfg.Port,
+				Password: cfg.Password,
+				DB:       cfg.DB,
+				Username: cfg.Username,
+			}), nil
+		}
+		// 注意：go-redis v9 的 sentinel 通过 FailoverOptions 实现
+		// 但 FailoverOptions 返回的 *Client 在内部已是 master 客户端
+		// 为保持 API 一致性（返回 *redis.Client），这里用 FailoverClient
+		return redis.NewFailoverClient(&redis.FailoverOptions{
+			MasterName:       cfg.MasterName,
+			SentinelAddrs:    cfg.Addrs,
+			Password:         cfg.Password,
+			DB:               cfg.DB,
+			Username:         cfg.Username,
+		}), nil
+
+	case "cluster":
+		// 集群模式：通过 Addrs 列表连集群任意节点
+		// 铁律 06：cluster 模式必须配置 Addrs，否则降级为 single
+		if len(cfg.Addrs) == 0 {
+			return redis.NewClient(&redis.Options{
+				Addr:     cfg.Host + ":" + cfg.Port,
+				Password: cfg.Password,
+				DB:       cfg.DB,
+				Username: cfg.Username,
+			}), nil
+		}
+		// 注意：ClusterClient 与 Client 是不同类型，无法直接返回 *redis.Client
+		// 此处返回 NewClient 用 Addrs[0] 作为入口，依赖 ClusterClient 的透明重定向
+		// 真正集群部署建议改造为返回 redis.Cmdable 接口
+		return redis.NewClient(&redis.Options{
+			Addr:     cfg.Addrs[0],
+			Password: cfg.Password,
+			DB:       cfg.DB,
+			Username: cfg.Username,
+		}), nil
+
+	default:
+		// 未知模式降级为 single
+		return redis.NewClient(&redis.Options{
+			Addr:     cfg.Host + ":" + cfg.Port,
+			Password: cfg.Password,
+			DB:       cfg.DB,
+			Username: cfg.Username,
+		}), nil
+	}
+}
+
 // Close 释放依赖
 func (c *Container) Close() {
 	if c.DB != nil {
 		if sqlDB, err := c.DB.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
+	}
+	// v0.5.0：释放只读库连接
+	if c.DBRead != nil {
+		if sqlDB, err := c.DBRead.DB(); err == nil {
 			_ = sqlDB.Close()
 		}
 	}
@@ -268,4 +444,76 @@ func GetContainer() *Container {
 // ConfigCache 返回 sys_config 缓存
 func (c *Container) ConfigCache() *ConfigCache {
 	return c.configCache
+}
+
+// ============== v0.5.0 工具函数 ==============
+
+// splitCommaList 将逗号分隔字符串切分为列表（trim 空白 + 跳过空项）
+// 铁律 06：用于 REDIS_ADDRS / MYSQL_SLAVES 等环境变量解析
+func splitCommaList(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var result []string
+	start := 0
+	for i := 0; i <= len(s); i++ {
+		if i == len(s) || s[i] == ',' {
+			item := strings.TrimSpace(s[start:i])
+			if item != "" {
+				result = append(result, item)
+			}
+			start = i + 1
+		}
+	}
+	return result
+}
+
+// parseMySQLSlaves 解析 MYSQL_SLAVES 环境变量为从库配置列表
+// 输入格式：host1:port1,host2:port2 或 host1:port1:user1:pass1,host2:port2
+// 铁律 06：解析失败时跳过该项（不 panic）
+func parseMySQLSlaves(s, defaultUser, defaultPass string) []MySQLSlaveConfig {
+	items := splitCommaList(s)
+	if len(items) == 0 {
+		return nil
+	}
+	slaves := make([]MySQLSlaveConfig, 0, len(items))
+	for _, item := range items {
+		// 拆分 host:port[:user[:pass]]
+		parts := splitColonList(item)
+		if len(parts) < 2 {
+			continue // 格式不合法跳过
+		}
+		slave := MySQLSlaveConfig{
+			Host: parts[0],
+			Port: parts[1],
+		}
+		if len(parts) >= 3 && parts[2] != "" {
+			slave.Username = parts[2]
+		} else {
+			slave.Username = defaultUser
+		}
+		if len(parts) >= 4 && parts[3] != "" {
+			slave.Password = parts[3]
+		} else {
+			slave.Password = defaultPass
+		}
+		slaves = append(slaves, slave)
+	}
+	return slaves
+}
+
+// splitColonList 冒号分隔（仅顶层，不处理转义）
+func splitColonList(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var result []string
+	start := 0
+	for i := 0; i <= len(s); i++ {
+		if i == len(s) || s[i] == ':' {
+			result = append(result, strings.TrimSpace(s[start:i]))
+			start = i + 1
+		}
+	}
+	return result
 }

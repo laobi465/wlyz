@@ -82,8 +82,8 @@
 |---|---|
 | 前端 | Vue3 + TypeScript + Element Plus + Vite + Pinia |
 | 后端 | Go 1.22 + Gin + GORM |
-| 数据库 | MySQL 8.0 + Redis 7 |
-| 部署 | Docker Compose + 宝塔面板 Docker |
+| 数据库 | MySQL 8.0（v0.5.0 支持主从读写分离）+ Redis 7（v0.5.0 支持 single/sentinel/cluster 三模式） |
+| 部署 | Docker Compose + 宝塔面板 Docker；v0.5.0 支持多实例水平扩展（snowflake workerID Redis 协调分配） |
 | 反代 | Nginx + Let's Encrypt |
 | 监控 | Prometheus + Grafana（v0.4.x 已集成，docker compose --profile monitoring 启用） |
 | 日志 | Loki + Promtail（可选） |

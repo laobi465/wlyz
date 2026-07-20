@@ -16,6 +16,7 @@ import (
 	"github.com/your-org/keyauth-saas/apps/server/internal/handler"
 	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/router"
+	"github.com/your-org/keyauth-saas/apps/server/pkg/snowflake"
 )
 
 // @title KeyAuth SaaS API
@@ -48,6 +49,12 @@ func main() {
 		log.Fatalf("[FATAL] 初始化依赖失败: %v", err)
 	}
 	defer container.Close()
+
+	// 3.1 v0.5.0 多实例无状态化：通过 Redis 协调分配 snowflake workerID
+	// 单实例部署无需此步（默认 workerID=1）；多实例部署时每个实例分配不同 workerID 避免冲突
+	// 铁律 06：Redis 不可用时降级为默认 workerID，不阻断启动
+	workerID := snowflake.InitWorkerFromRedis(container.Redis)
+	log.Printf("[INFO] snowflake workerID = %d", workerID)
 
 	// 4. 注册路由
 	engine := router.Register(container)

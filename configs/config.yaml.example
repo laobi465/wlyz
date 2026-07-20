@@ -17,12 +17,30 @@ mysql:
   password: ""      # 从环境变量 MYSQL_PASSWORD 传入
   max_open_conns: 100
   max_idle_conns: 20
+  # v0.5.0 读写分离：从库列表（留空表示单库模式）
+  # 也可通过环境变量 MYSQL_SLAVES=slave1:3306,slave2:3306 传入
+  slaves:
+    - host: mysql-slave1
+      port: 3306
+      # username/password 留空则继承主库
+    - host: mysql-slave2
+      port: 3306
 
 redis:
   host: redis
   port: 6379
   password: ""      # 从环境变量 REDIS_PASSWORD 传入
   db: 0
+  # v0.5.0 Redis 多模式支持（single / sentinel / cluster）
+  # mode: single    # 默认单实例模式
+  # mode: sentinel  # 哨兵模式（需配置 addrs + master_name）
+  # mode: cluster   # 集群模式（需配置 addrs）
+  # addrs:          # sentinel/cluster 模式的地址列表
+  #   - sentinel1:26379
+  #   - sentinel2:26379
+  #   - sentinel3:26379
+  # master_name: mymaster  # sentinel 模式必填
+  # username: ""           # Redis 6+ ACL 用户名（可选）
 
 jwt:
   secret: ""                # 必填：通过 JWT_SECRET 环境变量传入

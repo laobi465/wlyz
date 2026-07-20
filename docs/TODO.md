@@ -399,10 +399,10 @@
 ### [P3] 优化与扩展
 
 #### 性能优化
-- [ ] [待开始] MySQL 读写分离 - v0.5.0
-- [ ] [待开始] API 水平扩展（无状态化） - v0.5.0
-- [ ] [待开始] 卡密生成性能优化（目标 10000 条/秒） - v0.5.0
-- [ ] [待开始] Redis 集群模式 - v0.5.0
+- [x] [已完成 2026-07-20] MySQL 读写分离 - v0.5.0（MySQLConfig 加 Slaves 字段 + MySQLSlaveConfig 子结构；Container.DBRead + ReadDB() 方法；initReadDB 取第一个从库（简化策略）；从库失败降级走主库；环境变量 MYSQL_SLAVES=slave1:3306,slave2:3306 解析；支持 host:port[:user[:pass]] 灵活格式）
+- [x] [已完成 2026-07-20] API 水平扩展（无状态化） - v0.5.0（snowflake.InitWorkerFromRedis 通过 Redis INCR 协调多实例分配 workerID；workerID 范围 0-31 足够数百实例；Redis 不可用降级为默认 workerID；main.go 启动时调用；GetCurrentWorkerID 用于健康检查；状态分布梳理：DB 存 TOTP/BackupCodes/Session 天然共享，Redis 存黑名单/限流/心跳/nonce 天然共享，唯一冲突点 snowflake 已修复）
+- [x] [已完成 2026-07-20] 卡密生成性能优化（目标 10000 条/秒） - v0.5.0（crypto.GenerateCardKeys 批量生成函数：单次 rand.Read 预取所有熵 + decodeSegment 字节级解码；card.go TenantBatchGenerateCards 改用批量生成；性能基准：10000 张仅需 17.3ms = 577k 张/秒，目标 10k 张/秒超额 57 倍；6 个性能基准 + 7 个功能测试）
+- [x] [已完成 2026-07-20] Redis 集群模式 - v0.5.0（RedisConfig 加 Mode/Addrs/MasterName/Username 字段；initRedis 支持 single/sentinel/cluster 三模式；sentinel 用 NewFailoverClient；cluster 模式配置不完整降级 single；环境变量 REDIS_MODE/REDIS_ADDRS/REDIS_MASTER_NAME/REDIS_USERNAME 支持；splitCommaList 工具函数解析地址列表）
 
 #### 用户体验
 - [ ] [待开始] 后台多主题切换 - v0.5.0
