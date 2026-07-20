@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/your-org/keyauth-saas/apps/server/internal/grayscale"
 	"github.com/your-org/keyauth-saas/apps/server/internal/heartbeat"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
@@ -598,16 +599,23 @@ func TenantListVersions(deps *Deps) gin.HandlerFunc {
 
 // ============== 9. 创建版本 ==============
 
-// createVersionReq 创建版本请求
+// createVersionReq 创建版本请求（v0.4.0 升级：含灰度发布字段）
 type createVersionReq struct {
-	AppID       uint64 `json:"app_id" binding:"required"`
-	Version     string `json:"version" binding:"required,min=1,max=32"`
-	Channel     string `json:"channel" binding:"omitempty,oneof=stable beta dev"`
-	MinVersion  string `json:"min_version" binding:"omitempty,max=32"`
-	DownloadURL string `json:"download_url" binding:"omitempty,max=255"`
-	ForceUpdate bool   `json:"force_update"`
-	UpdateLog   string `json:"update_log" binding:"omitempty,max=5000"`
-	Published   bool   `json:"published"`
+	AppID              uint64  `json:"app_id" binding:"required"`
+	Version            string  `json:"version" binding:"required,min=1,max=32"`
+	Channel            string  `json:"channel" binding:"omitempty,oneof=stable beta dev"`
+	MinVersion         string  `json:"min_version" binding:"omitempty,max=32"`
+	DownloadURL        string  `json:"download_url" binding:"omitempty,max=255"`
+	BackupURL          string  `json:"backup_url" binding:"omitempty,max=255"` // v0.4.0：补全原 DTO 遗漏字段
+	ForceUpdate        bool    `json:"force_update"`
+	UpdateLog          string  `json:"update_log" binding:"omitempty,max=5000"`
+	Published          bool    `json:"published"`
+	// v0.4.0 灰度发布字段
+	ReleaseStrategy    string  `json:"release_strategy" binding:"omitempty,oneof=full grayscale canary"`
+	GrayscaleRate      float64 `json:"grayscale_rate" binding:"omitempty,min=0,max=100"`
+	GrayscalePlatforms string  `json:"grayscale_platforms" binding:"omitempty,max=200"`
+	GrayscaleRegions   string  `json:"grayscale_regions" binding:"omitempty,max=500"`
+	GrayscaleChannels  string  `json:"grayscale_channels" binding:"omitempty,max=200"`
 }
 
 // TenantCreateVersion 创建版本
@@ -644,16 +652,32 @@ func TenantCreateVersion(deps *Deps) gin.HandlerFunc {
 			channel = "stable"
 		}
 
+		// v0.4.0：发布策略默认 full，灰度比例默认从 sys_config 读取
+		strategy := req.ReleaseStrategy
+		if strategy == "" {
+			strategy = grayscale.StrategyFull
+		}
+		rate := req.GrayscaleRate
+		if strategy != grayscale.StrategyFull && rate == 0 {
+			rate = grayscale.DefaultRate(c.Request.Context(), deps.CfgCache)
+		}
+
 		v := &model.AppVersion{
-			TenantID:      tenantID,
-			AppID:         req.AppID,
-			Version:       req.Version,
-			Channel:       channel,
-			MinVersion:    minVersion,
-			DownloadURL:   req.DownloadURL,
-			ForceUpdate:   req.ForceUpdate,
-			UpdateContent: req.UpdateLog,
-			Status:        status,
+			TenantID:           tenantID,
+			AppID:              req.AppID,
+			Version:            req.Version,
+			Channel:            channel,
+			ReleaseStrategy:    strategy,
+			GrayscaleRate:      rate,
+			GrayscalePlatforms: req.GrayscalePlatforms,
+			GrayscaleRegions:   req.GrayscaleRegions,
+			GrayscaleChannels:  req.GrayscaleChannels,
+			MinVersion:         minVersion,
+			DownloadURL:        req.DownloadURL,
+			BackupURL:          req.BackupURL,
+			ForceUpdate:        req.ForceUpdate,
+			UpdateContent:      req.UpdateLog,
+			Status:             status,
 		}
 		if err := deps.DB.Create(v).Error; err != nil {
 			middleware.Fail(c, http.StatusInternalServerError, 5001, "创建版本失败: "+err.Error())
@@ -663,7 +687,120 @@ func TenantCreateVersion(deps *Deps) gin.HandlerFunc {
 	}
 }
 
-// ============== 10. 删除版本 ==============
+// ============== 10. 更新版本（v0.4.0 新增） ==============
+
+// updateVersionReq 更新版本请求（v0.4.0 新增）
+// 不允许修改 version/app_id（避免破坏已发布客户端的版本判断）
+type updateVersionReq struct {
+	MinVersion         string  `json:"min_version" binding:"omitempty,max=32"`
+	DownloadURL        string  `json:"download_url" binding:"omitempty,max=255"`
+	BackupURL          string  `json:"backup_url" binding:"omitempty,max=255"`
+	ForceUpdate        *bool   `json:"force_update"`
+	UpdateLog          string  `json:"update_log" binding:"omitempty,max=5000"`
+	Published          *bool   `json:"published"`
+	ReleaseStrategy    string  `json:"release_strategy" binding:"omitempty,oneof=full grayscale canary"`
+	GrayscaleRate      float64 `json:"grayscale_rate" binding:"omitempty,min=0,max=100"`
+	GrayscalePlatforms *string `json:"grayscale_platforms" binding:"omitempty,max=200"`
+	GrayscaleRegions   *string `json:"grayscale_regions" binding:"omitempty,max=500"`
+	GrayscaleChannels  *string `json:"grayscale_channels" binding:"omitempty,max=200"`
+}
+
+// TenantUpdateVersion 更新版本
+// PUT /tenant/versions/:id
+// v0.4.0 新增：支持编辑已创建版本的灰度规则、下载地址、强制更新等
+func TenantUpdateVersion(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tenantID := getTenantID(c)
+		if tenantID == 0 {
+			middleware.Fail(c, http.StatusForbidden, 1003, "无法识别租户身份")
+			return
+		}
+		id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+		if err != nil {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "ID 格式错误")
+			return
+		}
+
+		// 查询版本并校验归属
+		var v model.AppVersion
+		if err := deps.DB.Where("id = ? AND tenant_id = ?", id, tenantID).First(&v).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				middleware.Fail(c, http.StatusNotFound, 1008, "版本不存在或无权访问")
+				return
+			}
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败")
+			return
+		}
+
+		var req updateVersionReq
+		if err := c.ShouldBindJSON(&req); err != nil {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "参数错误: "+err.Error())
+			return
+		}
+
+		// 构建 updates map（仅更新非空字段）
+		updates := map[string]interface{}{}
+		if req.MinVersion != "" {
+			updates["min_version"] = req.MinVersion
+		}
+		if req.DownloadURL != "" {
+			updates["download_url"] = req.DownloadURL
+		}
+		if req.BackupURL != "" {
+			updates["backup_url"] = req.BackupURL
+		}
+		if req.ForceUpdate != nil {
+			updates["force_update"] = *req.ForceUpdate
+		}
+		if req.UpdateLog != "" {
+			updates["update_content"] = req.UpdateLog
+		}
+		if req.Published != nil {
+			if *req.Published {
+				updates["status"] = "active"
+			} else {
+				updates["status"] = "draft"
+			}
+		}
+		if req.ReleaseStrategy != "" {
+			updates["release_strategy"] = req.ReleaseStrategy
+			// 切换到灰度策略且未指定比例时，用默认比例
+			if req.ReleaseStrategy != grayscale.StrategyFull && req.GrayscaleRate == 0 && v.GrayscaleRate == 0 {
+				updates["grayscale_rate"] = grayscale.DefaultRate(c.Request.Context(), deps.CfgCache)
+			}
+		}
+		if req.GrayscaleRate > 0 {
+			updates["grayscale_rate"] = req.GrayscaleRate
+		}
+		if req.GrayscalePlatforms != nil {
+			updates["grayscale_platforms"] = *req.GrayscalePlatforms
+		}
+		if req.GrayscaleRegions != nil {
+			updates["grayscale_regions"] = *req.GrayscaleRegions
+		}
+		if req.GrayscaleChannels != nil {
+			updates["grayscale_channels"] = *req.GrayscaleChannels
+		}
+
+		if len(updates) == 0 {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "无更新字段")
+			return
+		}
+
+		if err := deps.DB.Model(&model.AppVersion{}).Where("id = ? AND tenant_id = ?", id, tenantID).
+			Updates(updates).Error; err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "更新失败: "+err.Error())
+			return
+		}
+
+		// 重新查询返回最新数据
+		var updated model.AppVersion
+		_ = deps.DB.Where("id = ? AND tenant_id = ?", id, tenantID).First(&updated).Error
+		middleware.Success(c, updated)
+	}
+}
+
+// ============== 11. 删除版本 ==============
 
 // TenantDeleteVersion 删除版本
 // DELETE /tenant/versions/:id

@@ -92,6 +92,10 @@ func Register(container *config.Container) *gin.Engine {
 		adminAuth.PUT("/agents/:id", handler.AdminUpdateAgent(deps))
 		adminAuth.GET("/agents/:id/tree", handler.AdminGetAgentTree(deps)) // v0.4.0 多级代理树
 
+		// 版本管理（v0.4.0 灰度发布：跨租户查询）
+		adminAuth.GET("/versions", handler.AdminListVersions(deps))
+		adminAuth.GET("/versions/:id", handler.AdminGetVersion(deps))
+
 		// 公告管理
 		adminAuth.GET("/notices", handler.AdminListNotices(deps))
 		adminAuth.POST("/notices", handler.AdminCreateNotice(deps))
@@ -184,6 +188,7 @@ func Register(container *config.Container) *gin.Engine {
 		// 版本管理（v0.3.0）
 		tenantAuth.GET("/versions", handler.TenantListVersions(deps))
 		tenantAuth.POST("/versions", handler.TenantCreateVersion(deps))
+		tenantAuth.PUT("/versions/:id", handler.TenantUpdateVersion(deps)) // v0.4.0 灰度发布：编辑版本灰度规则
 		tenantAuth.DELETE("/versions/:id", handler.TenantDeleteVersion(deps))
 
 		// 代理管理（v0.3.0）

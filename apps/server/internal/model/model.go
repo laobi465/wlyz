@@ -237,16 +237,21 @@ func (AppCloudVar) TableName() string { return "app_cloud_var" }
 // AppVersion 应用版本
 type AppVersion struct {
 	BaseModel
-	TenantID        uint64 `gorm:"index;not null" json:"tenant_id"`
-	AppID           uint64 `gorm:"index;not null" json:"app_id"`
-	Version         string `gorm:"size:32;not null" json:"version"`
-	Channel         string `gorm:"size:32;not null;default:stable" json:"channel"` // stable/beta/dev
-	MinVersion      string `gorm:"size:32;not null" json:"min_version"`
-	DownloadURL     string `gorm:"size:255" json:"download_url"`
-	BackupURL       string `gorm:"size:255" json:"backup_url"`
-	ForceUpdate     bool   `gorm:"not null;default:false" json:"force_update"`
-	UpdateContent   string `gorm:"type:text" json:"update_content"`
-	Status          string `gorm:"size:32;not null;default:active" json:"status"`
+	TenantID           uint64 `gorm:"index;not null" json:"tenant_id"`
+	AppID              uint64 `gorm:"index;not null" json:"app_id"`
+	Version            string `gorm:"size:32;not null" json:"version"`
+	Channel            string `gorm:"size:32;not null;default:stable" json:"channel"` // stable/beta/dev
+	ReleaseStrategy    string `gorm:"size:32;not null;default:full" json:"release_strategy"`     // v0.4.0：full=全量 / grayscale=灰度 / canary=金丝雀
+	GrayscaleRate      float64 `gorm:"type:decimal(5,2);not null;default:0" json:"grayscale_rate"` // v0.4.0：灰度比例 0-100，grayscale 策略下生效
+	GrayscalePlatforms string `gorm:"size:200;not null;default:''" json:"grayscale_platforms"`    // v0.4.0：逗号分隔 windows/macos/linux/android/ios，空=不限
+	GrayscaleRegions   string `gorm:"size:500;not null;default:''" json:"grayscale_regions"`      // v0.4.0：逗号分隔省/州代码，空=不限
+	GrayscaleChannels  string `gorm:"size:200;not null;default:''" json:"grayscale_channels"`     // v0.4.0：逗号分隔 stable/beta/dev，空=不限
+	MinVersion         string `gorm:"size:32;not null" json:"min_version"`
+	DownloadURL        string `gorm:"size:255" json:"download_url"`
+	BackupURL          string `gorm:"size:255" json:"backup_url"`
+	ForceUpdate        bool   `gorm:"not null;default:false" json:"force_update"`
+	UpdateContent      string `gorm:"type:text" json:"update_content"`
+	Status             string `gorm:"size:32;not null;default:active" json:"status"`
 }
 
 func (AppVersion) TableName() string { return "app_version" }

@@ -1118,6 +1118,95 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 - v0.3.x 老邀请码升级后 `creator_type='tenant'` + `creator_agent_id=0`，新代理仍注册为一级
 - 跨级佣金流水类型 `cross_commission` 与既有 `commission` / `recharge` / `withdraw` 类型独立，互不干扰
 
+### 7.4.2 灰度发布体系规范（v0.4.0）
+
+#### 数据模型
+
+- `app_version.release_strategy VARCHAR(32) NOT NULL DEFAULT 'full'`：发布策略（`full` / `grayscale` / `canary`）
+- `app_version.grayscale_rate DECIMAL(5,2) NOT NULL DEFAULT 0.00`：命中比例 0~100
+- `app_version.grayscale_platforms VARCHAR(200)`：逗号分隔平台白名单（空=不限）
+- `app_version.grayscale_regions VARCHAR(500)`：逗号分隔地区白名单（空=不限）
+- `app_version.grayscale_channels VARCHAR(200)`：逗号分隔渠道白名单（空=默认 `stable`）
+- 复合索引 `idx_app_status_strategy`（app_id, status, release_strategy）加速客户端灰度匹配
+
+#### 配置项（sys_config，可后台调整）
+
+| Key | 默认值 | 含义 |
+|---|---|---|
+| `app.version.grayscale.enabled` | `1` | 灰度全局开关（0=关闭后所有 grayscale/canary 策略回退到 full 行为） |
+| `app.version.grayscale.default_rate` | `10.00` | 新建灰度版本未指定 rate 时的默认比例 |
+| `app.version.grayscale.hash_salt` | `keyauth-grayscale-v040` | Hash 桶算法盐值，更换可全量重排灰度命中（用于紧急清退灰度） |
+
+#### 匹配算法（`grayscale.Match`）
+
+调用时机：`ClientVersion` 查询出所有 active 版本后，按 id DESC 遍历调用 `Match`，首个命中即返回。
+
+```
+7 步过滤链：
+1. version == nil → 未命中（Reason="version_not_found"）
+2. release_strategy == "full" → 命中（Reason="full_strategy"）
+3. strategy in ("grayscale","canary") AND enabled=false → 命中（Reason="grayscale_disabled_fallback"）
+4. grayscale_platforms 非空 AND client.Platform 不在 ParseList 列表（小写）→ 未命中（Reason="platform_filtered"）
+5. ParseList(grayscale_channels) 非空时默认值="stable"；client.Channel 不在列表 → 未命中（Reason="channel_filtered"）
+6. grayscale_regions 非空 AND client.Region 不在列表 → 未命中（Reason="region_filtered"）
+7. 比例判定：
+   - rate <= 0 → 未命中（Reason="rate_zero"）
+   - rate >= 100 → 命中（Reason="rate_full"）
+   - 0 < rate < 100 → HashBucket(salt, appID, clientID) < rate → 命中（Reason="bucket_hit"）；否则未命中（Reason="bucket_miss"）
+```
+
+#### Hash 桶算法（`grayscale.HashBucket`）
+
+```
+input: salt (string) + appID (uint64) + clientID (string)
+hash := SHA-256(salt + ":" + strconv.FormatUint(appID, 10) + ":" + clientID)
+取 hash 前 4 字节 little-endian uint32
+return uint32 % 100   // 0~99 稳定桶号
+```
+
+特性：
+- **稳定性**：相同 (salt, appID, clientID) 永远返回相同桶号
+- **均匀性**：SHA-256 输出在 0~99 范围内近似均匀分布
+- **可重排**：更换 salt 即可全量重排所有客户端的桶号（紧急清退灰度场景）
+- **可隔离**：appID 参与哈希保证不同应用桶号互不影响
+
+#### 客户端 API（`POST /api/v1/client/version`）
+
+请求扩展字段（v0.3.x 客户端可省略，回退到 client_ip 作为 ClientID）：
+
+| 字段 | 用途 |
+|---|---|
+| `hwid` | 硬件指纹（首选 ClientID） |
+| `device_id` | 设备 ID（次选 ClientID） |
+| `platform` | 客户端平台（如 `windows` / `linux` / `macos` / `android` / `ios`） |
+| `channel` | 发布渠道（默认 `stable`，可传 `beta` / `internal` 等） |
+| `region` | 地区码（如 `cn` / `us` / `eu`） |
+
+响应扩展字段（仅 grayscale/canary 策略命中时返回）：
+
+| 字段 | 含义 |
+|---|---|
+| `release_strategy` | 命中的发布策略（grayscale/canary） |
+| `grayscale_hit` | 是否灰度命中（true） |
+| `grayscale_bucket` | 客户端所在桶号（0~99） |
+| `grayscale_rate` | 命中版本的灰度比例 |
+
+#### 管理端 API
+
+| 路由 | 角色 | 行为 |
+|---|---|---|
+| `GET /api/v1/admin/versions` | 平台超管 | 跨租户查询版本列表（JOIN sys_tenant + app，支持 tenant_id/app_id/channel/release_strategy 筛选） |
+| `GET /api/v1/admin/versions/:id` | 平台超管 | 跨租户查询单版本详情 |
+| `POST /api/v1/tenant/versions` | 开发者 | 创建版本（grayscale/canary 策略 + rate=0 时自动取 `DefaultRate`） |
+| `PUT /api/v1/tenant/versions/:id` | 开发者 | 编辑版本灰度规则（归属校验 + 指针字段可选更新 + 切换到灰度策略 + rate=0 时取 `DefaultRate`） |
+
+#### 兼容性
+
+- v0.3.x 老版本升级后 `release_strategy='full'` + `grayscale_rate=0`，行为等同原「最新 active 版本一刀切」
+- v0.3.x 客户端不传 `hwid`/`device_id` 时，`ClientVersion` 回退到 client_ip 作为 ClientID 桶号
+- 全局开关 `app.version.grayscale.enabled=0` 时所有 grayscale/canary 版本回退 full 命中（紧急关停灰度）
+- 更换 `hash_salt` 可全量重排灰度命中（紧急清退/放量场景）
+
 ### 7.5 测试规范（v0.3.6）
 
 #### 测试栈
@@ -1128,7 +1217,7 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 | 内存 Redis | `github.com/alicebob/miniredis/v2` | v2.38.0 |
 | SQLite 内存库 | `gorm.io/driver/sqlite` + `github.com/mattn/go-sqlite3` | v1.6.0 + v1.14.22 |
 
-#### 测试覆盖（11 个包，0 失败）
+#### 测试覆盖（12 个包，0 失败）
 
 | 包 | 测试文件 | 覆盖范围 |
 |---|---|---|
@@ -1144,6 +1233,7 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 | `internal/logger` | `logger_test.go` | v0.4.0 slog 结构化日志：parseLevel 4 级别 + 大小写 + 默认值 / JSON 格式 level/msg/字段断言 / level 过滤（warn 时不输出 debug/info）/ text 格式 msg 含空格自动加引号 / L() 非 nil / 空 Options 不 panic（6 个测试） |
 | `internal/handler` | `profile_2fa_test.go` | v0.4.0 2FA 备用码 DB 持久化：loadUserBackupCodes DB 读取 + Redis 回退 + 用户不存在 + tenant/agent role 分支 + 不支持角色 / updateUserBackupCodes 清空 / consumeBackupCode 消费成功 + 消费最后一个 + 输入不匹配 + 空输入 + 无备用码 + 从 Redis 回退消费 / twoFABackupKey + twoFASetupKey 格式（13 个测试） |
 | `internal/multilevel` | `multilevel_test.go` | v0.4.0 多级代理：DistributeCrossCommission（level 1/2/3 + 父级禁用跳过 + 零/负佣金 + nil agent + 自定义比例，7 个）/ CanCreateSubordinate（level vs max_level 矩阵 + agent_can_create flag + 禁用 + nil，6 个）/ ComputeSubordinateLevel（tenant 邀请码 → 1 / agent 邀请码 → 2 / level 3 超限 / 创建者不存在 / nil，5 个）/ BuildAgentTree（三级树 + maxDepth=0 + 不存在 + 租户隔离，4 个）/ ListSubordinates（单层 + 无子级 + 租户隔离，3 个）/ 边界（parent 链断裂，2 个）（27 个测试） |
+| `internal/grayscale` | `grayscale_test.go` | v0.4.0 灰度发布：Match full 策略（3）+ 全局开关（1）+ 平台过滤（4）+ 渠道过滤（3）+ 地区过滤（3）+ 比例（4）+ HashBucket 稳定性/范围/salt/appID（4）+ ParseList 空/单/多/空格/大小写/仅逗号（6）+ DefaultRate/IsEnabled（4）+ 边界匿名 clientID/canary/多过滤全过/多过滤失败（4）（33 个测试） |
 
 #### 测试原则
 
@@ -1161,6 +1251,7 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 12. **结构化日志测试（v0.4.0）**：`internal/logger/logger_test.go` 用 `bytes.Buffer` 临时替换全局 logger 输出验证 JSON / text 格式；`atomic.Value` 保证并发安全切换；level 过滤测试验证 `level=warn` 时 debug/info 不输出；`TestInit_DefaultFallback` 验证空 Options 不 panic（保证 Init 容错性）
 13. **全语言 SDK 签名对齐测试（v0.4.0）**：`pkg/crypto/sign_alignment_test.go` 从 3 语言扩展到 7 语言（新增 Go / Java / C++ / C# + 易语言 Windows-only Skip）；解释器模式（Python/Node/PHP/Go）+ 编译型模式（C++ 用 g++ 编译到 t.TempDir() + 运行）+ Java 单文件源码模式（JDK 11+）+ C# dotnet 临时项目模式；运行时缺失自动 `t.Skip` 不强制依赖；`javaSupportsSHA512_256` 检测 JDK 版本，仅 JDK 17+ 强断言签名匹配（JDK < 17 回退 HmacSHA256 时仅 t.Logf 提示，不掩盖差异）；`TestSignAlignment_NewLanguages` 校验 5 个新 SDK 的目录结构完整性（不依赖运行时，CI 友好）
 14. **多级代理测试（v0.4.0）**：`internal/multilevel/multilevel_test.go` 用 SQLite in-memory（4 表 AutoMigrate：agent/agent_invite_code/agent_balance_log/sys_config）+ miniredis + 真实 `ConfigCache`（预置 sys_config 4 项 + overrides 覆盖）；关键场景：DistributeCrossCommission 沿 parent_id 链向上分润（level 1 无父级 / level 2 父级 50% / level 3 父级 + 祖父级 / 父级禁用跳过 / 零/负佣金 / nil agent / 自定义比例）；CanCreateSubordinate（level vs max_level 矩阵 + agent_can_create flag + 禁用 + nil）；ComputeSubordinateLevel（tenant 邀请码 → 1 / agent 邀请码 → 2 / level 3 创建者超限 / 创建者不存在 / nil）；BuildAgentTree（三级树 + maxDepth=0 + 不存在 + 租户隔离）；ListSubordinates（单层 + 无子级 + 租户隔离）；边界场景（parent 链断裂：parent_id 指向已删除代理时停止向上）；测试修复了一个真实算法 bug（基于 `current.Level` 误判比例 → 改为基于 `agent.Level` + depth 判断）
+15. **灰度发布测试（v0.4.0）**：`internal/grayscale/grayscale_test.go` 用 SQLite in-memory（app_version + sys_config AutoMigrate）+ miniredis + 真实 `ConfigCache`（预置 sys_config 3 项 + overrides 覆盖）；关键场景：Match 7 步过滤链全路径覆盖（full 策略 + 全局开关回退 + 平台/渠道/地区过滤 + 比例 0/100/部分桶命中/未命中）；HashBucket 稳定性（同输入同输出 + 范围 0-99 + 不同 salt 不同桶 + 不同 appID 不同桶）；ParseList 边界（空 / 单 / 多 / 含空格 / 混合大小写 / 仅逗号返回空非 nil）；DefaultRate / IsEnabled 配置读取 + fallback；边界场景（匿名 clientID 走 client_ip + canary 策略 + 多过滤全过 + 多过滤一过滤失败）；测试栈无网络/无文件 IO，纯函数 + 内存 DB
 
 #### 运行命令
 

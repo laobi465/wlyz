@@ -11,6 +11,114 @@
 
 ## [0.4.0] - 2026-07-20（v0.4.x 迁移项推进）
 
+### [新增] 灰度发布体系（v0.4.x 第七项：三策略 + Hash 桶 + 跨租户查询 + 编辑接口）
+
+#### 背景
+
+- v0.3.x 应用版本仅支持「最新 active 版本一刀切」推送，无法按平台/渠道/地区/比例灰度
+- 商业化诉求：新版本先小范围验证再放量；支持全量（full）/ 灰度（grayscale）/ 金丝雀（canary）三种发布策略
+- TODO.md `[迁移] 灰度发布 → v0.4.x 应用版本灰度推送 + 灰度规则配置（按地区/比例）`
+
+#### 实现
+
+**`migrations/010_v0.4.0_grayscale_release.up.sql`**：
+- `app_version` 表新增 5 字段：
+  - `release_strategy VARCHAR(32) NOT NULL DEFAULT 'full'`（full / grayscale / canary）
+  - `grayscale_rate DECIMAL(5,2) NOT NULL DEFAULT 0.00`（命中比例 0~100）
+  - `grayscale_platforms VARCHAR(200)`（逗号分隔平台白名单，空=不限）
+  - `grayscale_regions VARCHAR(500)`（逗号分隔地区白名单，空=不限）
+  - `grayscale_channels VARCHAR(200)`（逗号分隔渠道白名单，空=默认 stable）
+- 新增复合索引 `idx_app_status_strategy`（app_id, status, release_strategy），加速客户端灰度匹配查询
+- 补齐 `app_version.tenant_id BIGINT NOT NULL DEFAULT 0`（修复 001 init schema 遗漏，model 已有该字段）
+- `sys_config` 新增 3 项：
+  - `app.version.grayscale.enabled` = `1`（灰度全局开关，0=关闭后所有灰度策略回退到 full）
+  - `app.version.grayscale.default_rate` = `10.00`（新建灰度版本未指定 rate 时的默认比例）
+  - `app.version.grayscale.hash_salt` = `keyauth-grayscale-v040`（Hash 桶算法盐值，更换可全量重排灰度命中）
+- 配套 `010_v0.4.0_grayscale_release.down.sql` 回滚（注：tenant_id 不回滚，因 001 schema 遗漏为既有 bug 修复）
+
+**`internal/model/model.go`**：
+- `AppVersion` struct 新增 5 字段（`ReleaseStrategy` / `GrayscaleRate` / `GrayscalePlatforms` / `GrayscaleRegions` / `GrayscaleChannels`）+ gorm 默认值标签
+
+**`internal/grayscale/grayscale.go`**（新建包，核心匹配算法）：
+- `Match(ctx, cfgCache, MatchRequest) MatchResult`：7 步过滤链
+  1. nil version → 未命中
+  2. full 策略 → 直接命中
+  3. grayscale / canary + `app.version.grayscale.enabled=0` → 回退 full 命中
+  4. 平台过滤（`grayscale_platforms` 非空时 client 必须在白名单，大小写不敏感）
+  5. 渠道过滤（空默认 `stable`，client 必须在白名单）
+  6. 地区过滤
+  7. 比例过滤：rate<=0 不命中；rate>=100 命中；rate∈(0,100) 走 Hash 桶
+- `HashBucket(salt string, appID uint64, clientID string) int`：`SHA-256(salt + ":" + appID + ":" + clientID)` 取前 4 字节小端 uint32 % 100，返回 0~99 稳定桶号
+- `ParseList(s string) []string`：逗号分隔解析器（trim 空白 + 转小写 + 去重，返回非 nil 切片）
+- `DefaultRate(ctx, cfgCache) float64`：读取 `app.version.grayscale.default_rate`
+- `IsEnabled(ctx, cfgCache) bool`：读取 `app.version.grayscale.enabled`
+- 常量：`StrategyFull` / `StrategyGrayscale` / `StrategyCanary` + 3 个配置键常量
+- 类型：`MatchRequest{Version, ClientID, Platform, Channel, Region}` / `MatchResult{Matched, Reason, Rate, Bucket}`
+
+**`internal/handler/client.go`**：
+- `ClientVersion` 升级支持灰度匹配
+- 请求 DTO 扩展：新增 `Region` / `Channel` / `HWID` / `DeviceID` 字段
+- 查询改为 `Find`（所有 active 版本按 id DESC 排序）替代原 `First`（单最新）
+- ClientID 解析优先级：`hwid > device_id > client_ip`（保证同一设备稳定命中同一桶号）
+- 遍历候选版本调用 `grayscale.Match`，首个命中即返回
+- 响应：保留原 9 字段 + 新增 `release_strategy` / `grayscale_hit` / `grayscale_bucket` / `grayscale_rate`（仅 grayscale/canary 命中时返回）
+- 全部未命中时返回 `5011 当前无可用版本（未命中灰度规则）`
+
+**`internal/handler/tenant_business.go`**：
+- `createVersionReq` DTO 扩展：新增 `BackupURL` / `ReleaseStrategy` / `GrayscaleRate` / `GrayscalePlatforms` / `GrayscaleRegions` / `GrayscaleChannels`
+- `TenantCreateVersion`：strategy 默认 full；grayscale/canary 且 rate=0 时自动取 `grayscale.DefaultRate()`
+- 新增 `updateVersionReq` struct（指针字段支持可选更新：`*string` / `*float64`）
+- 新增 `TenantUpdateVersion` handler（PUT `/tenant/versions/:id`）：
+  - 归属校验（tenant_id 必须匹配当前租户）
+  - 构建更新 map（仅写入非 nil 字段）
+  - 切换到 grayscale/canary + rate=0 → 自动取 `DefaultRate`
+  - 重新查询并返回完整记录
+
+**`internal/handler/admin_business.go`**：
+- 新增 `adminVersionListItem` struct（嵌入 AppVersion + TenantName + AppName 联表字段）
+- `AdminListVersions`（GET `/admin/versions`）：JOIN sys_tenant + app，支持 tenant_id / app_id / channel / release_strategy 多条件筛选
+- `AdminGetVersion`（GET `/admin/versions/:id`）：单版本详情（跨租户查询，平台超管视角）
+
+**`internal/router/router.go`**：注册 3 条新路由
+- adminAuth: `GET /versions` + `GET /versions/:id`
+- tenantAuth: `PUT /versions/:id`
+
+#### 测试（`internal/grayscale/grayscale_test.go`，33 个用例全 PASS）
+
+- Match full 策略（3 个）：full 始终命中 / 空策略默认 full / nil version
+- Match 全局开关（1 个）：全局禁用时回退 full
+- Match 平台过滤（4 个）：在白名单 / 不在白名单 / 大小写不敏感 / 空平台
+- Match 渠道过滤（3 个）：在白名单 / 不在白名单 / 空默认 stable
+- Match 地区过滤（3 个）：在白名单 / 不在白名单 / 空地区
+- Match 比例（4 个）：rate=0 / rate=100 / 部分桶命中 / 部分桶未命中
+- HashBucket 稳定性（4 个）：稳定同输入同输出 / 范围 0-99 / 不同 salt 不同桶 / 不同 appID 不同桶
+- ParseList（6 个）：空 / 单 / 多 / 含空格 / 混合大小写 / 仅逗号
+- DefaultRate / IsEnabled（4 个）：从配置读取 / fallback / 默认 true / 禁用时 false
+- 边界（4 个）：匿名 clientID / canary 策略 / 多过滤全过 / 多过滤一过滤失败
+
+测试栈：SQLite in-memory（app_version + sys_config AutoMigrate）+ miniredis + 真实 `ConfigCache`（预置 sys_config 3 项 + overrides 覆盖）
+
+#### 铁律遵守
+
+- **铁律 04（无硬编码）**：灰度全局开关 / default_rate / hash_salt 全部从 sys_config 读取；策略名 / 渠道默认值用常量
+- **铁律 05（配置走后端）**：3 项配置可通过后台「系统配置」实时调整（更换 hash_salt 可全量重排灰度命中）
+- **铁律 06（反幻觉）**：Hash 桶算法基于 SHA-256 标准库字节级稳定；测试覆盖正/负/零/边界/兼容全场景；ClientVersion 候选版本遍历匹配首个命中即返回（不预判策略优先级）
+
+#### 兼容性
+
+- v0.3.x 老版本升级后 `release_strategy='full'` + `grayscale_rate=0`，行为等同原「最新 active 版本一刀切」
+- v0.3.x 客户端不传 `region` / `channel` / `hwid` / `device_id` 字段时，ClientVersion 回退到 client_ip 作为 ClientID 进行桶号计算
+- 回滚 SQL：DROP 字段 + 删除 3 项 sys_config；回滚前需确认无活跃灰度版本
+
+#### 验证
+
+- `go test ./internal/grayscale/`：33 个用例全 PASS
+- `go test ./...`：12 个测试包全 PASS（无回归）
+- `go build ./...`：通过
+- `go vet ./...`：0 警告
+
+---
+
 ### [新增] 多级代理体系（v0.4.x 第六项：跨级佣金 + 层级校验 + 代理树）
 
 #### 背景

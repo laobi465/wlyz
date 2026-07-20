@@ -1128,5 +1128,81 @@ func AdminGetAgentTree(deps *Deps) gin.HandlerFunc {
 	}
 }
 
+// ============== v0.4.0 灰度发布：版本管理（超管跨租户查询） ==============
+
+// adminVersionListItem 超管版本列表项（含租户名 + 应用名）
+type adminVersionListItem struct {
+	model.AppVersion
+	TenantName string `json:"tenant_name"`
+	AppName    string `json:"app_name"`
+}
+
+// AdminListVersions GET /api/v1/admin/versions
+// 平台超管跨租户查询所有应用版本（支持 tenant_id/app_id/channel/release_strategy 过滤）
+func AdminListVersions(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		page, pageSize := parsePagination(c)
+
+		q := deps.DB.Table("app_version").
+			Select("app_version.*, sys_tenant.username as tenant_name, app.name as app_name").
+			Joins("LEFT JOIN sys_tenant ON sys_tenant.id = app_version.tenant_id").
+			Joins("LEFT JOIN app ON app.id = app_version.app_id")
+
+		if tenantIDStr := c.Query("tenant_id"); tenantIDStr != "" {
+			tid, _ := strconv.ParseUint(tenantIDStr, 10, 64)
+			q = q.Where("app_version.tenant_id = ?", tid)
+		}
+		if appIDStr := c.Query("app_id"); appIDStr != "" {
+			aid, _ := strconv.ParseUint(appIDStr, 10, 64)
+			q = q.Where("app_version.app_id = ?", aid)
+		}
+		if channel := c.Query("channel"); channel != "" {
+			q = q.Where("app_version.channel = ?", channel)
+		}
+		if strategy := c.Query("release_strategy"); strategy != "" {
+			q = q.Where("app_version.release_strategy = ?", strategy)
+		}
+
+		var total int64
+		q.Count(&total)
+
+		var items []adminVersionListItem
+		if err := q.Order("app_version.id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Scan(&items).Error; err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败: "+err.Error())
+			return
+		}
+
+		middleware.Success(c, gin.H{
+			"list":      items,
+			"total":     total,
+			"page":      page,
+			"page_size": pageSize,
+		})
+	}
+}
+
+// AdminGetVersion GET /api/v1/admin/versions/:id
+// 平台超管查询单个版本详情（跨租户）
+func AdminGetVersion(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id, err := parseUintParam(c, "id")
+		if err != nil || id == 0 {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "版本 ID 无效")
+			return
+		}
+
+		var v model.AppVersion
+		if err := deps.DB.Where("id = ?", id).First(&v).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				middleware.Fail(c, http.StatusNotFound, 1008, "版本不存在")
+				return
+			}
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败")
+			return
+		}
+		middleware.Success(c, v)
+	}
+}
+
 // 防止未使用导入报错（gorm 在某些函数中显式使用，但保留兜底）
 var _ = gorm.ErrRecordNotFound

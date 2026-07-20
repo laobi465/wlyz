@@ -339,8 +339,8 @@
 - [ ] [待开始] Cloudflare WAF 集成 - v0.4.0
 
 #### 灰度发布
-- [ ] [待开始] 应用版本灰度推送 - v0.4.0
-- [ ] [待开始] 灰度规则配置（按地区/比例） - v0.4.0
+- [x] [已完成 2026-07-20] 应用版本灰度推送 - v0.4.0（migration 010 app_version 5 字段 + `internal/grayscale` 包 Match/HashBucket/ParseList + ClientVersion 遍历候选版本匹配 + 3 项 sys_config）
+- [x] [已完成 2026-07-20] 灰度规则配置（按地区/比例） - v0.4.0（平台/渠道/地区白名单 + Hash 桶 SHA-256(salt:appID:clientID) % 100 + 全局开关 + default_rate/hash_salt 可后台调整 + TenantUpdateVersion 编辑接口 + AdminListVersions/AdminGetVersion 跨租户查询 + 33 个测试全 PASS）
 
 #### 数据备份与恢复
 - [ ] [待开始] 数据库自动备份（每日全量+每小时增量） - v0.4.0
@@ -474,7 +474,7 @@
 | v0.3.4 | 2026-07-19 | ✅ 已完成（结算与对账闭环：开发者 balance/frozen_balance + tenant_balance_log + tenant_withdraw + 批量结算 + 对账报表 + 双审核页面） |
 | v0.3.5 | 2026-07-19 | ✅ 已完成（P0 修复：RSA 脚本 / 数据库迁移 / H5 公共 API / 套餐配额） |
 | v0.3.6 | 2026-07-20 | ✅ 已完成（剩余 P1 收尾 + 单元测试 + 客户端 SDK 签名对齐测试） |
-| v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移 + JWT jti 单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 + 全语言 SDK 扩展 + 多级代理体系 已完成；灰度发布 / 在线更新 / 数据备份 / 监控告警 / 通知系统 / 终端用户体系 / API 开放平台等待开始） |
+| v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移 + JWT jti 单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 + 全语言 SDK 扩展 + 多级代理体系 + 灰度发布 已完成；在线更新 / 数据备份 / 监控告警 / 通知系统 / 终端用户体系 / API 开放平台等待开始） |
 
 ---
 

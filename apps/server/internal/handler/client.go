@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/your-org/keyauth-saas/apps/server/internal/grayscale"
 	"github.com/your-org/keyauth-saas/apps/server/internal/heartbeat"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
@@ -689,47 +690,113 @@ func ClientNotice(deps *Deps) gin.HandlerFunc {
 
 // ============== ClientVersion 检查版本 ==============
 
-// ClientVersion 检查版本更新
+// ClientVersion 检查版本更新（v0.4.0 升级：支持灰度发布 / 平台过滤 / 渠道过滤 / 地区过滤）
 // POST /api/v1/client/version
+//
+// 请求字段（v0.4.0 新增 region）：
+//   - current_version: 客户端当前版本号
+//   - platform: windows/macos/linux/android/ios
+//   - region: 客户端地区（省/州代码，用于地区灰度）
+//   - channel: 期望渠道（stable/beta/dev，空则用 stable）
+//   - hwid: 客户端硬件标识（用于稳定灰度分桶，与登录解耦）
+//
+// 响应字段：保持原 9 字段对齐 SDK，新增 release_strategy / grayscale_hit（仅当灰度命中时返回）
 func ClientVersion(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
 			CurrentVersion string `json:"current_version"`
 			Platform       string `json:"platform"` // windows/macos/linux/android/ios
+			Region         string `json:"region"`   // v0.4.0：省/州代码，用于地区灰度
+			Channel        string `json:"channel"`  // v0.4.0：stable/beta/dev，空则用 stable
+			HWID           string `json:"hwid"`     // v0.4.0：客户端硬件标识（用于稳定灰度分桶）
+			DeviceID       string `json:"device_id"` // v0.4.0：设备 ID（hwid 缺失时用）
 		}
 		_ = c.ShouldBindJSON(&req)
 		app := c.MustGet("app").(*model.App)
 
-		// 查最新版本
-		var ver model.AppVersion
+		// 查询该 app 所有 active 版本，按 id DESC 排序（最新优先）
+		var versions []model.AppVersion
 		err := deps.DB.Where("app_id = ? AND status = ?", app.ID, "active").
-			Order("id DESC").First(&ver).Error
-		if err == gorm.ErrRecordNotFound {
-			middleware.Success(c, gin.H{
-				"has_update":    false,
-				"force_update":  false,
-				"message":       "暂无版本信息",
-			})
-			return
-		}
+			Order("id DESC").Find(&versions).Error
 		if err != nil {
 			middleware.Fail(c, http.StatusInternalServerError, 5006, "查询版本失败")
 			return
 		}
+		if len(versions) == 0 {
+			middleware.Success(c, gin.H{
+				"has_update":   false,
+				"force_update": false,
+				"message":      "暂无版本信息",
+			})
+			return
+		}
 
-		// 比较版本号（简化：字符串比较，待核实：建议改用 semver 比较）
-		hasUpdate := req.CurrentVersion == "" || ver.Version != req.CurrentVersion
-		middleware.Success(c, gin.H{
+		// 客户端唯一标识（hwid > device_id > client_ip，用于灰度分桶稳定）
+		clientID := req.HWID
+		if clientID == "" {
+			clientID = req.DeviceID
+		}
+		if clientID == "" {
+			clientID = c.ClientIP()
+		}
+
+		// 遍历候选版本，返回第一个命中的（最新优先）
+		// 命中规则：full 全量命中 / grayscale 按规则匹配 / 不命中则尝试下一个更早的版本
+		var matched *model.AppVersion
+		var matchResult grayscale.MatchResult
+		for i := range versions {
+			ver := &versions[i]
+			// 当前版本号匹配的版本跳过（客户端已是此版本，无需更新）
+			// 但仍允许返回该版本作为"已是最新"提示，由 has_update 字段控制
+			result := grayscale.Match(c.Request.Context(), deps.CfgCache, grayscale.MatchRequest{
+				Version:  ver,
+				ClientID: clientID,
+				Platform: req.Platform,
+				Channel:  req.Channel,
+				Region:   req.Region,
+			})
+			if result.Matched {
+				matched = ver
+				matchResult = result
+				break
+			}
+		}
+
+		// 没有任何版本命中灰度规则（极少见：所有版本都是 grayscale 且客户端都未命中）
+		if matched == nil {
+			middleware.Success(c, gin.H{
+				"has_update":   false,
+				"force_update": false,
+				"message":      "当前无可用版本（未命中灰度规则）",
+			})
+			return
+		}
+
+		// 版本比较（保持原字符串比较逻辑，兼容老 SDK）
+		hasUpdate := req.CurrentVersion == "" || matched.Version != req.CurrentVersion
+
+		resp := gin.H{
 			"has_update":         hasUpdate,
-			"force_update":       ver.ForceUpdate,
-			"latest_version":     ver.Version,
+			"force_update":       matched.ForceUpdate,
+			"latest_version":     matched.Version,
 			"current_version":    req.CurrentVersion,
-			"download_url":       ver.DownloadURL,
-			"backup_url":         ver.BackupURL,
-			"update_description": ver.UpdateContent,
-			"min_version":        ver.MinVersion,
-			"released_at":        ver.CreatedAt.Unix(),
-		})
+			"download_url":       matched.DownloadURL,
+			"backup_url":         matched.BackupURL,
+			"update_description": matched.UpdateContent,
+			"min_version":        matched.MinVersion,
+			"released_at":        matched.CreatedAt.Unix(),
+		}
+
+		// v0.4.0：灰度版本额外返回策略信息（用于客户端审计 / 后台排查）
+		if matched.ReleaseStrategy == grayscale.StrategyGrayscale ||
+			matched.ReleaseStrategy == grayscale.StrategyCanary {
+			resp["release_strategy"] = matched.ReleaseStrategy
+			resp["grayscale_hit"] = true
+			resp["grayscale_bucket"] = matchResult.Bucket
+			resp["grayscale_rate"] = matchResult.Rate
+		}
+
+		middleware.Success(c, resp)
 	}
 }
 

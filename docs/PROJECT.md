@@ -32,6 +32,7 @@
 - 一机一卡密强绑定（CPU+主板+MAC+磁盘多重哈希）
 - 双层支付模式（平台总支付 / 开发者自有易支付）
 - 多级代理分销体系（v0.4.0 三级代理 + 跨级佣金自动分润）
+- 灰度发布体系（v0.4.0 三策略 + Hash 桶稳定匹配 + 平台/渠道/地区白名单）
 - 心跳保活 + 离线宽限期
 - 云变量远程下发
 - 多语言 SDK（Python / Node.js / Java / C# / Go / PHP / C++ / 易语言）
@@ -262,8 +263,9 @@ SDK 校验签名 → 通过则解锁功能
 | 安全 | `sys_admin.backup_codes` / `sys_tenant.backup_codes` / `agent.backup_codes` | v0.4.0 2FA 备用码 DB 持久化（AES 加密的逗号分隔字符串，migration 008） | v0.4.0 |
 | 代理 | `agent.parent_id` / `agent.level` | v0.4.0 多级代理体系（parent_id 链 + level 1/2/3 层级，migration 009） | v0.4.0 |
 | 代理 | `agent_invite_code.creator_type` / `agent_invite_code.creator_agent_id` | v0.4.0 邀请码创建者类型（tenant=开发者→一级 / agent=代理→creator.level+1，migration 009） | v0.4.0 |
+| 应用版本 | `app_version.release_strategy` / `grayscale_rate` / `grayscale_platforms` / `grayscale_regions` / `grayscale_channels` | v0.4.0 灰度发布体系（full / grayscale / canary 三策略 + 平台/渠道/地区白名单 + Hash 桶比例匹配，migration 010） | v0.4.0 |
 
-> migration 文件：`apps/server/migrations/` 共 9 套（001 ~ 009），由 `internal/migration/migrator.go` 在 `InitContainer` 阶段自动执行。
+> migration 文件：`apps/server/migrations/` 共 10 套（001 ~ 010），由 `internal/migration/migrator.go` 在 `InitContainer` 阶段自动执行。
 
 ### 4.2 Redis 缓存键设计
 
@@ -420,15 +422,16 @@ keyauth-saas/
 │   │   │   │   ├── pay.go  # 平台总支付 + 开发者自有易支付占位（v0.3.6 EpayNotify 前缀分发 + processAgentRegisterPaid）
 │   │   │   │   ├── log_worker.go  # 异步日志 worker（验证 4096 + 操作 2048，v0.4.0 替换 _ = err 为 logger.Error 结构化日志）
 │   │   │   │   └── deps.go  # 依赖注入容器
+│   │   │   ├── grayscale/        # v0.4.0 灰度发布核心（Match 7 步过滤链 + HashBucket SHA-256 稳定桶 + ParseList + DefaultRate + IsEnabled）
 │   │   │   ├── heartbeat/        # 心跳保活（Redis Sorted Set，6 个方法）
 │   │   │   ├── logger/           # v0.4.0 结构化日志封装（基于 Go 标准库 log/slog，零依赖；Init/Debug/Info/Warn/Error + 4 个 Ctx 版本）
 │   │   │   ├── middleware/       # 中间件（auth/tenant/signature/ratelimit/response/time）
 │   │   │   ├── migration/        # 轻量级 SQL 文件迁移（v0.3.5）
-│   │   │   ├── model/            # 30 个 GORM struct（v0.4.0 三表加 BackupCodes 字段；v0.4.0 Agent 加 ParentID/Level + AgentInviteCode 加 CreatorType/CreatorAgentID）
+│   │   │   ├── model/            # 30 个 GORM struct（v0.4.0 三表加 BackupCodes 字段；v0.4.0 Agent 加 ParentID/Level + AgentInviteCode 加 CreatorType/CreatorAgentID；v0.4.0 AppVersion 加 ReleaseStrategy/GrayscaleRate/GrayscalePlatforms/GrayscaleRegions/GrayscaleChannels）
 │   │   │   ├── multilevel/       # v0.4.0 多级代理核心（DistributeCrossCommission 跨级佣金 + CanCreateSubordinate + ComputeSubordinateLevel + BuildAgentTree + ListSubordinates）
 │   │   │   ├── quota/            # 套餐配额检查（CheckMaxApps/MaxCards/MaxAgents/MaxDevices，v0.3.5）
 │   │   │   └── router/           # 路由注册
-│   │   ├── migrations/           # 9 套 SQL 迁移（001 ~ 009；008 = v0.4.0 2FA backup_codes 字段；009 = v0.4.0 多级代理 parent_id/level + creator_type/creator_agent_id + 4 项 sys_config）
+│   │   ├── migrations/           # 10 套 SQL 迁移（001 ~ 010；008 = v0.4.0 2FA backup_codes 字段；009 = v0.4.0 多级代理 parent_id/level + creator_type/creator_agent_id + 4 项 sys_config；010 = v0.4.0 灰度发布 app_version 5 字段 + 3 项 sys_config）
 │   │   ├── pkg/
 │   │   │   ├── crypto/           # AES-256-GCM + RSA-4096 + HMAC-SHA256 + bcrypt + 卡密生成
 │   │   │   ├── epay/             # 彩虹易支付工具包
@@ -544,6 +547,6 @@ pnpm dev
 
 ---
 
-**文档版本**：0.4.0  
-**最后更新**：2026-07-20（v0.4.0 第六项迁移：多级代理体系 migration 009 + multilevel 包跨级佣金/层级校验/树查询 + 27 个测试全 PASS）  
+**文档版本**：0.4.0
+**最后更新**：2026-07-20（v0.4.0 第七项迁移：灰度发布体系 migration 010 + grayscale 包 Match/HashBucket/ParseList + ClientVersion 灰度匹配 + TenantUpdateVersion + AdminListVersions/AdminGetVersion + 33 个测试全 PASS）
 **维护者**：KeyAuth SaaS Team
