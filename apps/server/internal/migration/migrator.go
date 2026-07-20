@@ -57,7 +57,13 @@ func Run(db *gorm.DB, migrationsDir string) error {
 	// 2. 检查 dirty 状态
 	var dirty SchemaMigration
 	if err := db.Where("dirty = ?", true).First(&dirty).Error; err == nil {
-		return fmt.Errorf("数据库迁移处于 dirty 状态，version=%d，请检查日志并手动修复后重启", dirty.Version)
+		return fmt.Errorf(`数据库迁移处于 dirty 状态，version=%d
+成因：之前启动时迁移版本 %d 执行到一半失败（事务回滚但 dirty 标记已持久化）
+修复方式（任选其一）：
+  方式 A（推荐，重试部署）：docker compose exec mysql mysql -uroot -p<root密码> <数据库名> -e "DELETE FROM schema_migrations WHERE dirty=1;"
+  方式 B（彻底重置，仅首次部署可用）：docker compose down -v && docker compose up -d --build
+  方式 C（强制跳过该版本，风险高）：DELETE FROM schema_migrations WHERE version=%d;
+清理后重启 server 容器：docker compose restart server`, dirty.Version, dirty.Version, dirty.Version)
 	}
 
 	// 3. 扫描 .up.sql 文件

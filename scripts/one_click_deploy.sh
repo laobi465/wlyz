@@ -401,7 +401,65 @@ fi
 # ---------- Step 7: 构建并启动服务 ----------
 step "Step 7/10: 构建并启动 Docker 服务"
 
-log "执行 docker compose up -d --build（首次约 5-10 分钟，正在拉取 Go 模块 + 编译）..."
+# 关键：先单独启动 mysql + redis，等 mysql 就绪后清理可能的 dirty 状态，再启动全部服务
+# 这样可避免「重试部署时 schema_migrations 残留 dirty 记录 → server 启动被拒绝」的死循环
+log "先启动 mysql + redis（确保数据库就绪后再启动 server）..."
+docker compose up -d --build mysql redis
+
+log "等待 mysql 就绪（最长 60s）..."
+MYSQL_READY=0
+for _ in {1..30}; do
+    if docker compose exec -T mysql mysqladmin ping -h 127.0.0.1 -uroot -p"${MYSQL_ROOT_PASSWORD}" >/dev/null 2>&1; then
+        MYSQL_READY=1
+        log "✓ mysql 已就绪"
+        break
+    fi
+    sleep 2
+done
+[[ $MYSQL_READY -eq 0 ]] && warn "mysql 等待超时，跳过 dirty 清理"
+
+# 清理 schema_migrations 的 dirty 状态（重试部署时常见）
+# 成因：之前部署时 mysql 容器异常重启 / 网络断开 / 迁移执行到一半中断
+# 后果：schema_migrations 表留下 dirty=1 记录，server 启动时检测到直接拒绝
+# 修复：删除 dirty 记录，server 重启后会重新执行该版本迁移
+if [[ $MYSQL_READY -eq 1 ]]; then
+    DIRTY_COUNT=$(docker compose exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" "${MYSQL_DATABASE:-keyauth}" \
+        -N -e "SELECT COUNT(*) FROM schema_migrations WHERE dirty=1;" 2>/dev/null || echo "0")
+    if [[ "${DIRTY_COUNT:-0}" -gt 0 ]]; then
+        warn "检测到 schema_migrations 有 ${DIRTY_COUNT} 条 dirty 记录，正在清理..."
+        DIRTY_VERSIONS=$(docker compose exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" "${MYSQL_DATABASE:-keyauth}" \
+            -N -e "SELECT version FROM schema_migrations WHERE dirty=1;" 2>/dev/null || echo "")
+        log "  dirty 版本：${DIRTY_VERSIONS}"
+        docker compose exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" "${MYSQL_DATABASE:-keyauth}" \
+            -e "DELETE FROM schema_migrations WHERE dirty=1;" >/dev/null 2>&1
+        log "✓ dirty 记录已清理，server 重启后会重新执行该版本迁移"
+    else
+        log "✓ 无 dirty 记录"
+    fi
+
+    # 额外安全检查：如果 system_update_log 表已存在但 schema_migrations 没有记录 v11
+    # （说明 v11 部分执行成功但事务回滚了），手动 DROP 让 v11 能重新创建
+    # 注意：只在首次部署场景（sys_admin 表无真实数据）执行，避免破坏业务数据
+    ADMIN_REAL_CHECK=$(docker compose exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" "${MYSQL_DATABASE:-keyauth}" \
+        -N -e "SELECT COUNT(*) FROM sys_admin WHERE id=1 AND password_hash NOT LIKE '%PLACEHOLDER_BCRYPT_HASH%';" 2>/dev/null || echo "0")
+    if [[ "${ADMIN_REAL_CHECK:-0}" -eq 0 ]]; then
+        # 首次部署场景，安全清理可能的部分执行残留
+        for tbl in system_update_log; do
+            TBL_EXISTS=$(docker compose exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" "${MYSQL_DATABASE:-keyauth}" \
+                -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${MYSQL_DATABASE:-keyauth}' AND table_name='${tbl}';" 2>/dev/null || echo "0")
+            V11_APPLIED=$(docker compose exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" "${MYSQL_DATABASE:-keyauth}" \
+                -N -e "SELECT COUNT(*) FROM schema_migrations WHERE version=11;" 2>/dev/null || echo "0")
+            if [[ "${TBL_EXISTS:-0}" -eq 1 && "${V11_APPLIED:-0}" -eq 0 ]]; then
+                warn "  检测到 ${tbl} 表残留但 v11 未标记完成，DROP 后让迁移重新创建"
+                docker compose exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" "${MYSQL_DATABASE:-keyauth}" \
+                    -e "DROP TABLE IF EXISTS ${tbl};" >/dev/null 2>&1
+            fi
+        done
+    fi
+fi
+
+# 启动所有服务（包括 server 和 admin）
+log "启动全部服务（docker compose up -d --build，首次约 5-10 分钟，正在拉取 Go 模块 + 编译）..."
 docker compose up -d --build
 
 # ---------- Step 8: 等待服务就绪 ----------
