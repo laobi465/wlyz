@@ -1071,7 +1071,7 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 | 包 | 测试文件 | 覆盖范围 |
 |---|---|---|
 | `pkg/crypto` | `crypto_test.go` | AES / HMAC（含 sha512/256 vs sha256 区分） / bcrypt / SHA-512 / MD5 / 易支付签名 / 卡密生成 / HWID |
-| `pkg/crypto` | `sign_alignment_test.go` | 跨语言签名对齐（Python / Node.js / PHP vs 后端 `HMACSHA256`） |
+| `pkg/crypto` | `sign_alignment_test.go` | 跨语言签名对齐（Python / Node.js / PHP / Go / Java / C++ / C# vs 后端 `HMACSHA256`，易语言 Windows-only 永久 skip）+ v0.4.0 5 个新 SDK 目录结构元数据校验 |
 | `pkg/snowflake` | `snowflake_test.go` | `NewNode` 边界 / `NextID` 并发安全 / `OrderNo` 三通道前缀 / `twepoch` 常量 |
 | `pkg/epay` | `epay_test.go` | `BuildSubmitURL` / `ParseNotify` / `VerifyNotify` / 端到端闭环 |
 | `pkg/ua` | `ua_test.go` | UA 解析：Chrome/Firefox/Safari/Edge/curl/Bot/空字符串 + OS 版本号提取 + 设备类型 + 优先级匹配（20 个测试） |
@@ -1096,6 +1096,7 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 10. **JWT jti 黑名单测试（v0.4.0）**：`internal/auth/jwt_test.go` 使用 miniredis 验证 `BlacklistRefreshTokenByJTI` 隔离性（不同 jti 互不影响）+ `IsRefreshTokenBlacklisted` 兼容旧 token（无 jti 时回退 user 维度）+ TTL 过期（`mr.FastForward` 推进 Redis 时间，不影响 Go `time.Now()`）；端到端测试覆盖「登录两设备 → 踢一设备 → 另一设备不受影响 → 修改密码强制全部重登」核心业务语义。中间件 `TestJWTAuth_JTI注入上下文` 用 `httptest.NewRecorder` 验证 `c.Set("jti", claims.ID)` 注入正确
 11. **2FA 备用码 DB 持久化测试（v0.4.0）**：`internal/handler/profile_2fa_test.go` 用 SQLite 内存库 + miniredis + 真实 AES-256 crypto.Manager 测试 `loadUserBackupCodes` / `updateUserBackupCodes` / `consumeBackupCode`；关键场景：DB 读取 + Redis 回退（v0.3.x 老用户兼容）+ 消费成功后 DB 回写 + Redis 自动清理 + 输入不匹配不修改 DB + 消费最后一个时 DB 写入空字符串 + 3 角色（admin/tenant/agent）分支覆盖
 12. **结构化日志测试（v0.4.0）**：`internal/logger/logger_test.go` 用 `bytes.Buffer` 临时替换全局 logger 输出验证 JSON / text 格式；`atomic.Value` 保证并发安全切换；level 过滤测试验证 `level=warn` 时 debug/info 不输出；`TestInit_DefaultFallback` 验证空 Options 不 panic（保证 Init 容错性）
+13. **全语言 SDK 签名对齐测试（v0.4.0）**：`pkg/crypto/sign_alignment_test.go` 从 3 语言扩展到 7 语言（新增 Go / Java / C++ / C# + 易语言 Windows-only Skip）；解释器模式（Python/Node/PHP/Go）+ 编译型模式（C++ 用 g++ 编译到 t.TempDir() + 运行）+ Java 单文件源码模式（JDK 11+）+ C# dotnet 临时项目模式；运行时缺失自动 `t.Skip` 不强制依赖；`javaSupportsSHA512_256` 检测 JDK 版本，仅 JDK 17+ 强断言签名匹配（JDK < 17 回退 HmacSHA256 时仅 t.Logf 提示，不掩盖差异）；`TestSignAlignment_NewLanguages` 校验 5 个新 SDK 的目录结构完整性（不依赖运行时，CI 友好）
 
 #### 运行命令
 

@@ -12,7 +12,7 @@
 
 **v0.3.6 已发布**：6 个测试包（crypto/snowflake/epay/quota/heartbeat/middleware）+ 跨语言签名对齐测试全部通过。运行 `cd apps/server && go test ./...` 验证。
 
-**v0.4.0 进行中**：UA 解析迁移 + JWT jti 精准单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 slog 已完成（4 项迁移全绿；`pkg/ua` + `internal/auth` + `internal/logger` + `internal/handler/profile_2fa_test.go` 共 37 个新测试，10 个测试包全 PASS）。
+**v0.4.0 进行中**：UA 解析迁移 + JWT jti 精准单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 slog + 全语言 SDK 扩展 已完成（5 项迁移全绿；`pkg/ua` + `internal/auth` + `internal/logger` + `internal/handler/profile_2fa_test.go` + 5 个新 SDK 共 50+ 个新测试，11 个测试包全 PASS）。
 
 ## 二、必读文档（按顺序）
 
@@ -79,6 +79,7 @@ v0.4.0 已新增完成（进行中）：
 - ✅ JWT jti 精准单点踢出（jti 嵌入 JWT `RegisteredClaims.ID` + `auth.BlacklistRefreshTokenByJTI` + `revokeSessionByJTI`；`KickDevice` / `Logout` / `RefreshToken` 轮换全部改造为 jti 维度，仅失效指定会话不影响其他设备；`ChangePassword` / `Disable2FA` 仍走 user 维度 `BlacklistRefreshToken` 强制全部重登；`internal/auth/jwt_test.go` 18 个测试 + `internal/middleware/middleware_test.go` 新增 `TestJWTAuth_JTI注入上下文`，8 个测试包全 PASS；兼容旧 token：无 jti 时 `IsRefreshTokenBlacklisted` 回退 user 维度）
 - ✅ 2FA backup_codes DB 持久化（migration 008 三表 sys_admin/sys_tenant/agent 加 `backup_codes VARCHAR(512)` 字段 + model struct 同步；profile.go 新增 `loadUserBackupCodes`/`updateUserBackupCodes`/`consumeBackupCode` 三函数；Verify2FA 改为 DB 落库 + Disable2FA 清空字段；兼容 v0.3.x 老用户：DB 字段为空时 `loadUserBackupCodes` 自动回退 Redis 读取，首次 `consumeBackupCode` 消费成功后回写 DB + 清理 Redis 老数据；`internal/handler/profile_2fa_test.go` 13 个测试全 PASS）
 - ✅ 登录失败日志结构化（新建 `internal/logger` 包基于 Go 1.21+ 标准库 `log/slog`，零第三方依赖，取代 zap/zerolog；`Options{Level, Format, Output}` + `Init/Debug/Info/Warn/Error` + 4 个 Ctx 版本；`AppConfig` 加 LogLevel/LogFormat/LogOutput；`cmd/main.go` 启动时调用 `logger.Init`；`session.go` + `log_worker.go` 3 处 `_ = err` 静默丢弃替换为 `logger.Error("xxx write failed", "err", err, ...业务字段...)` 结构化日志，移除 3 处「待核实 v0.4.x：引入结构化日志记录此错误」标注；`internal/logger/logger_test.go` 6 个测试全 PASS；10 个测试包全绿）
+- ✅ 全语言 SDK 扩展（v0.4.0 第五项迁移）：新增 5 个 SDK（`sdks/go/` keyauth-go 用 `crypto/sha512.New512_256` 原生字节级对齐 + 强类型 struct 返回 + 零第三方依赖；`sdks/java/` keyauth-java 用 JDK 11+ HttpClient + `HmacSHA512/256`（JDK 17+，回退 HmacSHA256）+ Jackson + Maven 工程；`sdks/csharp/` keyauth-csharp 用 .NET 6+ HttpClient + 反射探测 BouncyCastle 启用 SHA-512/256 否则回退 HMACSHA256 + System.Text.Json；`sdks/cpp/` keyauth-cpp 用 C++17 + libcurl + OpenSSL 1.1+ `EVP_sha512_256` 原生对齐（OpenSSL < 1.1 回退 `EVP_sha256`）+ nlohmann/json + CMake FetchContent；`sdks/epl/` keyauth-epl 易语言纯中文 API + 精易模块 v9.0+ 依赖 + HMAC-SHA256（易语言生态无 SHA-512/256，仅在后端回退场景匹配））；`pkg/crypto/sign_alignment_test.go` 从 3 语言扩展到 7 语言自动化（Python/Node/PHP/Go 解释器模式 + C++ g++ 编译 + Java JDK 11+ 单文件源码模式 + C# dotnet 临时项目 + 易语言 Windows-only 永久 `t.Skip`）+ 新增 `TestSignAlignment_NewLanguages` 5 个 SDK 目录结构元数据校验（CI 友好，无运行时依赖）；JDK 17+ 才断言签名匹配，否则 `t.Logf` 暴露 mismatch 而非 `t.Skip` 掩盖；11 个测试包全绿，`go vet ./...` + `go build ./...` 通过）
 
 v0.3.5 已完成（基线）：
 - ✅ 后端 Go 项目结构（main / config / model / middleware / handler / router / quota / migration / heartbeat）
@@ -96,10 +97,10 @@ v0.3.5 已完成（基线）：
 
 **v0.3.6 已完成（2026-07-20）**：剩余 P1 收尾 + 单元测试 + 客户端 SDK 签名对齐测试，全部完成。
 
-**v0.4.0 进行中（2026-07-20）**：UA 解析迁移 + JWT jti 精准单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 slog 4 项迁移全绿，后续推进多级代理 / 全语言 SDK 等。
+**v0.4.0 进行中（2026-07-20）**：UA 解析迁移 + JWT jti 精准单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 slog + 全语言 SDK 扩展 5 项迁移全绿（11 个测试包全 PASS），后续推进多级代理 / 在线更新 / 数据备份恢复 / 监控告警 / 通知系统 / 终端用户体系 / API 开放平台。
 
 **v0.4.0（三期商业化，待开始）**：
-- 多级代理 + 全语言 SDK + 在线更新 + 数据备份恢复 + 监控告警 + 通知系统
+- 多级代理 + 在线更新 + 数据备份恢复 + 监控告警 + 通知系统 + 终端用户体系 + API 开放平台
 
 详细任务见 `docs/TODO.md`。
 
@@ -173,3 +174,5 @@ bash scripts/reset_admin_password.sh NewPass@2026
 > v0.4.0 已落地：2FA backup_codes DB 持久化完成（`migrations/008_v0.4.0_2fa_backup_codes.up.sql` 三表 sys_admin/sys_tenant/agent 加 `backup_codes VARCHAR(512) NOT NULL DEFAULT ''` 字段 + `internal/model/model.go` 三表 struct 同步加 `BackupCodes` 字段；`internal/handler/profile.go` 新增 `loadUserBackupCodes`/`updateUserBackupCodes`/`consumeBackupCode` 三函数，Verify2FA 第 4 步从 Redis 持久化改为 DB 字段写入 + 清理 Redis 老数据，Disable2FA 第 5 步清空 DB `backup_codes` 字段 + 清理 Redis；兼容 v0.3.x 老用户：`loadUserBackupCodes` DB 为空时回退 Redis 读取，`consumeBackupCode` 消费成功后回写 DB + 清理 Redis 老数据；`internal/handler/profile_2fa_test.go` 13 个测试全 PASS，覆盖 DB 读取 / Redis 回退 / 消费 / 边界 / role 分支 / 兼容路径全场景）；profile.go 中原「待核实 v0.4.x：备用码理想方案为 bcrypt 哈希入库，当前简化用 AES 加密存 Redis，后续 v0.4.x 加 backup_codes 字段后迁移」标注已移除；session.go 中原「待核实 v0.4.x：引入结构化日志记录此错误」标注已移除（log_worker.go 同步移除）。
 
 > v0.4.0 已落地：登录失败日志结构化完成（新建 `internal/logger` 包基于 Go 1.21+ 标准库 `log/slog`，零第三方依赖取代 zap/zerolog；`Options{Level, Format, Output}` + `Init` 用 `atomic.Value` 并发安全切换 + `L()` / `Debug/Info/Warn/Error` + 4 个 `DebugCtx/InfoCtx/WarnCtx/ErrorCtx` 链路追踪版本；`internal/config/config.go` `AppConfig` 加 `LogLevel`/`LogFormat`/`LogOutput` 三个 yaml 字段；`cmd/main.go` 启动时调用 `logger.Init(logger.Options{...})` 从 config 注入；`internal/handler/session.go` `StartLoginFailureWorker` + `internal/handler/log_worker.go` `StartVerifyLogWorker` + `StartOperationLogWorker` 3 处 `_ = err` 静默丢弃替换为 `logger.Error("xxx write failed", "err", err, ...业务字段...)` 结构化日志；`internal/logger/logger_test.go` 6 个测试全 PASS：parseLevel 4 级别 + 大小写 + 默认值 / JSON 格式 level/msg/字段断言 / level=warn 过滤 debug+info / text 格式 msg 含空格自动加引号 / L() 非 nil / 空 Options 不 panic）。
+
+> v0.4.0 已落地：全语言 SDK 扩展完成（`sdks/go/keyauth/keyauth.go` 用 `crypto/sha512.New512_256` 原生字节级对齐后端 + 9 个客户端 API 强类型 struct 返回 + 零第三方依赖；`sdks/java/src/main/java/com/keyauth/sdk/KeyAuthClient.java` 用 JDK 11+ HttpClient + Jackson + `Mac.getInstance("HmacSHA512/256")`（JDK 17+，回退 `HmacSHA256`）+ Maven 工程 + `KeyAuthException(code, message, httpStatus)`；`sdks/csharp/src/KeyAuth/KeyAuthClient.cs` 用 .NET 6+ HttpClient + `SHA512_256Provider` 类反射探测 BouncyCastle（`Org.BouncyCastle.Crypto.Digests.Sha512_256Digest`）启用 SHA-512/256 否则回退 `HMACSHA256` + System.Text.Json + 9 个 async API 返回 `Task<JsonElement>`；`sdks/cpp/include/keyauth/keyauth.hpp` + `sdks/cpp/src/keyauth.cpp` 用 C++17 + libcurl + OpenSSL 1.1+ `EVP_sha512_256` 原生对齐（OpenSSL < 1.1 回退 `EVP_sha256` + stderr 警告）+ nlohmann/json + CMake FetchContent 自动下载 + `keyauth::KeyAuthException`；`sdks/epl/keyauth_sdk.e.txt` 易语言纯中文 API + 精易模块 v9.0+ 依赖 + HMAC-SHA256（易语言生态无 SHA-512/256 实现，与后端算法不同，仅在后端 crypto.go:165 回退场景下匹配，已明确标注 mismatch）；`pkg/crypto/sign_alignment_test.go` 从 3 语言扩展到 7 语言自动化：Python/Node/PHP/Go 走解释器模式（`go run`）+ C++ 走 `g++` 编译 + Java 走 JDK 11+ 单文件源码模式（`java Sign.java`）+ C# 走 `dotnet` 临时项目编译运行 + 易语言永久 `t.Skip`（Windows-only，CI 无法运行）；新增 `TestSignAlignment_NewLanguages` 元数据校验测试（5 个新 SDK 目录结构 + README + 入口文件存在性 + 签名函数实现，CI 友好无运行时依赖）；JDK 版本检测：仅 JDK 17+ 才断言签名匹配，否则 `t.Logf` 暴露 mismatch 而非 `t.Skip` 掩盖；C# 在 fallback 场景也用 `t.Logf` 而非 `t.Skip`；11 个测试包全绿，`go vet ./...` + `go build ./...` 通过）。**待核实**：易语言 SDK 仅在后端 `crypto.go:165` sha256 回退分支下匹配，生产环境后端使用 `sha512.New512_256` 时签名不一致，需在易语言客户端文档中明确告知用户后端必须配置 sha256 回退；C# / Java 在 fallback 场景下与后端 sha512.New512_256 也不等价，需用户安装 BouncyCastle（C#）或 JDK 17+（Java）才能保证签名匹配。

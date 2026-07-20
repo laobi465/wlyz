@@ -250,6 +250,7 @@
 - [x] [已完成 2026-07-20] 2FA `backup_codes` DB 持久化（migration 008 三表加 backup_codes 字段 + model 字段 + profile.go `loadUserBackupCodes`/`updateUserBackupCodes`/`consumeBackupCode` + Verify2FA/Disable2FA 改造为 DB 落库 + 兼容 v0.3.x Redis 回退读取；13 个 handler 测试全 PASS） - v0.4.0
 - [x] [已完成 2026-07-20] UA 解析库引入（自实现 `pkg/ua` 包，零第三方依赖，20 个测试全 PASS；handler 层 `parseDeviceName` / `detectDeviceType` / `ListLoginDevicesFull` 全部接入） - v0.4.0
 - [x] [已完成 2026-07-20] 登录失败日志结构化记录（新建 `internal/logger` 包基于 Go 标准库 `log/slog`，零依赖；`AppConfig` 加 LogLevel/LogFormat/LogOutput；3 处 `_ = err` 替换为 `logger.Error` 结构化日志；6 个 logger 测试全 PASS） - v0.4.0
+- [x] [已完成 2026-07-20] 全语言 SDK 扩展（Java / C# / Go / C++ / 易语言 5 个新 SDK；每个含 9 个客户端 API + 独立签名对齐脚本；`sign_alignment_test.go` 从 3 语言扩展到 7 语言 + 元数据校验；11 个测试包全 PASS） - v0.4.0
 - [x] [已完成 2026-07-20] JWT jti 精准单点踢出（jti 嵌入 JWT RegisteredClaims.ID + `auth.BlacklistRefreshTokenByJTI` + `revokeSessionByJTI` + KickDevice/Logout/RefreshToken 全部改造为 jti 维度；18 个 auth 测试 + 1 个 middleware JTI 注入测试全 PASS，8 个测试包全绿） - v0.4.0
 
 #### v0.3.5 P0 修复：RSA 脚本 / 数据库迁移 / H5 公共 API / 套餐配额 ✅ v0.3.5 已完成
@@ -471,7 +472,7 @@
 | v0.3.4 | 2026-07-19 | ✅ 已完成（结算与对账闭环：开发者 balance/frozen_balance + tenant_balance_log + tenant_withdraw + 批量结算 + 对账报表 + 双审核页面） |
 | v0.3.5 | 2026-07-19 | ✅ 已完成（P0 修复：RSA 脚本 / 数据库迁移 / H5 公共 API / 套餐配额） |
 | v0.3.6 | 2026-07-20 | ✅ 已完成（剩余 P1 收尾 + 单元测试 + 客户端 SDK 签名对齐测试） |
-| v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移 + JWT jti 单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 已完成，多级代理 / 全语言 SDK / 监控告警等待开始） |
+| v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移 + JWT jti 单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 + 全语言 SDK 扩展 已完成；多级代理 / 灰度发布 / 在线更新 / 数据备份 / 监控告警 / 通知系统 / 终端用户体系 / API 开放平台等待开始） |
 
 ---
 
@@ -535,5 +536,5 @@
 ---
 
 **文档版本**：0.4.0  
-**最后更新**：2026-07-20（v0.4.0 第三 / 四项迁移：2FA backup_codes DB 持久化 + 登录失败日志结构化 slog）  
+**最后更新**：2026-07-20（v0.4.0 第五项迁移：全语言 SDK 扩展 Java/C#/Go/C++/易语言 + 签名对齐测试 7 语言）  
 **维护者**：KeyAuth SaaS Team

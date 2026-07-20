@@ -167,7 +167,7 @@ SDK 校验签名 → 通过则解锁功能
 | D-13 | 操作日志 | ✅ | log_operation + 切面 RecordOperation（v0.3.3） |
 | D-14 | 财务统计 | ✅ | 结算记录 + 余额流水 + 提现申请 + 提现审核（v0.3.2 + v0.3.4） |
 | D-15 | 安全设置 | ☐ | IP 黑名单、频率限制（v0.4.x，目前仅超管侧） |
-| D-16 | SDK 下载 | ✅ | Python / Node.js / PHP 三语言 SDK 已发布（v0.3.6，`sdks/` 目录）+ 单元测试 + 跨语言签名对齐测试（`sdks/tests/`）；Java/C#/Go/C++/易语言待 v0.4.0 |
+| D-16 | SDK 下载 | ✅ | 八语言 SDK 已发布（Python / Node.js / PHP / Go / Java / C# / C++ / 易语言，`sdks/` 目录）+ 单元测试 + 跨语言签名对齐测试（`sdks/tests/` + `pkg/crypto/sign_alignment_test.go` 7 语言自动化 + 1 语言 Windows-only skip） |
 | D-17 | 开发者设置 | ✅ | 资料 + 公司信息 + 密码 + 2FA + 登录设备（v0.3.0） |
 | D-18 | 支付配置 | ✅ | 双层模式切换（平台总支付 / 自有易支付）（v0.3.6：CreatePayOrder 双层切换 + TOP/ORD 前缀分发 + EpayTenantNotify 完整实现） |
 | D-19 | 代理充值审核 | ✅ | 充值申请列表 + 批准/驳回 + 实际到账金额调整（v0.3.2） |
@@ -213,13 +213,13 @@ SDK 校验签名 → 通过则解锁功能
 | Python | `keyauth-py` | ✅（v0.3.6） | `sdks/python/` 9 API + HMAC-SHA512/256 + KeyAuthError + CardInfo/DeviceInfo 数据类 |
 | Node.js | `keyauth-node` | ✅（v0.3.6） | `sdks/nodejs/` 9 异步 API + crypto.createHmac('sha512/256') + index.d.ts 类型定义，无第三方依赖 |
 | PHP | `keyauth-php` | ✅（v0.3.6） | `sdks/php/` 9 API + hash_hmac('sha512/256') + cURL，无第三方依赖，PSR-4 自动加载 |
-| Java | `keyauth-java` | ☐（v0.4.0） | — |
-| C# | `keyauth-csharp` | ☐（v0.4.0） | — |
-| Go | `keyauth-go` | ☐（v0.4.0） | — |
-| C/C++ | `keyauth-cpp` | ☐（v0.4.0） | — |
-| 易语言 | 模块源码 | ☐（v0.4.0） | — |
+| Go | `keyauth-go` | ✅（v0.4.0） | `sdks/go/` 9 API + `crypto/sha512.New512_256` 原生对齐 + 强类型 struct 返回 + 零第三方依赖 |
+| Java | `keyauth-java` | ✅（v0.4.0） | `sdks/java/` 9 API + JDK 11+ HttpClient + `HmacSHA512/256`（JDK 17+，回退 HmacSHA256）+ Jackson + Maven 工程 |
+| C# | `keyauth-csharp` | ✅（v0.4.0） | `sdks/csharp/` 9 异步 API + .NET 6+ HttpClient + 反射探测 BouncyCastle 启用 SHA-512/256 + System.Text.Json |
+| C++ | `keyauth-cpp` | ✅（v0.4.0） | `sdks/cpp/` 9 API + libcurl + OpenSSL 1.1+ `EVP_sha512_256` 原生对齐 + nlohmann/json + CMake 工程 |
+| 易语言 | `keyauth-epl` | ✅（v0.4.0） | `sdks/epl/` 9 API 纯中文 + 精易模块 v9.0+ 依赖 + HMAC-SHA256（易语言生态无 SHA-512/256，仅在后端回退场景匹配） |
 
-> 三语言 SDK 均封装 9 个验证 API（login/verify/heartbeat/bind/unbind/get_var/notice/version/logout），签名算法与后端 `crypto.HMACSHA256`（`sha512.New512_256` 变体）严格对齐，不支持时回退标准 `sha256`（待核实：与后端 sha512.New512_256 是否完全等价）。
+> 八语言 SDK 均封装 9 个验证 API（login/verify/heartbeat/bind/unbind/get_var/notice/version/logout），签名算法与后端 `crypto.HMACSHA256`（`sha512.New512_256` 变体）对齐：Go / C++ 原生支持字节级对齐；Python / Node.js / PHP 优先 sha512/256 不支持时回退 sha256；Java / C# 反射探测 BouncyCastle 提供者启用 SHA-512/256 否则回退 HmacSHA256；易语言生态无 SHA-512/256 实现统一使用 HMAC-SHA256（与后端算法不同，仅在后端 crypto.go:165 待核实兼容性回退场景下匹配）。
 
 ---
 
@@ -542,5 +542,5 @@ pnpm dev
 ---
 
 **文档版本**：0.4.0  
-**最后更新**：2026-07-20（v0.4.0 第三 / 四项迁移：2FA backup_codes DB 持久化 + 登录失败日志结构化 slog；新增 internal/logger 包 + migration 008）  
+**最后更新**：2026-07-20（v0.4.0 第五项迁移：全语言 SDK 扩展 Java/C#/Go/C++/易语言 + 签名对齐测试 7 语言）  
 **维护者**：KeyAuth SaaS Team

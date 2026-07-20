@@ -11,6 +11,74 @@
 
 ## [0.4.0] - 2026-07-20（v0.4.x 迁移项推进）
 
+### [新增] 全语言 SDK 扩展（Java / C# / Go / C++ / 易语言，v0.4.x 第五项）
+
+#### 背景
+
+- v0.3.6 仅提供 Python / Node.js / PHP 三语言 SDK，无法覆盖桌面软件开发者主流语言生态
+- TODO.md `[迁移] 全语言 SDK → v0.4.x Java / C# / Go / C++ / 易语言`
+
+#### 实现
+
+**Go SDK（`sdks/go/`）** — 原生 SHA-512/256 对齐
+- `keyauth/keyauth.go`：9 个客户端 API + 强类型 struct 返回 + 零第三方依赖（仅 Go 标准库）
+- `crypto/sha512.New512_256` 与后端字节级一致，无回退
+- `example/example.go`：完整调用示例
+- `tests/sign.go`：签名对齐测试脚本
+
+**Java SDK（`sdks/java/`）** — JDK 11+ HttpClient
+- `KeyAuthClient.java` + `KeyAuthException.java`：9 个客户端 API
+- 优先 `Mac.getInstance("HmacSHA512/256")`（JDK 17+），回退 `HmacSHA256`
+- `pom.xml`：Maven 工程文件（依赖 Jackson）
+- `tests/Sign.java`：独立签名脚本（无 Jackson 依赖，单文件源码模式运行）
+
+**C# SDK（`sdks/csharp/`）** — .NET 6+ HttpClient
+- `KeyAuthClient.cs`：9 个异步 API（`Task<JsonElement>` 返回）
+- 反射探测 BouncyCastle 提供者，启用 `HMac(Sha512_256Digest)`；不可用回退 `HMACSHA256`
+- `KeyAuth.Sdk.csproj`：条件依赖 BouncyCastle
+- `tests/sign.cs`：独立签名脚本
+
+**C++ SDK（`sdks/cpp/`）** — libcurl + OpenSSL 1.1+ + nlohmann/json
+- `include/keyauth/keyauth.hpp` + `src/keyauth.cpp`：9 个客户端 API
+- `EVP_sha512_256()` 与后端字节级一致；OpenSSL < 1.1 回退 `EVP_sha256` + stderr 警告
+- `CMakeLists.txt`：自动 FetchContent 拉取 nlohmann/json
+- `tests/sign.cpp`：独立签名脚本（仅 OpenSSL 依赖）
+
+**易语言 SDK（`sdks/epl/`）** — Windows-only
+- `keyauth_sdk.e.txt`：纯中文 API（登录 / 验证 / 心跳 / 绑定 / 解绑 / 取变量 / 取公告 / 取版本 / 退出）
+- 依赖精易模块 v9.0+ 的 `HMAC_SHA256` / `json_解析` / `网页_访问`
+- 注：易语言生态无 SHA-512/256 实现，统一使用 HMAC-SHA256（与后端 SHA-512/256 不同，仅在后端回退场景下匹配）
+- `tests/sign.e.txt`：签名测试脚本（不参与 Linux CI 自动化测试）
+
+**签名对齐测试扩展（`apps/server/pkg/crypto/sign_alignment_test.go`）**：
+- 从 3 语言（Python/Node.js/PHP）扩展到 7 语言（新增 Go / Java / C++ / C# + 易语言 Skip）
+- `runSignCompiled`：编译型语言（C++）通用编译+运行框架
+- `runSignJavaSingleFile`：JDK 11+ 单文件源码模式运行 Java
+- `runCSharpScript`：dotnet 临时项目编译运行 C#
+- `javaSupportsSHA512_256`：JDK 版本检测，仅在 JDK 17+ 时强断言签名匹配
+- `TestSignAlignment_NewLanguages`：5 个新语言 SDK 目录结构元数据校验（CI 友好，不依赖运行时）
+- 7 语言子测试在缺失运行时时自动 `t.Skip`
+
+#### 测试覆盖
+
+- `TestSignAlignment_AllLanguages`：3 测试用例 × 7 语言 = 21 子测试（运行时不可用时 skip）
+- `TestSignAlignment_NewLanguages`：5 个新 SDK 的目录结构 + 5 个签名脚本存在性校验
+- `TestSignAlignment_BackendDeterministic`：后端签名确定性
+
+#### 铁律遵守
+
+- **铁律 04（无硬编码）**：所有 SDK 的 API 地址 / AppKey / SignSecret 由构造函数 / 初始化方法传入
+- **铁律 05（配置走后端）**：SDK 不内置任何配置，行为由后端 sys_config 控制
+- **铁律 06（反幻觉）**：签名算法回退策略明确标注（Java/C#/C++/易语言），不掩盖与后端的差异；测试中 Java/C# 在回退场景下不强制相等，仅 t.Logf 提示
+
+#### 验证
+
+- `go test ./...`：11 个测试包全 PASS（`pkg/crypto` 测试时间 9.2s，包含 5 个新语言子测试）
+- `go vet ./...`：0 警告
+- `go build ./...`：通过
+
+---
+
 ### [新增] 2FA 备用码 DB 持久化 + 登录失败日志结构化（v0.4.x 迁移项第三 / 四项）
 
 #### 背景
