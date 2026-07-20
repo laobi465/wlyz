@@ -17,12 +17,22 @@ package notify
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha1"
+	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
+	"net"
+	"net/http"
 	"net/smtp"
+	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +53,8 @@ const (
 	CfgKeySMSAccessKeyID        = "notify.sms.access_key_id"
 	CfgKeySMSAccessSecretEnc    = "notify.sms.access_secret_enc"
 	CfgKeySMSSignName           = "notify.sms.sign_name"
+	CfgKeySMSRegion             = "notify.sms.region"       // 默认 "cn-hangzhou"
+	CfgKeySMSEndpoint           = "notify.sms.endpoint"     // 默认 "dysmsapi.aliyuncs.com"
 	CfgKeyEmailEnabled          = "notify.email.enabled"
 	CfgKeyEmailSMTPHost         = "notify.email.smtp_host"
 	CfgKeyEmailSMTPPort         = "notify.email.smtp_port"
@@ -54,6 +66,8 @@ const (
 	CfgKeyRetryTimes            = "notify.retry.times"
 	CfgKeyRetryIntervalSeconds  = "notify.retry.interval_seconds"
 	CfgKeyRateLimitPerMinute    = "notify.rate_limit.per_minute"
+	CfgKeyEmailSMTPEncryption     = "notify.email.smtp_encryption"       // 默认 "ssl"，可选 none/ssl/tls
+	CfgKeyEmailSMTPTimeoutSeconds = "notify.email.smtp_timeout_seconds"  // 默认 10
 )
 
 // Channel 通知渠道
@@ -464,15 +478,130 @@ type aliyunSMSProvider struct {
 	mgr *Manager
 }
 
-// Send 阿里云短信发送（简化实现：实际生产应使用 aliyun-java-sdk-go 或直接 HTTP 签名）
-// 铁律 06 标注：当前为骨架实现，返回 "provider not configured" 直至 AccessKey 配置完成
+// signAliyunRequest 计算阿里云 RPC API 签名
+// 算法：HMAC-SHA1(secret + "&", "POST&" + url.QueryEscape("/") + "&" + url.QueryEscape(sortedQueryString))
+// 返回 Base64 编码的签名
+func signAliyunRequest(params map[string]string, secret string) string {
+	// 1. 按 key 字典序排序
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	// 2. 拼接 sortedQueryString（key=value 用 & 连接，key/value 都 URL encode）
+	var buf strings.Builder
+	for i, k := range keys {
+		if i > 0 {
+			buf.WriteByte('&')
+		}
+		buf.WriteString(url.QueryEscape(k))
+		buf.WriteByte('=')
+		buf.WriteString(url.QueryEscape(params[k]))
+	}
+	sortedQueryString := buf.String()
+
+	// 3. 构造 stringToSign: POST&%2F&<url-encoded sortedQueryString>
+	stringToSign := "POST&" + url.QueryEscape("/") + "&" + url.QueryEscape(sortedQueryString)
+
+	// 4. HMAC-SHA1(secret + "&", stringToSign)
+	h := hmac.New(sha1.New, []byte(secret+"&"))
+	h.Write([]byte(stringToSign))
+	return base64.StdEncoding.EncodeToString(h.Sum(nil))
+}
+
+// Send 阿里云短信发送（v0.4.0 收尾项 A：完整签名 + HTTP POST）
+// 铁律 06：实现真实阿里云 Dysms API 调用，零第三方依赖
 func (p *aliyunSMSProvider) Send(ctx context.Context, phone, signName, templateCode string, params map[string]interface{}) (string, error) {
-	if p.mgr.cache.GetString(ctx, CfgKeySMSAccessKeyID, "") == "" {
+	accessKeyID := p.mgr.cache.GetString(ctx, CfgKeySMSAccessKeyID, "")
+	if accessKeyID == "" {
 		return "", ErrProviderNotConfig
 	}
-	// 生产环境应调用阿里云 Dysms API：SignRequest + HMAC-SHA1 + HTTP POST
-	// 此处仅返回伪 msgID 便于测试通过（铁律 06：标注「待核实」）
-	return fmt.Sprintf("aliyun-%d", time.Now().UnixNano()), nil
+	accessSecretEnc := p.mgr.cache.GetString(ctx, CfgKeySMSAccessSecretEnc, "")
+	if accessSecretEnc == "" {
+		return "", ErrProviderNotConfig
+	}
+	// 解密 AccessSecret（铁律 04：密钥 AES 加密存储）
+	accessSecret := accessSecretEnc
+	if p.mgr.crypto != nil {
+		if dec, err := p.mgr.crypto.DecryptAES(accessSecretEnc); err == nil {
+			accessSecret = dec
+		}
+	}
+	region := p.mgr.cache.GetString(ctx, CfgKeySMSRegion, "cn-hangzhou")
+	endpoint := p.mgr.cache.GetString(ctx, CfgKeySMSEndpoint, "dysmsapi.aliyuncs.com")
+	if signName == "" {
+		signName = p.mgr.cache.GetString(ctx, CfgKeySMSSignName, "")
+	}
+
+	// 序列化模板参数
+	templateParamJSON := "{}"
+	if len(params) > 0 {
+		if b, err := json.Marshal(params); err == nil {
+			templateParamJSON = string(b)
+		}
+	}
+
+	// 拼装公共参数 + 业务参数
+	// SignatureNonce 复用时间戳生成器（Manager 未提供 nonce 生成器，使用 UnixNano）
+	nonce := strconv.FormatInt(time.Now().UnixNano(), 10)
+	reqParams := map[string]string{
+		"SignatureMethod":  "HMAC-SHA1",
+		"SignatureNonce":   nonce,
+		"AccessKeyId":      accessKeyID,
+		"SignatureVersion": "1.0",
+		"Timestamp":        time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		"Format":           "JSON",
+		"Version":          "2017-05-25",
+		"RegionId":         region,
+		"Action":           "SendSms",
+		"PhoneNumbers":     phone,
+		"SignName":         signName,
+		"TemplateCode":     templateCode,
+		"TemplateParam":    templateParamJSON,
+	}
+
+	// 计算签名
+	signature := signAliyunRequest(reqParams, accessSecret)
+	reqParams["Signature"] = signature
+
+	// 构造 POST form body
+	form := url.Values{}
+	for k, v := range reqParams {
+		form.Set(k, v)
+	}
+
+	// 发起 HTTP POST
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", "https://"+endpoint+"/", strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := http.DefaultClient.Do(httpReq)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	// 解析响应
+	var result struct {
+		Code      string `json:"Code"`
+		Message   string `json:"Message"`
+		BizId     string `json:"BizId"`
+		RequestId string `json:"RequestId"`
+	}
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
+		return "", fmt.Errorf("aliyun sms: invalid response: %s", string(bodyBytes))
+	}
+	if result.Code != "OK" {
+		return "", fmt.Errorf("aliyun sms: %s: %s", result.Code, result.Message)
+	}
+	return result.BizId, nil
 }
 
 // ============== 9. 邮件服务商实现（SMTP） ==============
@@ -482,7 +611,59 @@ type smtpEmailProvider struct {
 	mgr *Manager
 }
 
+// dialSMTPClient 根据 encryption 模式建立 SMTP 客户端
+// encryption: "ssl"=465 隐式 TLS / "tls"=587 STARTTLS / "none"=25 明文
+// 零第三方依赖：仅用标准库 crypto/tls + net/smtp
+func dialSMTPClient(host string, port int, encryption string, timeout time.Duration) (*smtp.Client, error) {
+	// 用 net.JoinHostPort 而非 fmt.Sprintf("%s:%d")：正确处理 IPv6 主机（如 ::1）
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	switch encryption {
+	case "ssl":
+		// 465 端口隐式 TLS（直接 TLS 握手）
+		tlsConfig := &tls.Config{ServerName: host}
+		conn, err := tls.DialWithDialer(&net.Dialer{Timeout: timeout}, "tcp", addr, tlsConfig)
+		if err != nil {
+			return nil, fmt.Errorf("smtp ssl dial: %w", err)
+		}
+		client, err := smtp.NewClient(conn, host)
+		if err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("smtp new client: %w", err)
+		}
+		return client, nil
+	case "tls":
+		// 587 端口 STARTTLS（先明文连接再升级）
+		conn, err := net.DialTimeout("tcp", addr, timeout)
+		if err != nil {
+			return nil, fmt.Errorf("smtp dial: %w", err)
+		}
+		client, err := smtp.NewClient(conn, host)
+		if err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("smtp new client: %w", err)
+		}
+		if err := client.StartTLS(&tls.Config{ServerName: host}); err != nil {
+			client.Close()
+			return nil, fmt.Errorf("smtp starttls: %w", err)
+		}
+		return client, nil
+	default:
+		// 25 端口明文（不推荐生产使用）
+		conn, err := net.DialTimeout("tcp", addr, timeout)
+		if err != nil {
+			return nil, fmt.Errorf("smtp dial: %w", err)
+		}
+		client, err := smtp.NewClient(conn, host)
+		if err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("smtp new client: %w", err)
+		}
+		return client, nil
+	}
+}
+
 // Send 通过 SMTP 发送邮件
+// 支持 465 隐式 TLS / 587 STARTTLS / 25 明文三种加密模式
 func (p *smtpEmailProvider) Send(ctx context.Context, to, subject, htmlBody string) (string, error) {
 	host := p.mgr.cache.GetString(ctx, CfgKeyEmailSMTPHost, "")
 	if host == "" {
@@ -493,15 +674,16 @@ func (p *smtpEmailProvider) Send(ctx context.Context, to, subject, htmlBody stri
 	passwordEnc := p.mgr.cache.GetString(ctx, CfgKeyEmailSMTPPasswordEnc, "")
 	fromAddr := p.mgr.cache.GetString(ctx, CfgKeyEmailFromAddress, "")
 	fromName := p.mgr.cache.GetString(ctx, CfgKeyEmailFromName, "KeyAuth SaaS")
-
 	if username == "" || fromAddr == "" {
 		return "", ErrProviderNotConfig
 	}
+	encryption := p.mgr.cache.GetString(ctx, CfgKeyEmailSMTPEncryption, "ssl")
+	timeoutSec := p.mgr.cache.GetInt(ctx, CfgKeyEmailSMTPTimeoutSeconds, 10)
+
 	// 解密 SMTP 密码（铁律 04：密钥 AES 加密存储）
 	password := passwordEnc
 	if p.mgr.crypto != nil && passwordEnc != "" {
-		dec, err := p.mgr.crypto.DecryptAES(passwordEnc)
-		if err == nil {
+		if dec, err := p.mgr.crypto.DecryptAES(passwordEnc); err == nil {
 			password = dec
 		}
 	}
@@ -512,16 +694,57 @@ func (p *smtpEmailProvider) Send(ctx context.Context, to, subject, htmlBody stri
 		fromName, fromAddr, to, subject, msgID)
 	body := headers + htmlBody
 
-	addr := fmt.Sprintf("%s:%d", host, port)
-	var auth smtp.Auth
-	if password != "" {
-		auth = smtp.PlainAuth("", username, password, host)
+	// 向后兼容：未配置 encryption 时按 port 推断（465=ssl / 587=tls / 其他=none）
+	if encryption == "" {
+		switch {
+		case port == 465:
+			encryption = "ssl"
+		case port == 587:
+			encryption = "tls"
+		default:
+			encryption = "none"
+		}
 	}
-	// 铁律 06：标注「需验证」— 465 端口需 SSL 包装，587 用 STARTTLS；此处用标准 smtp.SendMail（适合 25/587）
-	// 生产环境建议用 gomail 或 go-mail 库支持 SSL
-	if err := smtp.SendMail(addr, auth, fromAddr, []string{to}, []byte(body)); err != nil {
+
+	timeout := time.Duration(timeoutSec) * time.Second
+
+	// 建立 SMTP 连接
+	client, err := dialSMTPClient(host, port, encryption, timeout)
+	if err != nil {
 		return "", err
 	}
+	defer client.Close()
+
+	// SMTP 认证
+	if password != "" {
+		auth := smtp.PlainAuth("", username, password, host)
+		if err := client.Auth(auth); err != nil {
+			return "", fmt.Errorf("smtp auth: %w", err)
+		}
+	}
+
+	// 设置发件人
+	if err := client.Mail(fromAddr); err != nil {
+		return "", fmt.Errorf("smtp mail: %w", err)
+	}
+
+	// 设置收件人
+	if err := client.Rcpt(to); err != nil {
+		return "", fmt.Errorf("smtp rcpt: %w", err)
+	}
+
+	// 写入邮件正文
+	w, err := client.Data()
+	if err != nil {
+		return "", fmt.Errorf("smtp data: %w", err)
+	}
+	if _, err := w.Write([]byte(body)); err != nil {
+		return "", fmt.Errorf("smtp write: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return "", fmt.Errorf("smtp close: %w", err)
+	}
+
 	return msgID, nil
 }
 

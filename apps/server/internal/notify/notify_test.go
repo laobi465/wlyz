@@ -17,6 +17,7 @@ package notify
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"testing"
@@ -811,4 +812,90 @@ func TestConstants(t *testing.T) {
 	assert.Equal(t, 0, PriorityNormal)
 	assert.Equal(t, 1, PriorityHigh)
 	assert.Equal(t, 2, PriorityUrgent)
+}
+
+// ============== 16. 阿里云短信签名 ==============
+
+// TestSignAliyunRequest 测试阿里云 RPC API 签名算法
+// 铁律 06：所有断言基于已知固定输入，签名结果确定性可重现
+func TestSignAliyunRequest(t *testing.T) {
+	// 阿里云官方文档示例参数
+	params := map[string]string{
+		"AccessKeyId":      "testid",
+		"Action":           "SendSms",
+		"Format":           "JSON",
+		"PhoneNumbers":     "15300000000",
+		"RegionId":         "cn-hangzhou",
+		"SignName":         "阿里云短信测试专用",
+		"SignatureMethod":  "HMAC-SHA1",
+		"SignatureNonce":   "45eac111-9f9d-4f07-8c2b-3c2f5c5d4b01",
+		"SignatureVersion": "1.0",
+		"TemplateCode":     "SMS_123456789",
+		"TemplateParam":    `{"code":"1234"}`,
+		"Timestamp":        "2017-07-12T02:42:19Z",
+		"Version":          "2017-05-25",
+	}
+	signature := signAliyunRequest(params, "testsecret")
+	// 验证签名格式正确（Base64 编码，长度 > 0）
+	if signature == "" {
+		t.Fatal("signature should not be empty")
+	}
+	// 验证签名可解码
+	decoded, err := base64.StdEncoding.DecodeString(signature)
+	if err != nil {
+		t.Fatalf("signature is not valid base64: %v", err)
+	}
+	if len(decoded) != 20 { // SHA1 输出 20 字节
+		t.Fatalf("signature should be 20 bytes (SHA1), got %d", len(decoded))
+	}
+
+	// 验证同一输入同一输出（确定性）
+	sig2 := signAliyunRequest(params, "testsecret")
+	if signature != sig2 {
+		t.Fatal("signature should be deterministic")
+	}
+
+	// 验证不同 secret 产生不同签名
+	sig3 := signAliyunRequest(params, "different_secret")
+	if signature == sig3 {
+		t.Fatal("different secret should produce different signature")
+	}
+
+	// 验证不同参数产生不同签名
+	params2 := make(map[string]string)
+	for k, v := range params {
+		params2[k] = v
+	}
+	params2["PhoneNumbers"] = "15900000000"
+	sig4 := signAliyunRequest(params2, "testsecret")
+	if signature == sig4 {
+		t.Fatal("different params should produce different signature")
+	}
+}
+
+// ============== 15. dialSMTPClient 加密分支 ==============
+
+// TestDialSMTPClient_EncryptionBranch 验证 dialSMTPClient 在三种 encryption 模式下
+// 对无效主机均能正确返回错误（无真实 SMTP 服务器，仅验证分支选择与错误传播）
+func TestDialSMTPClient_EncryptionBranch(t *testing.T) {
+	// SSL 模式（465 隐式 TLS）：tls.DialWithDialer 应在超时内失败
+	_, err := dialSMTPClient("invalid.host.does.not.exist", 465, "ssl", 2*time.Second)
+	if err == nil {
+		t.Fatal("dialSMTPClient with invalid host (ssl) should return error")
+	}
+	assert.Contains(t, err.Error(), "smtp ssl dial")
+
+	// TLS 模式（587 STARTTLS）：net.DialTimeout 应在超时内失败
+	_, err = dialSMTPClient("invalid.host.does.not.exist", 587, "tls", 2*time.Second)
+	if err == nil {
+		t.Fatal("dialSMTPClient with invalid host (tls) should return error")
+	}
+	assert.Contains(t, err.Error(), "smtp dial")
+
+	// None 模式（25 明文）：net.DialTimeout 应在超时内失败
+	_, err = dialSMTPClient("invalid.host.does.not.exist", 25, "none", 2*time.Second)
+	if err == nil {
+		t.Fatal("dialSMTPClient with invalid host (none) should return error")
+	}
+	assert.Contains(t, err.Error(), "smtp dial")
 }

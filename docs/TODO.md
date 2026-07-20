@@ -380,8 +380,8 @@
 - [x] [已完成 2026-07-20] 通知模板引擎（S-12） - v0.4.0（Manager.Render 用 strings.NewReplacer 替换 {{var}} 占位符防 SSTI；4 个预置模板 verify_code/verify_code_email/order_paid/agent_commission；租户自定义模板优先 + 平台通用回退）
 - [x] [已完成 2026-07-20] 通知日志 + 重试 + 限流 - v0.4.0（Manager.Send 写 pending → 调 provider → 更新状态；Manager.Retry 失败重试最大次数从 sys_config 读取；Manager.CheckRateLimit 单租户每分钟限流查 notify_log 表实时计数）
 - [x] [已完成 2026-07-20] 后台通知管理面板（S-13） - v0.4.0（AdminNotifyStatus 配置概览+统计+模板数；AdminListNotifyTemplates/Create/Update/Delete 模板 CRUD；AdminListNotifyLogs/Get 日志查询；AdminRetryNotifyLog 手动重试；AdminTestNotify 测试发送绕过模板查找直接 dispatch）
-- [ ] [待开始] 阿里云短信 SDK 完整签名实现（当前骨架返回伪 msgID，生产应调 Dysms API SignRequest + HMAC-SHA1 + HTTP POST） - v0.4.x
-- [ ] [待开始] SMTP SSL 包装（465 端口需 SSL，当前 smtp.SendMail 适合 25/587） - v0.4.x
+- [x] [已完成 2026-07-20] 阿里云短信 SDK 完整签名实现 - v0.4.x（notify.go signAliyunRequest 纯函数：HMAC-SHA1 + Base64 + 字典序排序；aliyunSMSProvider.Send 重写为真实 Dysms API HTTP POST 调用；新增 CfgKeySMSRegion/Endpoint 配置；migration 020 追加 2 项 sys_config；TestSignAliyunRequest 测试覆盖签名确定性 + 不同入参出不同签名）
+- [x] [已完成 2026-07-20] SMTP SSL 包装 - v0.4.x（notify.go dialSMTPClient 函数支持三模式：ssl=465 隐式 TLS / tls=587 STARTTLS / none=25 明文；smtpEmailProvider.Send 重写为 dialSMTPClient + Auth + Mail + Rcpt + Data 流程；新增 CfgKeyEmailSMTPEncryption/TimeoutSeconds 配置；migration 021 追加 2 项 sys_config；TestDialSMTPClient_EncryptionBranch 测试覆盖三模式错误分支）
 - 详见 references/11-notification-system.md
 
 ---
@@ -546,7 +546,7 @@
 - ~~数据备份恢复~~ ✓ 已完成
 - ~~API 开放平台（开发者 API Token + Webhook 事件推送 + 第三方接入授权）~~ ✓ 已完成
 - ~~监控告警（内置：CPU/内存/磁盘/错误率 + 阈值告警 + webhook 通知）~~ ✓ 已完成；Prometheus + Grafana 集成可选后续
-- ~~通知系统（短信 / 邮件 / 站内信）~~ ✓ 已完成；阿里云 SDK 完整签名 + SMTP SSL 包装 后续优化
+- ~~通知系统（短信 / 邮件 / 站内信）~~ ✓ 已完成；阿里云 SDK 完整签名 + SMTP SSL 包装 已完成（v0.4.x）
 - ~~终端用户体系（H5 用户登录/注册/中心/订单）~~ ✓ 已完成后端；前端 H5 页面接入后续
 
 - ~~高级安全（异地登录告警 + 风控引擎 + Cloudflare WAF）~~ ✓ 已完成
