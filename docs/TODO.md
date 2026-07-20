@@ -328,11 +328,11 @@
 - [x] [已完成] 代理树查询（三端） - v0.4.0（GET /admin/agents/:id/tree + /tenant/agents/:id/tree + /agent/tree）
 
 #### 全语言 SDK
-- [ ] [待开始] Java SDK（含 Android） - v0.4.0
-- [ ] [待开始] C# SDK（.NET 全平台） - v0.4.0
-- [ ] [待开始] Go SDK - v0.4.0
-- [ ] [待开始] C/C++ SDK（含 JNI） - v0.4.0
-- [ ] [待开始] 易语言模块 - v0.4.0
+- [x] [已完成 2026-07-20] Java SDK（含 Android） - v0.4.0（`sdks/java/`：JDK 11+ HttpClient + HmacSHA512/256（JDK 17+，回退 HmacSHA256）+ Jackson + Maven 工程；KeyAuthClient 9 API + KeyAuthException；`sdks/tests/Sign.java` 签名对齐脚本；JDK 17+ 签名断言匹配，否则 t.Logf 暴露 mismatch）
+- [x] [已完成 2026-07-20] C# SDK（.NET 全平台） - v0.4.0（`sdks/csharp/`：.NET 6+ HttpClient + 反射探测 BouncyCastle 启用 SHA-512/256 否则回退 HMACSHA256 + System.Text.Json；KeyAuthClient 9 API + KeyAuth.Sdk.csproj；`sdks/tests/sign.cs` 签名对齐脚本）
+- [x] [已完成 2026-07-20] Go SDK - v0.4.0（`sdks/go/`：`crypto/sha512.New512_256` 原生字节级对齐 + 强类型 struct 返回 + 零第三方依赖；KeyAuthClient 9 API；`sdks/tests/sign.go` 签名对齐脚本）
+- [x] [已完成 2026-07-20] C/C++ SDK（含 JNI） - v0.4.0（`sdks/cpp/`：C++17 + libcurl + OpenSSL 1.1+ `EVP_sha512_256` 原生对齐（OpenSSL < 1.1 回退 `EVP_sha256`）+ nlohmann/json + CMake FetchContent；KeyAuthClient 9 API + KeyAuthException；`sdks/tests/sign.cpp` 签名对齐脚本）
+- [x] [已完成 2026-07-20] 易语言模块 - v0.4.0（`sdks/epl/`：纯中文 API + 精易模块 v9.0+ 依赖 + HMAC-SHA256（易语言生态无 SHA-512/256，仅在后端回退场景匹配）；`sdks/tests/sign.e.txt` 签名对齐脚本；Windows-only 永久 `t.Skip`）
 
 #### 高级安全
 - [ ] [待开始] 异地登录告警 - v0.4.0
