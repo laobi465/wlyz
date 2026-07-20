@@ -116,61 +116,67 @@ const props = defineProps<{
 
 ### 2.1 分层架构（后端）
 
-严格遵循 **4 层架构**，禁止跨层调用：
+实际采用 **3 层简化架构**（Handler 直连 GORM，无独立 service/repository 层），通过 `handler.Deps` 注入共享依赖：
 
 ```
 ┌─────────────────────────────────────┐
-│ Handler 层（HTTP 处理器）            │
+│ Handler 层（HTTP 处理器，17 文件）   │
 │ - 路由匹配、参数校验、响应封装       │
-│ - 不含业务逻辑                       │
+│ - 业务逻辑 + GORM 操作（简化版）    │
 └──────────────┬──────────────────────┘
                │ 调用
 ┌──────────────▼──────────────────────┐
-│ Service 层（业务逻辑）               │
-│ - 业务规则、事务管理                 │
-│ - 调用 Repository                    │
+│ 辅助包（quota / heartbeat / auth）  │
+│ - 跨 handler 共享的业务能力          │
 └──────────────┬──────────────────────┘
                │ 调用
 ┌──────────────▼──────────────────────┐
-│ Repository 层（数据访问）            │
-│ - CRUD、查询                         │
-│ - 不含业务逻辑                       │
-└──────────────┬──────────────────────┘
-               │ 调用
-┌──────────────▼──────────────────────┐
-│ Model 层（数据模型）                 │
-│ - 结构体定义、字段映射               │
+│ Model 层 + Middleware 层            │
+│ - 30 个 GORM struct（纯数据结构）   │
+│ - auth/tenant/signature/ratelimit   │
 └─────────────────────────────────────┘
 ```
 
+**当前实现说明**：
+- 项目当前未拆分独立 service/repository 层，业务逻辑直接写在 handler 内（事务用 `deps.DB.Transaction()`）
+- 共享辅助能力封装在 `internal/quota` / `internal/heartbeat` / `internal/auth` 子包
+- 后续若 handler 过胖，可在 `internal/service/<module>/` 下抽出业务层（v0.4.x 重构计划）
+
 **禁止行为**：
-- ❌ Handler 直接操作数据库
-- ❌ Repository 包含业务逻辑
-- ❌ Service 直接返回 HTTP 响应
+- ❌ Handler 跨租户读写（必须经 `middleware.TenantScope` 注入 tenant_id）
+- ❌ 金额变动非事务（必须 `deps.DB.Transaction()` + `FOR UPDATE`）
 - ❌ Model 包含方法（仅纯数据结构）
+- ❌ 业务代码硬编码配置（必须走 `cfgCache.GetString("key", "默认值")`，铁律 05）
 
 ### 2.2 模块边界
 
-每个业务模块独立目录，互不直接依赖：
+按 handler 文件粒度划分，每个文件对应一个业务域：
 
 ```
-internal/service/
-├── auth/           # 认证模块（不依赖其他业务模块）
-├── tenant/         # 租户模块（依赖 auth）
-├── app/            # 应用模块（依赖 tenant）
-├── card/           # 卡密模块（依赖 app）
-├── device/         # 设备模块（依赖 card）
-├── verify/         # 验证模块（依赖 card, device）
-├── pay/            # 支付模块（依赖 tenant, order）
-├── agent/          # 代理模块（依赖 tenant, card）
-├── notice/         # 公告模块（独立）
-└── stats/          # 统计模块（依赖所有模块，只读）
+internal/handler/
+├── auth.go             # 三角色登录 + RefreshToken + AgentRegister（v0.3.6 待实现）
+├── session.go          # 登出 + 当前用户
+├── profile.go          # 三角色统一账号设置（ProfileMe + UpdateProfile + 2FA + LoginDevices）
+├── public.go           # H5 公共 API（PublicAppInfo + PublicCardTypes，v0.3.5）
+├── app.go              # 应用 CRUD + 密钥轮换
+├── card.go             # 卡类 + 卡密生成/封禁/解封/删除
+├── client.go           # 客户端验证 API（9 个端点）
+├── pay.go              # 平台总支付 + EpayTenantNotify（v0.3.6 待实现）
+├── admin.go            # 超管：sys_config CRUD + TestPayConfig
+├── admin_business.go   # 超管业务：dashboard + 租户/套餐/代理/公告 CRUD + 日志 + 安全
+├── admin_finance.go    # 超管财务：开发者提现审核 + 批量结算 + 对账报表
+├── tenant_business.go  # 开发者业务：dashboard + 应用/卡密/云变量/版本/代理/邀请码/公告/订单/设备
+├── tenant_finance.go   # 开发者财务：代理充值/提现审核（6 个 handler）
+├── tenant_settle.go    # 开发者结算：结算记录 + 余额概览 + 流水 + 提现申请
+├── agent_business.go   # 代理业务：dashboard + me + 卡类/卡密/订单/佣金/提现/通知
+├── log_worker.go       # 异步日志 worker（验证 4096 + 操作 2048）
+└── deps.go             # 依赖注入容器
 ```
 
-**跨模块通信**：
-- 通过接口依赖注入
-- 通过事件总线（异步场景）
-- 禁止直接 import 其他模块的内部实现
+**跨文件通信**：
+- 通过 `handler.Deps` 共享 DB/Redis/Crypto/Config/CfgCache
+- 通过 `RecordOperation(deps, c, ...)` 切面 helper 写操作日志
+- 通过 `writeVerifyLogCtx(deps, c, ...)` 切面 helper 异步写验证日志
 
 ### 2.3 设计模式
 
@@ -768,9 +774,14 @@ ENTRYPOINT ["./keyauth-api"]
 
 ### 8.3 数据库迁移
 
-- 使用 `golang-migrate/migrate`
-- 迁移文件命名：`{version}_{description}.up.sql` / `.down.sql`
-- 启动时自动迁移
+- 自研轻量级 SQL 文件迁移机制（`internal/migration/migrator.go`，v0.3.5）
+- `schema_migrations` 表跟踪版本号 + dirty 状态
+- 扫描 `*.up.sql` 文件，按文件名前缀数字排序（001 ~ 007）
+- 每个迁移在独立事务中执行，失败标记 dirty 阻止启动
+- 幂等：已应用的迁移不会重复执行
+- DSN 加 `multiStatements=true` 参数（迁移文件含多语句）
+- 启动时 `InitContainer` 调用 `migration.Run(db, cfg.Migration.Dir)` 自动执行
+- 配置：`MIGRATION_AUTO` / `MIGRATION_DIR` 环境变量覆盖
 - 禁止在生产环境手动改表
 
 ---
@@ -779,7 +790,7 @@ ENTRYPOINT ["./keyauth-api"]
 
 ### 9.1 四份核心文档
 
-详见 [references/09-docs-lifecycle.md](../../web-project-flow/references/09-docs-lifecycle.md)
+详见 `web-project-flow` skill 的 `references/09-docs-lifecycle.md`（已全局安装，可用 `/bdocs` 触发）
 
 | 文档 | 用途 | 更新时机 |
 |---|---|---|
@@ -787,6 +798,11 @@ ENTRYPOINT ["./keyauth-api"]
 | PROJECT.md | 项目文档 | 架构变更 |
 | SPEC.md | 规范文档 | 规则变更 |
 | TODO.md | 待完成文档 | 任务调整 |
+
+**联动校验铁律**：
+- TODO 中标记完成的条目必须出现在对应版本的 CHANGELOG 中
+- PROJECT 中描述的功能必须与 SPEC 中的规范一致
+- 已移除功能必须同时从 PROJECT 中删除并在 CHANGELOG 中记录
 
 ### 9.2 API 文档
 
@@ -806,6 +822,6 @@ ENTRYPOINT ["./keyauth-api"]
 
 ---
 
-**文档版本**：0.1.0  
-**最后更新**：2026-07-19  
+**文档版本**：0.3.5  
+**最后更新**：2026-07-20  
 **维护者**：KeyAuth SaaS Team
