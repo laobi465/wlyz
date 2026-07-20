@@ -919,3 +919,89 @@ type LoginGeoAlert struct {
 }
 
 func (LoginGeoAlert) TableName() string { return "login_geo_alert" }
+
+// ============== v0.6.0 高级分析（用户行为 / 卡密画像 / 风险评分） ==============
+
+// UserBehaviorProfile 终端用户行为画像（按日聚合）
+// 数据源：log_verify 表按 (end_user_id, stat_date) 聚合
+// 唯一索引：(end_user_id, stat_date)
+type UserBehaviorProfile struct {
+	ID              uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	TenantID        uint64    `gorm:"index;not null" json:"tenant_id"`
+	AppID           uint64    `gorm:"index;not null" json:"app_id"`
+	EndUserID       uint64    `gorm:"index;not null" json:"end_user_id"`
+	StatDate        string    `gorm:"size:10;index;not null" json:"stat_date"` // YYYY-MM-DD
+	LoginCount      int       `gorm:"not null;default:0" json:"login_count"`
+	VerifyCount     int       `gorm:"not null;default:0" json:"verify_count"`
+	HeartbeatCount  int       `gorm:"not null;default:0" json:"heartbeat_count"`
+	BindCount       int       `gorm:"not null;default:0" json:"bind_count"`
+	UnbindCount     int       `gorm:"not null;default:0" json:"unbind_count"`
+	SuccessCount    int       `gorm:"not null;default:0" json:"success_count"`
+	FailCount       int       `gorm:"not null;default:0" json:"fail_count"`
+	BannedCount     int       `gorm:"not null;default:0" json:"banned_count"`
+	DistinctIPCount int       `gorm:"not null;default:0" json:"distinct_ip_count"`
+	DistinctDevCount int      `gorm:"column:distinct_device_count;not null;default:0" json:"distinct_device_count"`
+	FirstActiveAt   *time.Time `json:"first_active_at"`
+	LastActiveAt    *time.Time `json:"last_active_at"`
+	CreatedAt       time.Time `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+	UpdatedAt       time.Time `gorm:"not null;default:CURRENT_TIMESTAMP;ON UPDATE:CURRENT_TIMESTAMP" json:"updated_at"`
+}
+
+func (UserBehaviorProfile) TableName() string { return "user_behavior_profile" }
+
+// CardUsageProfile 卡密使用画像（按日聚合）
+// 数据源：log_verify 表按 (card_id, stat_date) 聚合
+// 唯一索引：(card_id, stat_date)
+type CardUsageProfile struct {
+	ID               uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	TenantID         uint64    `gorm:"index;not null" json:"tenant_id"`
+	AppID            uint64    `gorm:"index;not null" json:"app_id"`
+	CardID           uint64    `gorm:"index;not null" json:"card_id"`
+	StatDate         string    `gorm:"size:10;index;not null" json:"stat_date"` // YYYY-MM-DD
+	VerifyCount      int       `gorm:"not null;default:0" json:"verify_count"`
+	HeartbeatCount   int       `gorm:"not null;default:0" json:"heartbeat_count"`
+	BindCount        int       `gorm:"not null;default:0" json:"bind_count"`
+	SuccessCount     int       `gorm:"not null;default:0" json:"success_count"`
+	FailCount        int       `gorm:"not null;default:0" json:"fail_count"`
+	BannedCount      int       `gorm:"not null;default:0" json:"banned_count"`
+	DeviceMismatchCount int    `gorm:"not null;default:0" json:"device_mismatch_count"`
+	DistinctIPCount  int       `gorm:"not null;default:0" json:"distinct_ip_count"`
+	DistinctDevCount int       `gorm:"column:distinct_device_count;not null;default:0" json:"distinct_device_count"`
+	FirstActiveAt    *time.Time `json:"first_active_at"`
+	LastActiveAt     *time.Time `json:"last_active_at"`
+	CreatedAt        time.Time `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+	UpdatedAt        time.Time `gorm:"not null;default:CURRENT_TIMESTAMP;ON UPDATE:CURRENT_TIMESTAMP" json:"updated_at"`
+}
+
+func (CardUsageProfile) TableName() string { return "card_usage_profile" }
+
+// UserRiskScore 用户风险评分累计表（实时更新）
+// 数据源：risk_event 表 + log_verify 异常模式实时累计
+// 唯一索引：(user_type, user_id)
+type UserRiskScore struct {
+	ID            uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	TenantID      uint64    `gorm:"index;not null;default:0" json:"tenant_id"`
+	AppID         uint64    `gorm:"index;not null;default:0" json:"app_id"`
+	UserType      string    `gorm:"size:32;index;not null" json:"user_type"` // admin/tenant/agent/enduser
+	UserID        uint64    `gorm:"index;not null" json:"user_id"`
+	Username      string    `gorm:"size:64;not null;default:''" json:"username"`
+	RiskScore     int       `gorm:"not null;default:0" json:"risk_score"` // 累计评分（衰减后）
+	RiskLevel     string    `gorm:"size:16;not null;default:low" json:"risk_level"` // low/medium/high/critical
+	EventCount    int       `gorm:"not null;default:0" json:"event_count"`
+	HighFreqHits  int       `gorm:"not null;default:0" json:"high_freq_hits"`
+	GeoAnomalyHits int      `gorm:"not null;default:0" json:"geo_anomaly_hits"`
+	NewDeviceHits int       `gorm:"not null;default:0" json:"new_device_hits"`
+	AbnormalUAHits int      `gorm:"not null;default:0" json:"abnormal_ua_hits"`
+	FailRateHigh  int       `gorm:"not null;default:0" json:"fail_rate_high_hits"` // 失败率超阈值次数
+	MultiIPHits   int       `gorm:"not null;default:0" json:"multi_ip_hits"`      // 24h 内多 IP
+	MultiDevHits  int       `gorm:"not null;default:0" json:"multi_dev_hits"`     // 24h 内多设备
+	LastEventAt   *time.Time `json:"last_event_at"`
+	LastEvalAt    *time.Time `json:"last_eval_at"` // 最近一次评分重算时间
+	Banned        bool      `gorm:"index;not null;default:false" json:"banned"`
+	BannedReason  string    `gorm:"size:255;not null;default:''" json:"banned_reason"`
+	BannedAt      *time.Time `json:"banned_at"`
+	CreatedAt     time.Time `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+	UpdatedAt     time.Time `gorm:"not null;default:CURRENT_TIMESTAMP;ON UPDATE:CURRENT_TIMESTAMP" json:"updated_at"`
+}
+
+func (UserRiskScore) TableName() string { return "user_risk_score" }

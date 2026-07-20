@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/your-org/keyauth-saas/apps/server/internal/analysis"
 	"github.com/your-org/keyauth-saas/apps/server/internal/config"
 	"github.com/your-org/keyauth-saas/apps/server/internal/handler"
 	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
@@ -61,15 +62,24 @@ func main() {
 
 	// 4.1 启动登录失败日志异步消费 worker（v0.3.1）
 	deps := &handler.Deps{
-		DB:       container.DB,
-		Redis:    container.Redis,
-		Crypto:   container.Crypto,
-		Config:   container.Config,
-		CfgCache: container.ConfigCache(),
+		DB:          container.DB,
+		Redis:       container.Redis,
+		Crypto:      container.Crypto,
+		Config:      container.Config,
+		CfgCache:    container.ConfigCache(),
+		AnalysisMgr: analysis.NewManager(container.DB, container.ConfigCache()), // v0.6.0 高级分析
 	}
 	handler.StartLoginFailureWorker(deps)
 	handler.StartVerifyLogWorker(deps)
 	handler.StartOperationLogWorker(deps)
+
+	// 4.2 v0.6.0 启动高级分析聚合 worker（后台 goroutine）
+	// 职责：定时聚合 log_verify → user_behavior_profile + card_usage_profile + 重算 user_risk_score
+	// 间隔从 sys_config analysis.aggregate_interval_seconds 读取（默认 3600s）
+	// 铁律 06：worker 异常不阻断主流程，ctx 随服务退出取消
+	analysisCtx, analysisCancel := context.WithCancel(context.Background())
+	defer analysisCancel()
+	go analysis.StartAggregationWorker(analysisCtx, deps.AnalysisMgr)
 
 	// 5. 启动 HTTP 服务
 	srv := &http.Server{

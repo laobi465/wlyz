@@ -4,6 +4,7 @@ package router
 import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/your-org/keyauth-saas/apps/server/internal/analysis"
 	"github.com/your-org/keyauth-saas/apps/server/internal/config"
 	"github.com/your-org/keyauth-saas/apps/server/internal/handler"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
@@ -57,12 +58,13 @@ func Register(container *config.Container) *gin.Engine {
 
 	// 初始化依赖注入（简化版直接构造，正式版应用 wire/fx）
 	deps := &handler.Deps{
-		DB:       container.DB,
-		Redis:    container.Redis,
-		Crypto:   container.Crypto,
-		Config:   container.Config,
-		CfgCache: container.ConfigCache(),
-		RiskMgr:  risk.NewManager(container.DB, container.ConfigCache()), // v0.4.0 风控规则引擎
+		DB:          container.DB,
+		Redis:       container.Redis,
+		Crypto:      container.Crypto,
+		Config:      container.Config,
+		CfgCache:    container.ConfigCache(),
+		RiskMgr:     risk.NewManager(container.DB, container.ConfigCache()),      // v0.4.0 风控规则引擎
+		AnalysisMgr: analysis.NewManager(container.DB, container.ConfigCache()), // v0.6.0 高级分析
 	}
 
 	// ----- 客户端验证 API（HMAC 签名鉴权） -----
@@ -207,6 +209,25 @@ func Register(container *config.Container) *gin.Engine {
 		adminAuth.GET("/security/geo_alerts", handler.AdminListGeoAlerts(deps))
 		adminAuth.POST("/security/geo_alerts/:id/acknowledge", handler.AdminAckGeoAlert(deps))
 		adminAuth.POST("/security/geo_alerts/:id/close", handler.AdminCloseGeoAlert(deps))
+
+		// v0.6.0 高级分析（用户行为分析 / 卡密使用画像 / 风险用户识别）
+		// 铁律 05：所有阈值/权重/开关走 sys_config analysis.* 实时调整
+		adminAuth.GET("/analysis/behavior/overview", handler.AdminBehaviorOverview(deps))
+		adminAuth.GET("/analysis/behavior/users", handler.AdminListUserBehaviors(deps))
+		adminAuth.GET("/analysis/behavior/users/:id", handler.AdminGetUserBehaviorDetail(deps))
+		adminAuth.GET("/analysis/behavior/trend", handler.AdminBehaviorTrend(deps))
+		adminAuth.GET("/analysis/card_profile/overview", handler.AdminCardProfileOverview(deps))
+		adminAuth.GET("/analysis/card_profile/cards", handler.AdminListCardProfiles(deps))
+		adminAuth.GET("/analysis/card_profile/cards/:id", handler.AdminGetCardProfileDetail(deps))
+		adminAuth.GET("/analysis/card_profile/trend", handler.AdminCardProfileTrend(deps))
+		adminAuth.GET("/analysis/risk/overview", handler.AdminRiskUserOverview(deps))
+		adminAuth.GET("/analysis/risk/users", handler.AdminListRiskUsers(deps))
+		adminAuth.GET("/analysis/risk/users/:user_type/:id", handler.AdminGetRiskUserDetail(deps))
+		adminAuth.POST("/analysis/risk/users/:user_type/:id/ban", handler.AdminBanRiskUser(deps))
+		adminAuth.POST("/analysis/risk/users/:user_type/:id/unban", handler.AdminUnbanRiskUser(deps))
+		adminAuth.POST("/analysis/risk/reevaluate/:user_type/:id", handler.AdminReevaluateRiskUser(deps))
+		adminAuth.POST("/analysis/risk/reevaluate_all", handler.AdminReevaluateAllRiskUsers(deps))
+		adminAuth.POST("/analysis/aggregate/trigger", handler.AdminTriggerAggregation(deps))
 
 		// 支付结算管理（v0.2.3 + v0.3.4 升级）
 		adminAuth.GET("/settlements", handler.AdminListSettlements(deps))

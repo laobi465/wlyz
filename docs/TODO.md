@@ -424,14 +424,15 @@
 - [x] [已完成 2026-07-20] 企业微信机器人通知 - v0.5.0（v0.5.0 集成扩展批次 1：wecomWebhookProvider 实现 + markdown 消息类型 + subject 加粗前缀作为标题 + 2 项 notify.wecom.* sys_config + 2 个 HTTP 测试用例）
 - [x] [已完成 2026-07-20] Telegram Bot 通知 - v0.5.0（v0.5.0 集成扩展批次 1：telegramWebhookProvider 实现 + MarkdownV2 渲染 + escapeTelegramMarkdown 16 字符转义（_*[]()~`>#+-=|{}.!）+ 4096 字符上限自动截断 + "（已截断）"提示 + telegramAPIBase 可测试覆盖 + 3 项 notify.telegram.* sys_config + 3 个 HTTP 测试用例含长消息截断场景）
 
-#### 主题市场
-- [ ] [待开始] 多套主题模板 - v0.6.0
-- [ ] [待开始] 主题编辑器 - v0.6.0
+#### 主题市场（已暂停）
+- [ ] [已延期 2026-07-20] 多套主题模板 - v0.6.0（用户决策：暂停 v0.6.0 主题开发，优先推进高级分析）
+- [ ] [已延期 2026-07-20] 主题编辑器 - v0.6.0（用户决策：暂停 v0.6.0 主题开发，优先推进高级分析）
 
 #### 高级分析
-- [ ] [待开始] 用户行为分析 - v0.6.0
-- [ ] [待开始] 卡密使用画像 - v0.6.0
-- [ ] [待开始] 风险用户识别 - v0.6.0
+- [x] [已完成 2026-07-20] 用户行为分析 - v0.6.0（migration 032 user_behavior_profile 表 + 21 项 analysis.* sys_config；analysis 包 behavior.go：AggregateUserBehaviorForDate 按 (end_user_id, stat_date) 聚合 log_verify 反查 app_card.end_user_id + 内存聚合 action/result 计数 + distinct IP/Device + upsert 唯一索引；GetBehaviorOverview KPI 总览 + ListUserBehaviors 分页列表 + GetUserBehaviorDetail 按日序列 + GetBehaviorTrend 全局趋势；15 个测试用例覆盖空数据/无 card_id/卡密未绑/正常/幂等/Overview/List/Detail/Trend 全 PASS）
+- [x] [已完成 2026-07-20] 卡密使用画像 - v0.6.0（migration 032 card_usage_profile 表；analysis 包 card_profile.go：AggregateCardProfileForDate 直接按 card_id 聚合（无需 JOIN app_card）+ device_mismatch_count 卡密共享特征 + maskCardKey 卡密脱敏（前4+****+后4，长度<=8 返回 ****）；GetCardProfileOverview/ListCardProfiles/GetCardProfileDetail/GetCardProfileTrend；6 个测试用例覆盖空/正常/Overview/List 脱敏/Detail/Trend 全 PASS）
+- [x] [已完成 2026-07-20] 风险用户识别 - v0.6.0（migration 032 user_risk_score 表；analysis 包 risk_user.go：ReevaluateUserRiskScore 查 risk_event + evaluateEndUserAnomalies 查 24h log_verify 异常模式（失败率 >50% / 多 IP >=3 / 多设备 >=5）→ 计算评分 raw_score=Σ(hits×weight) → DecayScore 时间衰减（daysSinceLastEvent × 1/decayDays）→ upsert user_risk_score → 自动封禁检查（decayed_score >= critical_threshold 标记 banned=true）；ReevaluateAllRiskScores 批量重算；GetRiskUserOverview/ListRiskUsers/GetRiskUserDetail；BanUser/UnbanUser 手动操作；13 个测试用例覆盖 NoEvents/WithRiskEvents/Decay/EndUserAnomalies_FailRate/EndUserAnomalies_MultiIP/AutoBan/ReevaluateAll/Overview/ListFilterByLevel/Detail/BanExisting/BanNew/Unban 全 PASS）
+- [x] [已完成 2026-07-20] 聚合 Worker + Admin API + 路由注册 - v0.6.0（analysis 包 worker.go：StartAggregationWorker 阻塞调用 + runAggregationOnce 聚合昨日+今日 + 重算风险评分 + 间隔从 sys_config analysis.aggregate_interval_seconds 读取（默认 3600s，最小 60s 保护）+ RunAggregationOnceSync 同步版本；handler/analysis.go 16 个 admin 端点：4 behavior + 4 card_profile + 4 risk（含 ban/unban）+ reevaluate + reevaluate_all + aggregate/trigger；router.go 注册 /admin/analysis/* 路由组；deps.go 扩展 AnalysisMgr *analysis.Manager；main.go 启动后台 goroutine analysisCtx + defer analysisCancel；44 个测试用例全 PASS，go build ./... 通过）
 
 ---
 
