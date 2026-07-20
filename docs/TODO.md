@@ -411,8 +411,8 @@
 - [x] [已完成 2026-07-20] 数据看板数字滚动动效 - v0.5.0（新建 CountUp.vue 组件：requestAnimationFrame + easeOutCubic 缓动 + 零依赖（不引入 gsap）+ 支持 prefix/suffix/decimals/separator/duration/autoplay 6 props + onBeforeUnmount 自动取消 raf + font-variant-numeric: tabular-nums 防抖动；接入 admin/tenant/agent 3 个 Dashboard 共 20 处数字滚动（含 ¥ 金额 decimals=2））
 
 #### 国际化
-- [ ] [待开始] 后台 i18n（中/英） - v0.5.0
-- [ ] [待开始] SDK 多语言文档 - v0.5.0
+- [x] [已完成 2026-07-20] 后台 i18n（中/英） - v0.5.0（vue-i18n@9 接入 + i18n/index.ts 入口 + i18n/locales/zh-CN.ts & en-US.ts 词汇表 7 大模块：common/theme/language/layout/login/register/route + LanguageSwitcher.vue 语言切换器接入 BasicLayout 顶栏 + 登录页右上角 + main.ts 注册 i18n + applyLocale 应用 lang 属性 + App.vue ElConfigProvider 响应式切换 Element Plus 内置组件语言 + BasicLayout 接入 i18n（账号设置/退出登录/确定退出登录吗/提示/用户） + 路由标题响应式翻译（meta.titleKey + te/t 辅助 + 监听 locale 变化动态更新 document.title） + login/index.vue 全文翻译 + 表单校验规则响应式跟随 locale + router 每条路由加 titleKey 共 47 条 + 首次访问根据浏览器语言自动选择 + localStorage 持久化 keyauth-locale）
+- [x] [已完成 2026-07-20] SDK 多语言文档 - v0.5.0（8 个 SDK 各生成 README.en.md：python/nodejs/php/go/java/csharp/cpp/epl，统一结构：标题 + Installation + Quick Start + 9 API Reference + Signature Algorithm + Error Handling + Error Codes + Compliance + License；每个 SDK 嵌入对应签名兼容性说明如 Python OpenSSL 1.1+ 回退 / Go 无回退字节级对齐 / Java JDK 17+ 与 11-16 回退 / C# BouncyCastle 推荐 / C++ EVP_sha512_256 / 易语言 HMAC-SHA256 + crypto.go:165 回退场景；8 个中文 README 顶部加语言切换链接 **中文** | English）
 
 #### 集成扩展
 - [ ] [待开始] 独角数卡对接 - v0.5.0
@@ -497,7 +497,7 @@
 | v0.3.6 | 2026-07-20 | ✅ 已完成（剩余 P1 收尾 + 单元测试 + 客户端 SDK 签名对齐测试） |
 | v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移 + JWT jti 单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 + 全语言 SDK 扩展 + 多级代理体系 + 灰度发布 + 在线更新 + 数据备份恢复 + 监控告警 + 通知系统 + 终端用户体系 + API 开放平台 + 管理员弹窗通知 已完成；14 项迁移全绿） |
 | v0.4.x | 2026-07-20 | ✅ 已完成（v0.4.0 收尾 + Prometheus/Grafana 集成 + 12 项 P0/P1 残留项：S-04/D-15/U-11~14 全部闭环 + 阿里云 SMS 完整签名 + SMTP SSL 包装 + 套餐审核 + 租户安全 + H5 终端用户 4 页 + 帮助中心 + 联系客服） |
-| v0.5.0 | 进行中 | ⏳ 进行中（性能优化批次 4 项已完成：MySQL 读写分离 + Redis 三模式 + snowflake Redis 协调 + 卡密批量生成 577k/s；UX 批次 4 项已完成：多主题切换 + 暗黑模式 + 移动端响应式优化 + 数字滚动动效；待开始：国际化 2 项 + 集成扩展 4 项） |
+| v0.5.0 | 进行中 | ⏳ 进行中（性能优化批次 4 项已完成：MySQL 读写分离 + Redis 三模式 + snowflake Redis 协调 + 卡密批量生成 577k/s；UX 批次 4 项已完成：多主题切换 + 暗黑模式 + 移动端响应式优化 + 数字滚动动效；国际化批次 2 项已完成：后台 i18n 中英 + SDK 多语言文档；待开始：集成扩展 4 项） |
 
 ---
 

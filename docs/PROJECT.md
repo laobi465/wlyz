@@ -43,6 +43,8 @@
 - 多主题架构（v0.5.0 CSS 变量层 + 5 主题 light/dark/blue/purple/green + auto 跟随系统 + ThemeSwitcher 顶栏切换器 + theme store 持久化到 localStorage + EP dark css-vars 兜底）
 - 数字滚动动效（v0.5.0 CountUp 组件，requestAnimationFrame + easeOutCubic 缓动，零依赖，接入三角色 Dashboard 共 20 处数字）
 - 响应式断点统一（v0.5.0 mobile/mobile-sm/tablet/desktop 四档 mixin，全站零硬编码 @media）
+- 后台 i18n 国际化（v0.5.0 vue-i18n@9 + zh-CN/en-US 双语 + LanguageSwitcher 顶栏切换器 + 路由标题响应式翻译 + ElConfigProvider 同步 EP 组件语言 + 浏览器语言自动检测 + localStorage 持久化）
+- SDK 多语言文档（v0.5.0 八语言 SDK 各提供中英双版 README：Python / Node.js / PHP / Go / Java / C# / C++ / 易语言，统一结构 + 签名兼容性说明 + 语言切换链接）
 - 心跳保活 + 离线宽限期
 - 云变量远程下发
 - 多语言 SDK（Python / Node.js / Java / C# / Go / PHP / C++ / 易语言）
@@ -83,7 +85,7 @@
 
 | 层级 | 选型 |
 |---|---|
-| 前端 | Vue3 + TypeScript + Element Plus + Vite + Pinia；v0.5.0 多主题架构（CSS 变量层 + 5 主题 light/dark/blue/purple/green + auto 跟随系统）+ 数字滚动动效（CountUp 组件，rAF + easeOutCubic，零依赖）+ 响应式 mixin（mobile/mobile-sm/tablet/desktop 四档断点统一） |
+| 前端 | Vue3 + TypeScript + Element Plus + Vite + Pinia；v0.5.0 多主题架构（CSS 变量层 + 5 主题 light/dark/blue/purple/green + auto 跟随系统）+ 数字滚动动效（CountUp 组件，rAF + easeOutCubic，零依赖）+ 响应式 mixin（mobile/mobile-sm/tablet/desktop 四档断点统一）+ i18n 国际化（vue-i18n@9 + zh-CN/en-US 双语词汇表 + LanguageSwitcher 切换器 + ElConfigProvider 响应式同步 EP 内置组件语言 + 首次访问根据浏览器语言自动选择 + localStorage 持久化） |
 | 后端 | Go 1.22 + Gin + GORM |
 | 数据库 | MySQL 8.0（v0.5.0 支持主从读写分离）+ Redis 7（v0.5.0 支持 single/sentinel/cluster 三模式） |
 | 部署 | Docker Compose + 宝塔面板 Docker；v0.5.0 支持多实例水平扩展（snowflake workerID Redis 协调分配） |

@@ -1,5 +1,7 @@
 # KeyAuth PHP SDK
 
+> **中文** | [English](README.en.md)
+
 > KeyAuth SaaS 官方 PHP 客户端 SDK —— 多租户卡密验证客户端
 
 [![PHP](https://img.shields.io/badge/PHP-7.2+-777BB4.svg)](https://php.net)

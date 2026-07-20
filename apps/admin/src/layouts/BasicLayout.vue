@@ -79,9 +79,9 @@
 
             <el-breadcrumb separator="/" class="hidden-mobile">
               <el-breadcrumb-item :to="{ path: homePath }">{{ homeTitle }}</el-breadcrumb-item>
-              <el-breadcrumb-item>{{ route.meta.title }}</el-breadcrumb-item>
+              <el-breadcrumb-item>{{ currentRouteTitle }}</el-breadcrumb-item>
             </el-breadcrumb>
-            <span class="page-title-mobile visible-mobile-only">{{ route.meta.title }}</span>
+            <span class="page-title-mobile visible-mobile-only">{{ currentRouteTitle }}</span>
           </div>
 
           <div class="header-right">
@@ -91,15 +91,18 @@
             <!-- v0.5.0 多主题切换器 -->
             <ThemeSwitcher />
 
+            <!-- v0.5.0 语言切换器 -->
+            <LanguageSwitcher />
+
             <el-dropdown @command="handleCommand">
               <span class="user-info">
                 <el-avatar :size="28" icon="UserFilled" />
-                <span class="username hidden-mobile">{{ auth.username || '用户' }}</span>
+                <span class="username hidden-mobile">{{ auth.username || t('layout.user') }}</span>
               </span>
               <template #dropdown>
                 <el-dropdown-menu>
-                  <el-dropdown-item command="profile">账号设置</el-dropdown-item>
-                  <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
+                  <el-dropdown-item command="profile">{{ t('layout.profile') }}</el-dropdown-item>
+                  <el-dropdown-item command="logout" divided>{{ t('layout.logout') }}</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
@@ -123,6 +126,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
+import { useI18n } from 'vue-i18n'
 import { Menu, Fold, Expand } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { useSysConfigStore } from '@/stores/sysConfig'
@@ -149,6 +153,7 @@ const props = defineProps<{
   onLogout?: () => Promise<void>
 }>()
 
+const { t, te } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
@@ -160,6 +165,18 @@ const isMobile = ref(false)
 
 const defaultLogo = props.logoText || 'KeyAuth SaaS'
 
+/**
+ * v0.5.0 国际化：路由标题翻译辅助
+ * - 若 meta.titleKey 存在，用 i18n 翻译
+ * - 否则回退到 meta.title（向后兼容）
+ */
+const translateRouteTitle = (meta: any): string => {
+  if (meta?.titleKey && te(meta.titleKey)) {
+    return t(meta.titleKey)
+  }
+  return (meta?.title as string) || ''
+}
+
 const menus = computed<MenuItem[]>(() => {
   if (props.customMenus?.length) return props.customMenus
   const target = router.getRoutes().find(r => r.path === props.routePrefix)
@@ -168,15 +185,18 @@ const menus = computed<MenuItem[]>(() => {
     .filter(child => !child.meta?.public)
     .map(child => ({
       path: `${props.routePrefix}/${child.path}`,
-      title: (child.meta?.title as string) || '',
+      title: translateRouteTitle(child.meta),
       icon: (child.meta?.icon as string) || 'Menu'
     }))
 })
 
+// 当前路由标题（响应式：i18n locale 变化时自动更新）
+const currentRouteTitle = computed(() => translateRouteTitle(route.meta))
+
 const handleCommand = async (cmd: string) => {
   if (cmd === 'logout') {
     try {
-      await ElMessageBox.confirm('确定退出登录吗？', '提示', { type: 'warning' })
+      await ElMessageBox.confirm(t('layout.confirmLogout'), t('common.tip'), { type: 'warning' })
     } catch {
       return
     }
@@ -207,6 +227,12 @@ const checkMobile = () => {
 }
 
 const defaultLogoText = computed(() => sysConfig.platformName || defaultLogo)
+
+// 路由标题国际化：动态更新 document.title
+watch([currentRouteTitle, () => route.meta.title], () => {
+  const title = currentRouteTitle.value || (route.meta.title as string) || ''
+  document.title = `${title} - KeyAuth SaaS`
+}, { immediate: true })
 
 onMounted(async () => {
   await sysConfig.load()

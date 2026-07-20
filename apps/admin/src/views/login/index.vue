@@ -11,13 +11,18 @@
       <div class="login-header">
         <img src="@/assets/logo.svg" alt="logo" />
         <h1>{{ sysConfig.platformName || 'KeyAuth SaaS' }}</h1>
-        <p>多租户卡密验证平台</p>
+        <p>{{ t('login.subtitle') }}</p>
+      </div>
+
+      <!-- v0.5.0 国际化：语言切换器（右上角） -->
+      <div class="lang-toggle">
+        <LanguageSwitcher />
       </div>
 
       <el-tabs v-model="activeRole" class="login-tabs" stretch>
-        <el-tab-pane label="平台管理员" name="admin" />
-        <el-tab-pane label="开发者" name="tenant" />
-        <el-tab-pane label="代理" name="agent" />
+        <el-tab-pane :label="t('login.tabAdmin')" name="admin" />
+        <el-tab-pane :label="t('login.tabTenant')" name="tenant" />
+        <el-tab-pane :label="t('login.tabAgent')" name="agent" />
       </el-tabs>
 
       <!-- 阶段 1：账号密码 -->
@@ -29,63 +34,65 @@
         label-position="top"
         @submit.prevent="handleLogin"
       >
-        <el-form-item label="账号" prop="username">
-          <el-input v-model="form.username" placeholder="请输入账号" :prefix-icon="User" autocomplete="username" />
+        <el-form-item :label="t('login.account')" prop="username">
+          <el-input v-model="form.username" :placeholder="t('login.pleaseInputAccount')" :prefix-icon="User" autocomplete="username" />
         </el-form-item>
-        <el-form-item label="密码" prop="password">
+        <el-form-item :label="t('login.password')" prop="password">
           <el-input
             v-model="form.password"
             type="password"
             show-password
-            placeholder="请输入密码"
+            :placeholder="t('login.pleaseInputPassword')"
             :prefix-icon="Lock"
             autocomplete="current-password"
             @keyup.enter="handleLogin"
           />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" :loading="loading" class="login-btn" @click="handleLogin">登 录</el-button>
+          <el-button type="primary" :loading="loading" class="login-btn" @click="handleLogin">{{ t('login.submit') }}</el-button>
         </el-form-item>
       </el-form>
 
       <!-- 阶段 2：2FA 验证码 -->
       <el-form v-else label-position="top" @submit.prevent="handleTotpVerify">
-        <el-form-item label="动态验证码">
+        <el-form-item :label="t('login.totpLabel')">
           <el-input
             v-model="totpCode"
-            placeholder="请输入 6 位动态验证码"
+            :placeholder="t('login.totpPlaceholder')"
             :prefix-icon="Key"
             maxlength="6"
             @keyup.enter="handleTotpVerify"
           />
-          <p class="totp-hint">请打开身份验证器 App（如 Google Authenticator）输入 6 位数字</p>
+          <p class="totp-hint">{{ t('login.totpHint') }}</p>
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" :loading="loading" class="login-btn" @click="handleTotpVerify">验 证</el-button>
+          <el-button type="primary" :loading="loading" class="login-btn" @click="handleTotpVerify">{{ t('login.totpSubmit') }}</el-button>
         </el-form-item>
         <div class="totp-back">
-          <el-link type="info" :underline="false" @click="cancelTotp">返回登录</el-link>
+          <el-link type="info" :underline="false" @click="cancelTotp">{{ t('login.backToLogin') }}</el-link>
         </div>
       </el-form>
 
       <div class="login-footer">
-        <el-link v-if="activeRole === 'tenant'" type="primary" :underline="false" @click="goRegister">开发者注册</el-link>
-        <el-link v-if="activeRole === 'agent'" type="warning" :underline="false" @click="goAgentRegister">代理注册</el-link>
-        <el-link type="info" :underline="false" @click="goHome">返回首页</el-link>
+        <el-link v-if="activeRole === 'tenant'" type="primary" :underline="false" @click="goRegister">{{ t('login.registerTenant') }}</el-link>
+        <el-link v-if="activeRole === 'agent'" type="warning" :underline="false" @click="goAgentRegister">{{ t('login.registerAgent') }}</el-link>
+        <el-link type="info" :underline="false" @click="goHome">{{ t('login.backHome') }}</el-link>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue'
+import { ref, reactive, watch, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, type FormInstance } from 'element-plus'
+import { useI18n } from 'vue-i18n'
 import { User, Lock, Key } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { useSysConfigStore } from '@/stores/sysConfig'
 import { loginApi, type UserRole } from '@/api/auth'
 
+const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
@@ -103,13 +110,14 @@ const form = reactive({
   password: ''
 })
 
-const rules = {
-  username: [{ required: true, message: '请输入账号', trigger: 'blur' }],
+// v0.5.0 国际化：表单校验规则响应式跟随 locale
+const rules = computed(() => ({
+  username: [{ required: true, message: t('login.pleaseInputAccount'), trigger: 'blur' }],
   password: [
-    { required: true, message: '请输入密码', trigger: 'blur' },
-    { min: 8, message: '密码至少 8 位', trigger: 'blur' }
+    { required: true, message: t('login.pleaseInputPassword'), trigger: 'blur' },
+    { min: 8, message: t('login.passwordMinLength'), trigger: 'blur' }
   ]
-}
+}))
 
 // 切换角色时重置 2FA 状态
 watch(activeRole, () => {
@@ -133,7 +141,7 @@ const handleLogin = async () => {
       if (resp.totp_required && resp.temp_token) {
         tempToken.value = resp.temp_token
         totpRequired.value = true
-        ElMessage.info('请输入动态验证码')
+        ElMessage.info(t('login.totpRequired'))
         return
       }
 
@@ -147,7 +155,7 @@ const handleLogin = async () => {
         tenantId: resp.user?.tenant_id,
         expires_at: resp.expires_at
       })
-      ElMessage.success('登录成功')
+      ElMessage.success(t('login.success'))
 
       const redirect = (route.query.redirect as string) || auth.homePath
       router.replace(redirect)
@@ -161,7 +169,7 @@ const handleLogin = async () => {
 
 const handleTotpVerify = async () => {
   if (!totpCode.value || totpCode.value.length !== 6) {
-    ElMessage.warning('请输入 6 位动态验证码')
+    ElMessage.warning(t('login.totpInvalid'))
     return
   }
   loading.value = true
@@ -182,7 +190,7 @@ const handleTotpVerify = async () => {
       tenantId: resp.user?.tenant_id,
       expires_at: resp.expires_at
     })
-    ElMessage.success('登录成功')
+    ElMessage.success(t('login.success'))
 
     const redirect = (route.query.redirect as string) || auth.homePath
     router.replace(redirect)
@@ -227,6 +235,7 @@ sysConfig.load()
   padding: $spacing-md;
 }
 .login-box {
+  position: relative; // v0.5.0 国际化：为 lang-toggle 定位锚点
   width: 100%;
   max-width: 400px;
   padding: $spacing-xl;
@@ -259,6 +268,14 @@ sysConfig.load()
 }
 .login-tabs {
   margin-bottom: $spacing-md;
+}
+.lang-toggle {
+  position: absolute;
+  top: $spacing-md;
+  right: $spacing-md;
+  // 弱化视觉权重，避免抢占登录主流程注意力
+  opacity: 0.8;
+  &:hover { opacity: 1; }
 }
 .totp-hint {
   margin: 4px 0 0;

@@ -1,5 +1,7 @@
 # KeyAuth SaaS Node.js SDK
 
+> **中文** | [English](README.en.md)
+
 面向终端软件的客户端 SDK，封装 KeyAuth SaaS 9 个验证 API。**无第三方依赖**（仅用 Node.js 内置 `https` / `crypto` 模块）。
 
 ## 安装
