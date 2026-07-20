@@ -5,6 +5,8 @@
   <div class="cards-page">
     <PageHeader title="卡密管理" subtitle="批量生成与管理卡密">
       <template #actions>
+        <el-button @click="exportCards" :loading="exportLoading">导出 CSV</el-button>
+        <el-button @click="openImport">导入 CSV</el-button>
         <el-button type="primary" @click="openGenerate">批量生成卡密</el-button>
       </template>
     </PageHeader>
@@ -122,6 +124,58 @@
         <el-button type="primary" @click="resultVisible = false">完成</el-button>
       </div>
     </el-dialog>
+
+    <!-- 导入 CSV 对话框（v0.3.6） -->
+    <el-dialog v-model="importVisible" title="导入卡密 CSV" width="560px">
+      <el-alert type="info" :closable="false" show-icon style="margin-bottom: 12px">
+        CSV 格式：每行一张卡密明文（不含表头），支持引号包裹。导入后状态为 unused。
+      </el-alert>
+      <el-form :model="importForm" label-position="top">
+        <el-form-item label="所属应用" required>
+          <el-select v-model="importForm.app_id" placeholder="选择应用" @change="onImportAppChange">
+            <el-option v-for="a in apps" :key="a.id" :label="a.name" :value="a.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="卡类" required>
+          <el-select v-model="importForm.card_type_id" placeholder="选择卡类">
+            <el-option v-for="ct in importCardTypes" :key="ct.id" :label="ct.name + ' ¥' + ct.price" :value="ct.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="前缀（可选）">
+          <el-input v-model="importForm.prefix" placeholder="留空取卡类名前 16 字符" maxlength="16" />
+        </el-form-item>
+        <el-form-item label="分组标签（可选）">
+          <el-input v-model="importForm.group_tag" maxlength="64" />
+        </el-form-item>
+        <el-form-item label="CSV 文件" required>
+          <input ref="fileInputRef" type="file" accept=".csv,text/csv" @change="onFileChange" />
+          <div v-if="importForm.cards.length" class="hint">
+            已解析 {{ importForm.cards.length }} 张卡密
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="importVisible = false">取消</el-button>
+        <el-button type="primary" :loading="importLoading" @click="confirmImport">导入</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 导入结果对话框（v0.3.6） -->
+    <el-dialog v-model="importResultVisible" title="导入结果" width="600px">
+      <el-alert :type="importResult.failed_count > 0 ? 'warning' : 'success'" :closable="false" show-icon>
+        成功 {{ importResult.success_count }} 张，失败 {{ importResult.failed_count }} 张，空行 {{ importResult.empty_count }}，重复 {{ importResult.dup_count }}
+      </el-alert>
+      <div v-if="importResult.failed.length" class="keys-list">
+        <div class="hint" style="margin: 12px 0 8px">失败明细：</div>
+        <div v-for="(f, idx) in importResult.failed" :key="idx" class="key-row">
+          <span class="key-text">行 {{ f.row }}: {{ f.card_key }}</span>
+          <span class="hint">{{ f.reason }}</span>
+        </div>
+      </div>
+      <div class="result-actions">
+        <el-button type="primary" @click="importResultVisible = false">完成</el-button>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -132,6 +186,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import {
   listCardsApi, generateCardsApi, banCardApi, unbanCardApi, deleteCardApi,
+  exportCardsApi, importCardsApi, type ImportCardsResult,
   type Card, type CardStatus, type CardTypeKind
 } from '@/api/cards'
 import { listAppsApi, type App } from '@/api/apps'
@@ -345,6 +400,120 @@ const copyAll = () => {
   }).catch(() => {
     ElMessage.error('复制失败')
   })
+}
+
+// ============== CSV 导出/导入（v0.3.6） ==============
+
+const exportLoading = ref(false)
+const importVisible = ref(false)
+const importLoading = ref(false)
+const importResultVisible = ref(false)
+const fileInputRef = ref<HTMLInputElement | null>(null)
+const importResult = reactive<ImportCardsResult>({
+  batch_no: '', success_count: 0, failed_count: 0, empty_count: 0, dup_count: 0, failed: []
+})
+
+const importForm = reactive({
+  app_id: undefined as number | undefined,
+  card_type_id: undefined as number | undefined,
+  prefix: '',
+  group_tag: '',
+  cards: [] as string[]
+})
+
+const importCardTypes = computed(() => {
+  if (!importForm.app_id) return []
+  return cardTypes.value.filter(ct => ct.app_id === importForm.app_id)
+})
+
+const exportCards = async () => {
+  exportLoading.value = true
+  try {
+    const blob = await exportCardsApi({
+      app_id: filter.app_id,
+      status: filter.status,
+      batch_no: filter.batch_no
+    })
+    // 铁律 04：用真实 blob 数据触发下载，无硬编码假数据
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `cards_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    ElMessage.success('导出成功')
+  } catch {
+    // 错误已由 http 拦截器处理
+  } finally {
+    exportLoading.value = false
+  }
+}
+
+const openImport = () => {
+  Object.assign(importForm, { app_id: undefined, card_type_id: undefined, prefix: '', group_tag: '', cards: [] })
+  if (fileInputRef.value) fileInputRef.value.value = ''
+  importVisible.value = true
+}
+
+const onImportAppChange = () => {
+  importForm.card_type_id = undefined
+}
+
+const onFileChange = (e: Event) => {
+  const target = e.target as HTMLInputElement
+  if (!target.files || !target.files[0]) return
+  const file = target.files[0]
+  // 简易 CSV 解析：按行读取，支持引号包裹（含逗号的字段）
+  const reader = new FileReader()
+  reader.onload = () => {
+    const text = String(reader.result || '')
+    const lines = text.split(/\r?\n/).filter(l => l.trim() !== '')
+    const cards: string[] = []
+    for (const line of lines) {
+      // 跳过可能的表头（如果第一列是 "CardKey" 或 "card_key"）
+      if (line.toLowerCase().startsWith('cardkey') || line.toLowerCase().startsWith('card_key')) continue
+      // 简易解析：去除首尾引号
+      let v = line.trim()
+      if (v.startsWith('"') && v.endsWith('"')) {
+        v = v.slice(1, -1).replace(/""/g, '"')
+      }
+      if (v) cards.push(v)
+    }
+    importForm.cards = cards
+  }
+  reader.readAsText(file, 'UTF-8')
+}
+
+const confirmImport = async () => {
+  if (!importForm.app_id || !importForm.card_type_id) {
+    ElMessage.warning('请选择应用和卡类')
+    return
+  }
+  if (importForm.cards.length === 0) {
+    ElMessage.warning('请上传 CSV 文件')
+    return
+  }
+  importLoading.value = true
+  try {
+    const resp = await importCardsApi({
+      app_id: importForm.app_id,
+      card_type_id: importForm.card_type_id,
+      prefix: importForm.prefix || undefined,
+      group_tag: importForm.group_tag || undefined,
+      cards: importForm.cards
+    })
+    Object.assign(importResult, resp)
+    importVisible.value = false
+    importResultVisible.value = true
+    ElMessage.success(`成功导入 ${resp.success_count} 张卡密`)
+    loadList()
+  } catch {
+    // 错误已由 http 拦截器处理
+  } finally {
+    importLoading.value = false
+  }
 }
 
 onMounted(async () => {

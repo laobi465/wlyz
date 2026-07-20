@@ -159,7 +159,7 @@ internal/handler/
 ├── profile.go          # 三角色统一账号设置（ProfileMe + UpdateProfile + 2FA + LoginDevices）
 ├── public.go           # H5 公共 API（PublicAppInfo + PublicCardTypes，v0.3.5）
 ├── app.go              # 应用 CRUD + 密钥轮换
-├── card.go             # 卡类 + 卡密生成/封禁/解封/删除
+├── card.go             # 卡类 + 卡密生成/封禁/解封/删除 + CSV 导入导出（v0.3.6）+ 封禁联动设备下线（v0.3.6）
 ├── client.go           # 客户端验证 API（9 个端点）
 ├── pay.go              # 平台总支付 + EpayTenantNotify（v0.3.6 待实现）
 ├── admin.go            # 超管：sys_config CRUD + TestPayConfig
@@ -726,7 +726,50 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 - **异步处理**：日志写入、通知发送用消息队列
 - **CDN**：静态资源走 CDN
 
-### 7.3 慢查询监控
+### 7.3 v0.3.6 新增接口规范
+
+#### 卡密 CSV 导出
+- 路由：`GET /api/v1/tenant/cards/export`
+- 鉴权：tenant 角色 + Authorization Header
+- 查询参数：`app_id` / `status` / `batch_no` / `keyword`（与列表 API 一致）
+- 响应：`Content-Type: text/csv; charset=utf-8` + UTF-8 BOM + `Content-Disposition: attachment`
+- 条数上限：从 `sys_config.card.export.max_rows` 读取，默认 10000，最大 100000（兜底防拖垮服务）
+- 字段顺序：ID,AppID,CardTypeID,CardKey,Checksum,Status,BatchNo,Prefix,GroupTag,DurationSeconds,UsedCount,MaxUses,ActivatedAt,ExpiresAt,LastVerifyAt,CreatedBy,CreatorType,OrderID,BannedAt,BannedReason,CreatedAt
+
+#### 卡密 CSV 导入
+- 路由：`POST /api/v1/tenant/cards/import`
+- 鉴权：tenant 角色
+- 请求体：JSON（前端解析 CSV 后传明文数组）
+  ```json
+  {
+    "app_id": 1,
+    "card_type_id": 1,
+    "prefix": "VIP",
+    "group_tag": "",
+    "duration_seconds": 0,
+    "max_uses": 0,
+    "cards": ["XXX-YYYY-ZZZZ", "..."]
+  }
+  ```
+- 条数上限：从 `sys_config.card.import.max_rows` 读取，默认 5000，最大 50000
+- 行为：
+  - 未传 `duration_seconds` / `max_uses` / `prefix` 时取卡类默认值
+  - 套餐配额校验（quota.CheckMaxCards）
+  - 卡密明文去重 + 空值过滤
+  - 事务批量入库，重复 hash（SHA-512）跳过并记失败明细
+  - 批次号前缀 `I`（Import）+ 日期 + 用户 ID 后 6 位
+- 响应：`{ batch_no, success_count, failed_count, empty_count, dup_count, failed[] }`
+- 操作日志：自动写入 `log_operation`（module=card, action=import_csv）
+
+#### 封禁卡密联动设备下线
+- 触发：`POST /api/v1/tenant/cards/:id/ban` 成功后
+- 行为：
+  1. 查询 `app_device` 中 `card_id = ? AND tenant_id = ? AND status = 'active'` 的所有设备
+  2. 循环调 `heartbeat.Remove(ctx, rdb, appID, deviceID)` 清 Redis ZSET + Hash
+  3. DB 批量更新 `app_device.status = 'banned'` + `last_heartbeat_at = NULL`
+- 容错：Redis 清理失败不阻塞封禁主流程（卡密已 banned，下次 verify 会因 card.status 拒绝）
+
+### 7.4 慢查询监控
 
 - 慢查询阈值：200ms
 - 慢查询日志：单独文件，便于分析
@@ -822,6 +865,6 @@ ENTRYPOINT ["./keyauth-api"]
 
 ---
 
-**文档版本**：0.3.5  
+**文档版本**：0.3.6  
 **最后更新**：2026-07-20  
 **维护者**：KeyAuth SaaS Team

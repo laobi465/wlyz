@@ -159,6 +159,8 @@ func Register(container *config.Container) *gin.Engine {
 
 		// 卡密管理
 		tenantAuth.GET("/cards", handler.TenantListCards(deps))
+		tenantAuth.GET("/cards/export", handler.TenantExportCardsCSV(deps))   // v0.3.6
+		tenantAuth.POST("/cards/import", handler.TenantImportCardsCSV(deps))  // v0.3.6
 		tenantAuth.GET("/cards/:id", handler.TenantGetCard(deps))
 		tenantAuth.POST("/cards/generate", handler.TenantGenerateCards(deps))
 		tenantAuth.POST("/cards/:id/ban", handler.TenantBanCard(deps))

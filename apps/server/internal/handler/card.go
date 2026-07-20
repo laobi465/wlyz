@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/your-org/keyauth-saas/apps/server/internal/heartbeat"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 	"github.com/your-org/keyauth-saas/apps/server/internal/quota"
@@ -419,7 +420,28 @@ func TenantBanCard(deps *Deps) gin.HandlerFunc {
 			return
 		}
 
-		// TODO(v0.3.0): 同时下线该卡密绑定的设备（清 Redis 心跳）
+		// 同时下线该卡密绑定的所有设备：清 Redis 心跳 + DB 标记 banned
+		// 铁律 05： heartbeat.Remove 内部已用 appID/deviceID 拼 Redis Key，无硬编码
+		var devices []model.AppDevice
+		if err := deps.DB.Where("card_id = ? AND tenant_id = ? AND status = ?", id, tenantID, "active").
+			Find(&devices).Error; err == nil {
+			ctx := c.Request.Context()
+			for _, d := range devices {
+				_ = heartbeat.Remove(ctx, deps.Redis, d.AppID, d.ID)
+			}
+			if len(devices) > 0 {
+				deviceIDs := make([]uint64, 0, len(devices))
+				for _, d := range devices {
+					deviceIDs = append(deviceIDs, d.ID)
+				}
+				deps.DB.Model(&model.AppDevice{}).Where("id IN ?", deviceIDs).
+					Updates(map[string]interface{}{
+						"status":           "banned",
+						"last_heartbeat_at": nil,
+					})
+			}
+		}
+		// 铁律 06：Redis 清理失败不阻塞封禁主流程（卡密已 banned，下次 verify 会因 card.status 拒绝）
 		middleware.Success(c, gin.H{"id": id, "status": "banned"})
 	}
 }
@@ -519,6 +541,248 @@ func extractCardIDs(cards []*model.AppCard) []uint64 {
 		ids = append(ids, c.ID)
 	}
 	return ids
+}
+
+// ============== 卡密 CSV 导出/导入（v0.3.6） ==============
+
+// TenantExportCardsCSV 导出卡密为 CSV
+// GET /api/v1/tenant/cards/export?app_id=&status=&batch_no=&keyword=
+// 铁律 05：导出条数上限从 sys_config 读取（card.export.max_rows，默认 10000）
+// 铁律 04：CSV 内容为真实数据，无硬编码假数据
+func TenantExportCardsCSV(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tenantID := getTenantID(c)
+
+		// 导出条数上限从 sys_config 读取
+		maxRows := deps.CfgCache.GetInt(c.Request.Context(), "card.export.max_rows", 10000)
+		if maxRows <= 0 || maxRows > 100000 {
+			maxRows = 10000 // 兜底，防 sys_config 配错拖垮服务
+		}
+
+		q := deps.DB.Model(&model.AppCard{}).Where("tenant_id = ?", tenantID)
+		if appIDStr := c.Query("app_id"); appIDStr != "" {
+			if appID, err := strconv.ParseUint(appIDStr, 10, 64); err == nil {
+				q = q.Where("app_id = ?", appID)
+			}
+		}
+		if status := c.Query("status"); status != "" {
+			q = q.Where("status = ?", status)
+		}
+		if batchNo := c.Query("batch_no"); batchNo != "" {
+			q = q.Where("batch_no = ?", batchNo)
+		}
+		if kw := c.Query("keyword"); kw != "" {
+			q = q.Where("card_key LIKE ? OR prefix LIKE ?", "%"+kw+"%", "%"+kw+"%")
+		}
+
+		var cards []model.AppCard
+		if err := q.Order("id DESC").Limit(maxRows).Find(&cards).Error; err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败")
+			return
+		}
+
+		filename := "cards_" + time.Now().Format("20060102_150405") + ".csv"
+		c.Header("Content-Type", "text/csv; charset=utf-8")
+		c.Header("Content-Disposition", "attachment; filename=\""+filename+"\"")
+		// BOM 让 Excel 正确识别 UTF-8
+		_, _ = c.Writer.Write([]byte("\xEF\xBB\xBF"))
+		_, _ = c.Writer.Write([]byte("ID,AppID,CardTypeID,CardKey,Checksum,Status,BatchNo,Prefix,GroupTag,DurationSeconds,UsedCount,MaxUses,ActivatedAt,ExpiresAt,LastVerifyAt,CreatedBy,CreatorType,OrderID,BannedAt,BannedReason,CreatedAt\n"))
+		for _, card := range cards {
+			_, _ = c.Writer.Write([]byte(csvRow(
+				card.ID, card.AppID, card.CardTypeID, card.CardKey, card.Checksum, card.Status,
+				card.BatchNo, card.Prefix, card.GroupTag, card.DurationSeconds, card.UsedCount, card.MaxUses,
+				ptrTimeFmt(card.ActivatedAt), ptrTimeFmt(card.ExpiresAt), ptrTimeFmt(card.LastVerifyAt),
+				card.CreatedBy, card.CreatorType, ptrUint64Str(card.OrderID),
+				ptrTimeFmt(card.BannedAt), card.BannedReason, card.CreatedAt.Format(time.RFC3339),
+			)))
+		}
+	}
+}
+
+// ptrTimeFmt *time.Time 安全格式化
+func ptrTimeFmt(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Format(time.RFC3339)
+}
+
+// importCardsReq 导入卡密请求
+type importCardsReq struct {
+	AppID           uint64 `json:"app_id" binding:"required"`
+	CardTypeID      uint64 `json:"card_type_id" binding:"required"`
+	Prefix          string `json:"prefix" binding:"omitempty,max=16"`
+	GroupTag        string `json:"group_tag" binding:"omitempty,max=64"`
+	DurationSeconds int64  `json:"duration_seconds" binding:"omitempty,min=-1"`
+	MaxUses         int    `json:"max_uses" binding:"omitempty,min=1,max=99999"`
+	// Cards: CSV 解析后的卡密明文列表（前端解析 CSV 上传，传 JSON 数组）
+	Cards []string `json:"cards" binding:"required,min=1"`
+}
+
+// TenantImportCardsCSV 导入卡密（前端解析 CSV 后传 JSON 数组）
+// POST /api/v1/tenant/cards/import
+// 铁律 05：单次导入上限从 sys_config 读取（card.import.max_rows，默认 5000）
+// 铁律 06：导入失败的事务回滚 + 失败明细返回，禁只报"成功"假象
+func TenantImportCardsCSV(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		tenantID := getTenantID(c)
+		userID := getUserID(c)
+
+		var req importCardsReq
+		if err := c.ShouldBindJSON(&req); err != nil {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "参数错误: "+err.Error())
+			return
+		}
+
+		// 单次导入上限
+		maxRows := deps.CfgCache.GetInt(c.Request.Context(), "card.import.max_rows", 5000)
+		if maxRows <= 0 || maxRows > 50000 {
+			maxRows = 5000
+		}
+		if len(req.Cards) > maxRows {
+			middleware.Fail(c, http.StatusBadRequest, 1001,
+				"单次最多导入 "+strconv.Itoa(maxRows)+" 张卡密，当前 "+strconv.Itoa(len(req.Cards)))
+			return
+		}
+
+		// 校验应用归属
+		if !checkAppOwnership(deps.DB, req.AppID, tenantID) {
+			middleware.Fail(c, http.StatusForbidden, 1003, "应用不存在或无权访问")
+			return
+		}
+		// 校验卡类归属 + 取 duration/max_uses 默认值
+		var ct model.AppCardType
+		if err := deps.DB.Where("id = ? AND app_id = ?", req.CardTypeID, req.AppID).First(&ct).Error; err != nil {
+			middleware.Fail(c, http.StatusNotFound, 1008, "卡类不存在或不属于该应用")
+			return
+		}
+		// 未传则用卡类默认值
+		if req.DurationSeconds == 0 {
+			req.DurationSeconds = ct.DurationSeconds
+		}
+		if req.MaxUses == 0 {
+			req.MaxUses = ct.MaxUses
+		}
+		if req.Prefix == "" {
+			req.Prefix = ct.Name[:min(16, len(ct.Name))] // 取卡类名前 16 字符作前缀
+		}
+
+		// 套餐配额校验
+		if err := quota.CheckMaxCards(deps.DB, tenantID, len(req.Cards)); err != nil {
+			var qErr *quota.ExceededError
+			if errors.As(err, &qErr) {
+				middleware.Fail(c, http.StatusForbidden, 1007,
+					"将超过套餐卡密上限 "+itoa(qErr.Limit)+" 张（当前 "+itoa(qErr.Current)+" 张，本次导入 "+itoa(qErr.AddCount)+" 张）")
+			} else {
+				middleware.Fail(c, http.StatusForbidden, 1007, err.Error())
+			}
+			return
+		}
+
+		// 去重 + 校验空值
+		seen := make(map[string]struct{}, len(req.Cards))
+		cleaned := make([]string, 0, len(req.Cards))
+		emptyCount := 0
+		dupCount := 0
+		for _, k := range req.Cards {
+			k = strings.TrimSpace(k)
+			if k == "" {
+				emptyCount++
+				continue
+			}
+			if _, ok := seen[k]; ok {
+				dupCount++
+				continue
+			}
+			seen[k] = struct{}{}
+			cleaned = append(cleaned, k)
+		}
+		if len(cleaned) == 0 {
+			middleware.Fail(c, http.StatusBadRequest, 1001, "无有效卡密可导入（全部为空或重复）")
+			return
+		}
+
+		batchNo := fmt.Sprintf("I%s%06d", time.Now().Format("20060102"), userID%1000000)
+
+		// 事务批量入库（按 CardKeyHash 计算，重复 hash 直接跳过并记失败）
+		failed := make([]map[string]interface{}, 0)
+		var successCount int
+		txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
+			for i, k := range cleaned {
+				hash := crypto.SHA512Hex(k)
+				// 检查 hash 是否已存在（跨租户唯一）
+				var exists int64
+				if err := tx.Model(&model.AppCard{}).Where("card_key_hash = ?", hash).Count(&exists).Error; err != nil {
+					return fmt.Errorf("查询卡密 hash 失败: %w", err)
+				}
+				if exists > 0 {
+					failed = append(failed, map[string]interface{}{
+						"row":      i + 1,
+						"card_key": k,
+						"reason":   "卡密已存在",
+					})
+					continue
+				}
+				card := &model.AppCard{
+					TenantID:        tenantID,
+					AppID:           req.AppID,
+					CardTypeID:      req.CardTypeID,
+					CardKey:         k,
+					CardKeyHash:     hash,
+					Checksum:        crypto.SHA512Checksum8(k + hash),
+					Status:          "unused",
+					BatchNo:         batchNo,
+					Prefix:          req.Prefix,
+					GroupTag:        req.GroupTag,
+					DurationSeconds: req.DurationSeconds,
+					MaxUses:         req.MaxUses,
+					CreatedBy:       userID,
+					CreatorType:     "tenant",
+				}
+				if err := tx.Create(card).Error; err != nil {
+					failed = append(failed, map[string]interface{}{
+						"row":      i + 1,
+						"card_key": k,
+						"reason":   "入库失败: " + err.Error(),
+					})
+					continue
+				}
+				successCount++
+			}
+			return nil
+		})
+		if txErr != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "导入失败: "+txErr.Error())
+			return
+		}
+
+		// 记录操作日志
+		RecordOperation(deps, c, "card", "import_csv", "success",
+			"tenant", nil, map[string]interface{}{
+				"tenant_id":      tenantID,
+				"batch_no":       batchNo,
+				"success_count":  successCount,
+				"failed_count":   len(failed),
+				"empty_count":    emptyCount,
+				"dup_count":      dupCount,
+			})
+
+		middleware.Success(c, gin.H{
+			"batch_no":      batchNo,
+			"success_count": successCount,
+			"failed_count":  len(failed),
+			"empty_count":   emptyCount,
+			"dup_count":     dupCount,
+			"failed":        failed,
+		})
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // 标记未使用导入（防编译报错）

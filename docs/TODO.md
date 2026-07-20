@@ -504,16 +504,16 @@
 ### 待完成项（约 19 项）
 
 **v0.3.6 剩余 P1 收尾（约 10 项）**：
-- 卡密 CSV 导入导出
-- 设备强制下线（清 Redis 心跳，card.go:422 TODO）
-- 安装向导页面（/install）
-- 代理注册付费流程（auth.go:443 AgentRegister + Register.vue 三处 TODO）
-- 开发者自有易支付回调实现（pay.go:528 EpayTenantNotify）
-- 双层支付模式切换逻辑
-- 套餐 allow_custom_pay 字段生效
-- 客户端 SDK（Python / Node.js / PHP 三语言）
-- 单元测试 + 集成测试
-- v0.3.6 文档同步（本次）
+- [x] [已完成 2026-07-20] 卡密 CSV 导入导出（card.go 新增 TenantExportCardsCSV/TenantImportCardsCSV + 前端 Cards.vue 导出/导入对话框）
+- [x] [已完成 2026-07-20] 设备强制下线（card.go TenantBanCard 联动 heartbeat.Remove 清 Redis 心跳 + DB 标记 banned）
+- [ ] [待开始] 安装向导页面（/install，后端 install handler + 前端 Install.vue 4 步向导）
+- [ ] [待开始] 代理注册付费流程（auth.go:443 AgentRegister + Register.vue 三处 TODO）
+- [ ] [待开始] 开发者自有易支付回调实现（pay.go:528 EpayTenantNotify）
+- [ ] [待开始] 双层支付模式切换逻辑
+- [ ] [待开始] 套餐 allow_custom_pay 字段生效
+- [ ] [待开始] 客户端 SDK（Python / Node.js / PHP 三语言）
+- [ ] [待开始] 单元测试 + 集成测试
+- [x] [已完成 2026-07-20] v0.3.6 文档同步
 
 **v0.4.x 三期商业化（约 9 项）**：
 - 多级代理（二级 + 三级 + 跨级佣金）
@@ -528,6 +528,6 @@
 
 ---
 
-**文档版本**：0.3.5  
+**文档版本**：0.3.6  
 **最后更新**：2026-07-20  
 **维护者**：KeyAuth SaaS Team
