@@ -348,11 +348,11 @@
 - [ ] [待开始] 备份文件下载 - v0.4.0
 
 #### 在线更新系统
-- [ ] [待开始] Webhook 接收 GitHub Push - v0.4.0
-- [ ] [待开始] 自动拉取构建重启 - v0.4.0
-- [ ] [待开始] 后台更新管理面板（S-13） - v0.4.0
-- [ ] [待开始] 管理员弹窗通知 - v0.4.0
-- [ ] [待开始] 版本回滚 - v0.4.0
+- [x] [已完成 2026-07-20] Webhook 接收 GitHub Push - v0.4.0（GitHubWebhook handler POST /api/v1/public/update/webhook；HMAC-SHA256 签名校验 + X-GitHub-Event 事件类型过滤 + push event 解析 + 分支匹配）
+- [x] [已完成 2026-07-20] 自动拉取构建重启 - v0.4.0（Manager.ExecuteUpdate 6 步流程：加锁 → pending 日志 → git fetch+reset → bash 部署脚本 → 健康检查 → 失败回滚；scripts/deploy_update.sh 默认脚本支持 systemd/docker/pm2/none 自适应）
+- [x] [已完成 2026-07-20] 后台更新管理面板（S-13） - v0.4.0（AdminUpdateStatus 返回当前 commit+锁状态+自动开关+最近审计日志+成功/失败统计；AdminTriggerUpdate 异步触发；AdminListUpdateHistory 分页查询+status/trigger_source 筛选；AdminGetUpdateLog 单条详情含 log_text）
+- [x] [已完成 2026-07-20] 版本回滚 - v0.4.0（Manager.Rollback 回滚到失败日志的 commit_before + 重跑脚本 + 健康检查；maybeRollback 自动回滚若 update.rollback.enabled=1；AdminRollbackUpdate 手动回滚接口）
+- [ ] [待开始] 管理员弹窗通知 - v0.4.0（前端轮询 /admin/update/status 检测新 commit；后续前端实现）
 - 详见 references/11-github-auto-update.md
 
 #### API 开放平台
@@ -474,7 +474,7 @@
 | v0.3.4 | 2026-07-19 | ✅ 已完成（结算与对账闭环：开发者 balance/frozen_balance + tenant_balance_log + tenant_withdraw + 批量结算 + 对账报表 + 双审核页面） |
 | v0.3.5 | 2026-07-19 | ✅ 已完成（P0 修复：RSA 脚本 / 数据库迁移 / H5 公共 API / 套餐配额） |
 | v0.3.6 | 2026-07-20 | ✅ 已完成（剩余 P1 收尾 + 单元测试 + 客户端 SDK 签名对齐测试） |
-| v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移 + JWT jti 单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 + 全语言 SDK 扩展 + 多级代理体系 + 灰度发布 已完成；在线更新 / 数据备份 / 监控告警 / 通知系统 / 终端用户体系 / API 开放平台等待开始） |
+| v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移 + JWT jti 单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 + 全语言 SDK 扩展 + 多级代理体系 + 灰度发布 + 在线更新 已完成；数据备份 / 监控告警 / 通知系统 / 终端用户体系 / API 开放平台等待开始） |
 
 ---
 

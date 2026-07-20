@@ -561,3 +561,26 @@ type RefreshTokenDevice struct {
 }
 
 func (RefreshTokenDevice) TableName() string { return "refresh_token_device" }
+
+// ============== v0.4.0 在线更新 ==============
+
+// SystemUpdateLog 在线更新审计日志（v0.4.0）
+type SystemUpdateLog struct {
+	ID              uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	TriggerSource   string    `gorm:"size:32;not null;default:manual" json:"trigger_source"` // webhook / manual / rollback
+	TriggerBy       uint64    `gorm:"not null;default:0" json:"trigger_by"`                  // 触发者 admin id（webhook 时为 0）
+	TriggerIP       string    `gorm:"size:45;not null;default:''" json:"trigger_ip"`
+	CommitBefore    string    `gorm:"size:64;not null;default:''" json:"commit_before"`
+	CommitAfter     string    `gorm:"size:64;not null;default:''" json:"commit_after"`
+	Branch          string    `gorm:"size:64;not null;default:''" json:"branch"`
+	Status          string    `gorm:"size:32;not null;default:pending" json:"status"` // pending / running / success / failed / rolled_back
+	StepsJSON       string    `gorm:"type:text" json:"steps_json"`                    // [{step,status,duration_ms,error}]
+	LogText         string    `gorm:"type:mediumtext" json:"log_text"`
+	ErrorMessage    string    `gorm:"size:512;not null;default:''" json:"error_message"`
+	DurationMs      int       `gorm:"not null;default:0" json:"duration_ms"`
+	RolledBackFrom  uint64    `gorm:"not null;default:0" json:"rolled_back_from"` // 若为回滚，原失败更新 id（0=非回滚）
+	CreatedAt       time.Time `gorm:"index;not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+	UpdatedAt       time.Time `gorm:"not null;default:CURRENT_TIMESTAMP;ON UPDATE:CURRENT_TIMESTAMP" json:"updated_at"`
+}
+
+func (SystemUpdateLog) TableName() string { return "system_update_log" }

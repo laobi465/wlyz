@@ -96,6 +96,13 @@ func Register(container *config.Container) *gin.Engine {
 		adminAuth.GET("/versions", handler.AdminListVersions(deps))
 		adminAuth.GET("/versions/:id", handler.AdminGetVersion(deps))
 
+		// 在线更新（v0.4.0 GitHub Webhook 自动更新 + 手动触发 + 回滚）
+		adminAuth.GET("/update/status", handler.AdminUpdateStatus(deps))
+		adminAuth.POST("/update/trigger", handler.AdminTriggerUpdate(deps))
+		adminAuth.GET("/update/history", handler.AdminListUpdateHistory(deps))
+		adminAuth.POST("/update/rollback", handler.AdminRollbackUpdate(deps))
+		adminAuth.GET("/update/logs/:id", handler.AdminGetUpdateLog(deps))
+
 		// 公告管理
 		adminAuth.GET("/notices", handler.AdminListNotices(deps))
 		adminAuth.POST("/notices", handler.AdminCreateNotice(deps))
@@ -296,6 +303,9 @@ func Register(container *config.Container) *gin.Engine {
 		publicGroup.GET("/auth/agent/register/order/:order_no", handler.AgentRegisterOrderStatus(deps)) // v0.3.6
 		publicGroup.POST("/auth/refresh", handler.RefreshToken(deps)) // 三角色共用
 		publicGroup.GET("/notices/platform", handler.PublicPlatformNotices(deps))
+
+		// GitHub Webhook 接收（v0.4.0 在线更新：无鉴权，靠 HMAC-SHA256 签名校验）
+		publicGroup.POST("/update/webhook", handler.GitHubWebhook(deps))
 
 		// H5 终端用户购卡流程公开接口（v0.3.5 新增）
 		publicGroup.GET("/apps/info", handler.PublicAppInfo(deps))    // 按 app_key 查应用公开信息

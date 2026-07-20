@@ -209,3 +209,8 @@ func (c *ConfigCache) ListByGroup(ctx context.Context, group string) ([]model.Sy
 	err := q.Find(&rows).Error
 	return rows, err
 }
+
+// RedisClient 返回底层 Redis 客户端（供需要直接操作 Redis 的包使用，如 v0.4.0 update 包的分布式锁）
+func (c *ConfigCache) RedisClient() *redis.Client {
+	return c.redis
+}

@@ -1207,6 +1207,111 @@ return uint32 % 100   // 0~99 稳定桶号
 - 全局开关 `app.version.grayscale.enabled=0` 时所有 grayscale/canary 版本回退 full 命中（紧急关停灰度）
 - 更换 `hash_salt` 可全量重排灰度命中（紧急清退/放量场景）
 
+### 7.4.3 在线更新体系规范（v0.4.0）
+
+#### 数据模型
+
+- `system_update_log` 表（migration 011）：
+  - `trigger_source VARCHAR(32)`：触发源（`webhook` / `manual` / `rollback`）
+  - `trigger_by BIGINT`：触发者 admin id（webhook 时为 0）
+  - `trigger_ip VARCHAR(45)`：触发者 IP
+  - `commit_before` / `commit_after VARCHAR(64)`：更新前后 commit hash
+  - `branch VARCHAR(64)`：目标分支
+  - `status VARCHAR(32)`：状态（`pending` / `running` / `success` / `failed` / `rolled_back`）
+  - `steps_json TEXT`：步骤 JSON 数组 `[{step,status,duration_ms,output,error}]`
+  - `log_text MEDIUMTEXT`：人类可读完整日志
+  - `error_message VARCHAR(512)`：失败原因摘要
+  - `duration_ms INT`：总耗时
+  - `rolled_back_from BIGINT`：若为回滚，原失败更新 id（0=非回滚）
+- 3 个索引：`idx_update_log_status` / `idx_update_log_created` / `idx_update_log_trigger`
+
+#### 配置项（sys_config 8 项，可后台调整）
+
+| Key | 默认值 | 含义 |
+|---|---|---|
+| `update.webhook.secret` | `` | GitHub Webhook HMAC-SHA256 密钥（X-Hub-Signature-256 头），空=不校验仅本地开发 |
+| `update.webhook.branch` | `main` | 监听分支（仅 push 到此分支触发更新） |
+| `update.webhook.auto_update` | `0` | 1=自动触发更新；0=仅记录通知，需管理员手动触发 |
+| `update.deploy.script_path` | `scripts/deploy_update.sh` | 部署脚本相对项目根目录的路径 |
+| `update.healthcheck.url` | `http://localhost:8080/health` | 更新后健康检查 URL（2xx/3xx 视为成功） |
+| `update.healthcheck.timeout` | `30` | 健康检查超时秒数 |
+| `update.rollback.enabled` | `1` | 失败自动回滚开关 |
+| `update.lock.timeout` | `600` | 更新锁超时秒数（防死锁自动释放） |
+
+#### Webhook 签名校验（`update.VerifyWebhookSignature`）
+
+GitHub 算法：`HMAC-SHA256(secret, body)` → hex 编码 → 前缀 `sha256=`
+
+校验规则：
+- 空 secret 时跳过校验（仅本地开发；生产必须配置非空 secret）
+- 空 signature 时拒绝
+- signature 必须以 `sha256=` 前缀开头
+- 用 `hmac.Equal` 防时序攻击（非常量时间比较）
+
+#### 更新流程（`Manager.ExecuteUpdate`）
+
+```
+6 步流程：
+1. 加锁（进程内 mutex + Redis SET NX EX 双重锁）
+   - 已锁 → 返回 "update locked" 错误
+   - Redis 锁超时由 update.lock.timeout 控制（默认 600s）
+2. 创建 pending 审计日志（trigger_source / trigger_by / trigger_ip / commit_before / branch）
+3. git fetch origin <branch> + git reset --hard origin/<branch>
+   - 命令显式组合：exec.Command("git", "fetch", "origin", branch)
+   - 禁止 shell 拼接用户输入
+4. 跑部署脚本：bash <script_path>
+   - 路径从 sys_config(update.deploy.script_path) 读取
+   - 默认 scripts/deploy_update.sh
+5. 健康检查：HTTP GET <healthcheck.url>
+   - 2xx/3xx 视为成功（CheckRedirect 禁用跟随以捕获原始 3xx）
+   - 超时由 update.healthcheck.timeout 控制
+6. 失败处理：若 update.rollback.enabled=1 → 调用 maybeRollback
+   - git reset --hard <commit_before>
+   - 重跑部署脚本
+   - 健康检查
+   - 写入 rolled_back 状态 + 独立回滚审计日志（rolled_back_from 关联原失败日志 id）
+```
+
+#### 部署脚本（`scripts/deploy_update.sh`）
+
+通过 `DEPLOY_MODE` 环境变量适配不同部署环境：
+
+| DEPLOY_MODE | 重启方式 |
+|---|---|
+| `systemd` | `sudo systemctl restart keyauth-server` |
+| `docker` | `docker-compose restart keyauth-server` |
+| `pm2` | `pm2 restart keyauth-server` |
+| `none` | 不重启（假设外部监管进程自动拉起新二进制） |
+
+脚本严格 `set -euo pipefail` + 显式 `cd` 项目根；失败时退出码非 0，触发 `Manager` 回滚流程。
+
+#### API 接口
+
+| 路由 | 鉴权 | 行为 |
+|---|---|---|
+| `POST /api/v1/public/update/webhook` | HMAC 签名 | GitHub Webhook 接收：签名校验 + push event 解析 + 分支匹配 + 自动/手动触发 |
+| `GET /api/v1/admin/update/status` | admin JWT | 当前 commit + 锁状态 + 自动开关 + 分支 + 最近审计日志 + 成功/失败统计 |
+| `POST /api/v1/admin/update/trigger` | admin JWT | 手动触发更新（异步执行，立即返回） |
+| `GET /api/v1/admin/update/history` | admin JWT | 分页查询审计日志（status / trigger_source 筛选） |
+| `POST /api/v1/admin/update/rollback` | admin JWT | 手动回滚到指定失败日志的 commit_before |
+| `GET /api/v1/admin/update/logs/:id` | admin JWT | 单条审计日志详情（含完整 log_text） |
+
+#### 安全机制
+
+- Webhook 端点无鉴权但强制 HMAC-SHA256 签名校验
+- 管理后台 5 个接口仅 `admin` 角色可访问（JWTAuth 中间件）
+- 所有更新操作写 `system_update_log` 审计日志
+- shell 命令显式组合参数（`exec.Command` 不走 shell），禁止 eval/exec 任意用户输入
+- 部署脚本路径从 sys_config 读取，仅 root/admin 可后台修改
+
+#### 可靠性保障
+
+- 双重锁（进程内 mutex + Redis SET NX EX）防并发触发
+- 锁超时 600s 自动释放（防死锁）
+- 失败自动回滚到 `commit_before`（`git reset --hard` + 重跑脚本 + 健康检查）
+- 健康检查通过后才标记 success
+- 完整步骤日志（`steps_json` JSON 数组 + `log_text` 人类可读文本）
+
 ### 7.5 测试规范（v0.3.6）
 
 #### 测试栈
@@ -1217,7 +1322,7 @@ return uint32 % 100   // 0~99 稳定桶号
 | 内存 Redis | `github.com/alicebob/miniredis/v2` | v2.38.0 |
 | SQLite 内存库 | `gorm.io/driver/sqlite` + `github.com/mattn/go-sqlite3` | v1.6.0 + v1.14.22 |
 
-#### 测试覆盖（12 个包，0 失败）
+#### 测试覆盖（13 个包，0 失败）
 
 | 包 | 测试文件 | 覆盖范围 |
 |---|---|---|
@@ -1234,6 +1339,7 @@ return uint32 % 100   // 0~99 稳定桶号
 | `internal/handler` | `profile_2fa_test.go` | v0.4.0 2FA 备用码 DB 持久化：loadUserBackupCodes DB 读取 + Redis 回退 + 用户不存在 + tenant/agent role 分支 + 不支持角色 / updateUserBackupCodes 清空 / consumeBackupCode 消费成功 + 消费最后一个 + 输入不匹配 + 空输入 + 无备用码 + 从 Redis 回退消费 / twoFABackupKey + twoFASetupKey 格式（13 个测试） |
 | `internal/multilevel` | `multilevel_test.go` | v0.4.0 多级代理：DistributeCrossCommission（level 1/2/3 + 父级禁用跳过 + 零/负佣金 + nil agent + 自定义比例，7 个）/ CanCreateSubordinate（level vs max_level 矩阵 + agent_can_create flag + 禁用 + nil，6 个）/ ComputeSubordinateLevel（tenant 邀请码 → 1 / agent 邀请码 → 2 / level 3 超限 / 创建者不存在 / nil，5 个）/ BuildAgentTree（三级树 + maxDepth=0 + 不存在 + 租户隔离，4 个）/ ListSubordinates（单层 + 无子级 + 租户隔离，3 个）/ 边界（parent 链断裂，2 个）（27 个测试） |
 | `internal/grayscale` | `grayscale_test.go` | v0.4.0 灰度发布：Match full 策略（3）+ 全局开关（1）+ 平台过滤（4）+ 渠道过滤（3）+ 地区过滤（3）+ 比例（4）+ HashBucket 稳定性/范围/salt/appID（4）+ ParseList 空/单/多/空格/大小写/仅逗号（6）+ DefaultRate/IsEnabled（4）+ 边界匿名 clientID/canary/多过滤全过/多过滤失败（4）（33 个测试） |
+| `internal/update` | `update_test.go` | v0.4.0 在线更新：VerifyWebhookSignature（7：有效/错误 secret/空 secret 跳过/空签名拒绝/错误前缀/篡改 body/空 body）+ ParsePushEvent（4：有效/非法 JSON/空 ref/缺失 ref）+ BranchMatches（5：短形式/完整形式/不匹配/空分支/tag ref）+ AcquireLock/ReleaseLock（5：首次成功/二次失败/释放后重新获取/Redis key SET/DEL/多 Manager 共享 lockKey 互斥）+ HealthCheck（6：2xx/3xx 禁用重定向/5xx/4xx/连接拒绝/超时尊重）+ 状态机常量（4：TriggerSource/Status/StepStatus/8 个 ConfigKey 互不冲突 + 全部 update. 前缀）+ IsAutoUpdateEnabled/IsLocked（4：默认 false/true/未锁/已锁）+ 边界（6：大 body 10KB/额外字段忽略/分支名特殊字符/不同 lockKey/多次校验一致性/JSON round-trip）+ 并发压力（1：10 goroutine 抢锁无 panic 无死锁）（37 个测试） |
 
 #### 测试原则
 
@@ -1252,6 +1358,7 @@ return uint32 % 100   // 0~99 稳定桶号
 13. **全语言 SDK 签名对齐测试（v0.4.0）**：`pkg/crypto/sign_alignment_test.go` 从 3 语言扩展到 7 语言（新增 Go / Java / C++ / C# + 易语言 Windows-only Skip）；解释器模式（Python/Node/PHP/Go）+ 编译型模式（C++ 用 g++ 编译到 t.TempDir() + 运行）+ Java 单文件源码模式（JDK 11+）+ C# dotnet 临时项目模式；运行时缺失自动 `t.Skip` 不强制依赖；`javaSupportsSHA512_256` 检测 JDK 版本，仅 JDK 17+ 强断言签名匹配（JDK < 17 回退 HmacSHA256 时仅 t.Logf 提示，不掩盖差异）；`TestSignAlignment_NewLanguages` 校验 5 个新 SDK 的目录结构完整性（不依赖运行时，CI 友好）
 14. **多级代理测试（v0.4.0）**：`internal/multilevel/multilevel_test.go` 用 SQLite in-memory（4 表 AutoMigrate：agent/agent_invite_code/agent_balance_log/sys_config）+ miniredis + 真实 `ConfigCache`（预置 sys_config 4 项 + overrides 覆盖）；关键场景：DistributeCrossCommission 沿 parent_id 链向上分润（level 1 无父级 / level 2 父级 50% / level 3 父级 + 祖父级 / 父级禁用跳过 / 零/负佣金 / nil agent / 自定义比例）；CanCreateSubordinate（level vs max_level 矩阵 + agent_can_create flag + 禁用 + nil）；ComputeSubordinateLevel（tenant 邀请码 → 1 / agent 邀请码 → 2 / level 3 创建者超限 / 创建者不存在 / nil）；BuildAgentTree（三级树 + maxDepth=0 + 不存在 + 租户隔离）；ListSubordinates（单层 + 无子级 + 租户隔离）；边界场景（parent 链断裂：parent_id 指向已删除代理时停止向上）；测试修复了一个真实算法 bug（基于 `current.Level` 误判比例 → 改为基于 `agent.Level` + depth 判断）
 15. **灰度发布测试（v0.4.0）**：`internal/grayscale/grayscale_test.go` 用 SQLite in-memory（app_version + sys_config AutoMigrate）+ miniredis + 真实 `ConfigCache`（预置 sys_config 3 项 + overrides 覆盖）；关键场景：Match 7 步过滤链全路径覆盖（full 策略 + 全局开关回退 + 平台/渠道/地区过滤 + 比例 0/100/部分桶命中/未命中）；HashBucket 稳定性（同输入同输出 + 范围 0-99 + 不同 salt 不同桶 + 不同 appID 不同桶）；ParseList 边界（空 / 单 / 多 / 含空格 / 混合大小写 / 仅逗号返回空非 nil）；DefaultRate / IsEnabled 配置读取 + fallback；边界场景（匿名 clientID 走 client_ip + canary 策略 + 多过滤全过 + 多过滤一过滤失败）；测试栈无网络/无文件 IO，纯函数 + 内存 DB
+16. **在线更新测试（v0.4.0）**：`internal/update/update_test.go` 用 SQLite in-memory（system_update_log + sys_config AutoMigrate）+ miniredis + 真实 `ConfigCache`（预置 8 项 sys_config + overrides 覆盖）+ `httptest.Server` 模拟健康检查端点；关键场景：VerifyWebhookSignature 7 路径（有效签名 + 错误 secret + 空 secret 跳过 + 空签名拒绝 + 错误前缀拒绝 + 篡改 body 拒绝 + 空 body 边界）；ParsePushEvent（有效 + 非法 JSON + 空 ref + 缺失 ref）；BranchMatches（短/完整形式 + 不匹配 + 空分支 + tag ref 不匹配）；AcquireLock/ReleaseLock（首次成功 + 二次失败 + 释放后重新获取 + Redis key SET/DEL 验证 + 多 Manager 共享 lockKey 互斥）；HealthCheck（2xx 成功 + 3xx 成功禁用重定向 + 5xx 失败 + 4xx 失败 + 连接拒绝 + 超时尊重 1s<2s）；状态机常量（TriggerSource/Status/StepStatus/8 个 ConfigKey 互不冲突 + 全部 `update.` 前缀）；IsAutoUpdateEnabled/IsLocked（默认 false/true/未锁/已锁）；边界（大 body 10KB + 额外字段忽略 + 分支名特殊字符 + 不同 lockKey 互不影响 + 多次校验一致性 + PushEvent JSON round-trip）；并发压力（10 goroutine 抢同一锁无 panic 无死锁）；测试修复了一个真实 bug（Go HTTP client 默认跟随重定向导致 3xx 测试失败 → 改用 CheckRedirect 返回 http.ErrUseLastResponse 捕获原始状态码）
 
 #### 运行命令
 

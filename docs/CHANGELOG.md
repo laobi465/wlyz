@@ -11,6 +11,132 @@
 
 ## [0.4.0] - 2026-07-20（v0.4.x 迁移项推进）
 
+### [新增] 在线更新体系（v0.4.x 第八项：GitHub Webhook + 自动部署 + 回滚 + 审计）
+
+#### 背景
+
+- v0.3.x 部署更新需 SSH 登录服务器手动 git pull + build + restart，无审计、无回滚、易出错
+- 商业化诉求：管理员后台一键触发更新；GitHub push 自动部署；失败自动回滚；完整审计日志
+- TODO.md `[迁移] 在线更新 → v0.4.0 GitHub Webhook 自动拉取构建重启 + 后台更新管理面板 + 管理员弹窗通知 + 版本回滚`
+
+#### 实现
+
+**`migrations/011_v0.4.0_online_update.up.sql`**：
+- 新建 `system_update_log` 表：审计日志（id / trigger_source / trigger_by / trigger_ip / commit_before / commit_after / branch / status / steps_json / log_text / error_message / duration_ms / rolled_back_from / created_at / updated_at）
+- 3 个索引：`idx_update_log_status` / `idx_update_log_created` / `idx_update_log_trigger`
+- `sys_config` 新增 8 项 `update.*` 配置：
+  - `update.webhook.secret`（GitHub Webhook HMAC-SHA256 密钥，空=不校验）
+  - `update.webhook.branch` = `main`（监听分支）
+  - `update.webhook.auto_update` = `0`（自动触发开关，1=自动；0=仅记录通知）
+  - `update.deploy.script_path` = `scripts/deploy_update.sh`（部署脚本相对路径）
+  - `update.healthcheck.url` = `http://localhost:8080/health`（健康检查 URL）
+  - `update.healthcheck.timeout` = `30`（健康检查超时秒数）
+  - `update.rollback.enabled` = `1`（失败自动回滚开关）
+  - `update.lock.timeout` = `600`（更新锁超时秒数，防死锁）
+- 配套 `011_v0.4.0_online_update.down.sql` 回滚
+
+**`internal/model/model.go`**：
+- 新增 `SystemUpdateLog` struct + `TableName() = "system_update_log"`
+
+**`internal/config/cache.go`**：
+- 新增 `RedisClient()` 方法暴露底层 Redis 客户端（供 update 包实现分布式锁）
+
+**`internal/update/update.go`**（新建包，核心更新管理器）：
+- `VerifyWebhookSignature(signature string, body []byte, secret string) bool`：HMAC-SHA256 校验（`hmac.Equal` 防时序攻击；空 secret 跳过校验仅本地开发）
+- `ParsePushEvent(body []byte) (*PushEvent, error)`：解析 GitHub push event（ref 必填校验）
+- `BranchMatches(ref, branch string) bool`：refs/heads/ 前缀规范化匹配
+- `Manager.AcquireLock(ctx) (bool, error)`：进程内 mutex + Redis SET NX EX 双重锁
+- `Manager.ReleaseLock(ctx)`：释放双锁
+- `Manager.HealthCheck(ctx) error`：HTTP GET 健康检查（2xx/3xx 视为成功；CheckRedirect 禁用跟随以捕获原始 3xx；超时控制）
+- `Manager.ExecuteUpdate(ctx, UpdateOptions) (*UpdateResult, error)`：完整更新流程
+  1. 加锁（双重锁）
+  2. 创建 pending 审计日志
+  3. `git fetch origin <branch>` + `git reset --hard origin/<branch>`（显式命令组合，禁止 shell 拼接用户输入）
+  4. 跑部署脚本 `bash <script_path>`（路径从 sys_config 读取）
+  5. 健康检查
+  6. 失败时调用 `maybeRollback` 自动回滚（若启用）
+- `Manager.Rollback(ctx, failedLogID, opts) (*UpdateResult, error)`：回滚到失败日志记录的 `commit_before`（`git reset --hard <commit>` + 重跑脚本 + 健康检查）
+- `Manager.GetLatestCommit(ctx) string`：当前部署的 commit hash
+- `Manager.IsAutoUpdateEnabled(ctx) bool` / `IsLocked(ctx) bool`：状态查询
+- 常量：8 个配置键 + 3 个 TriggerSource + 5 个 Status + 3 个 StepStatus + 4 个 StepName
+- 类型：`PushEvent` / `StepResult` / `UpdateOptions` / `UpdateResult`
+
+**`internal/handler/update.go`**（新建）：
+- `GitHubWebhook` POST `/api/v1/public/update/webhook`：接收 GitHub push event
+  - 读取 raw body
+  - HMAC-SHA256 签名校验
+  - X-GitHub-Event 非 push 跳过
+  - 解析 push event + 分支匹配
+  - 自动开关关闭时仅记录通知，开启时异步触发 `ExecuteUpdate`
+- `AdminUpdateStatus` GET `/admin/update/status`：当前 commit + 锁状态 + 自动开关 + 分支 + 最近审计日志 + 成功/失败统计
+- `AdminTriggerUpdate` POST `/admin/update/trigger`：管理员手动触发（异步执行，立即返回）
+- `AdminListUpdateHistory` GET `/admin/update/history`：分页查询审计日志（支持 status / trigger_source 筛选）
+- `AdminRollbackUpdate` POST `/admin/update/rollback`：手动回滚到指定失败日志的 commit_before
+- `AdminGetUpdateLog` GET `/admin/update/logs/:id`：单条审计日志详情（含完整 log_text）
+
+**`internal/router/router.go`**：注册 6 条新路由
+- publicGroup: `POST /update/webhook`（无鉴权，靠 HMAC 签名校验）
+- adminAuth: `GET /update/status` + `POST /update/trigger` + `GET /update/history` + `POST /update/rollback` + `GET /update/logs/:id`
+
+**`scripts/deploy_update.sh`**（新建）：默认部署脚本
+- 步骤 1：`go mod download`
+- 步骤 2：`go build -o ../../bin/keyauth-server ./cmd/main.go`
+- 步骤 3：数据库迁移由 server 启动时自动执行（不重复）
+- 步骤 4：根据 `DEPLOY_MODE` 环境变量重启服务（systemd / docker / pm2 / none 自适应）
+- 严格 `set -euo pipefail` + 显式 `cd` 项目根 + 错误退出码便于回滚判定
+
+#### 测试（`internal/update/update_test.go`，37 个用例全 PASS）
+
+- VerifyWebhookSignature（7 个）：有效签名 / 错误 secret / 空 secret 跳过 / 空签名拒绝 / 错误前缀拒绝 / 篡改 body 拒绝 / 空 body 边界
+- ParsePushEvent（4 个）：有效 payload / 非法 JSON / 空 ref / 缺失 ref
+- BranchMatches（5 个）：短形式 / 完整形式 / 不匹配 / 空分支 / tag ref 不匹配
+- AcquireLock / ReleaseLock（5 个）：首次获取成功 / 二次获取失败 / 释放后重新获取 / Redis key SET/DEL 验证 / 多 Manager 共享 lockKey 互斥
+- HealthCheck（6 个）：2xx 成功 / 3xx 成功（禁用重定向） / 5xx 失败 / 4xx 失败 / 连接拒绝 / 超时尊重（1s 超时 < 2s）
+- 状态机常量（4 个）：TriggerSource / Status / StepStatus / 8 个 ConfigKey 互不冲突 + 全部 `update.` 前缀
+- IsAutoUpdateEnabled / IsLocked（4 个）：默认 false / true / 未锁 / 已锁
+- 边界（6 个）：大 body 10KB / 额外字段忽略 / 分支名特殊字符 / 不同 lockKey 互不影响 / 多次校验一致性 / PushEvent JSON round-trip
+- 并发压力（1 个）：10 goroutine 抢同一锁无 panic 无死锁
+
+测试栈：SQLite in-memory（system_update_log + sys_config AutoMigrate）+ miniredis + 真实 `ConfigCache`（预置 8 项 sys_config + overrides 覆盖）+ httptest.Server 模拟健康检查端点
+
+#### 铁律遵守
+
+- **铁律 04（无硬编码）**：8 项配置全部从 sys_config 读取；常量化 3 个 TriggerSource / 5 个 Status / 4 个 StepName；分支默认值 `main` 仅作 fallback
+- **铁律 05（配置走后端）**：webhook 密钥 / 分支 / 自动开关 / 部署脚本路径 / 健康检查 URL+超时 / 回滚开关 / 锁超时全部可后台实时调整
+- **铁律 06（反幻觉）**：HMAC 校验用 `hmac.Equal` 防时序攻击；shell 命令显式组合（`exec.Command("git", "fetch", "origin", branch)`）禁止 shell 拼接用户输入；签名校验失败 / 分支不匹配 / 非 push 事件 / 锁竞争 / 健康检查失败 全路径覆盖测试
+
+#### 安全机制
+
+- Webhook 端点无鉴权但强制 HMAC-SHA256 签名校验（空 secret 仅本地开发用）
+- 管理后台 5 个接口仅 `admin` 角色可访问（JWTAuth 中间件）
+- 所有更新操作写 `system_update_log` 审计日志（操作人 / IP / 前后 commit / 状态 / 步骤 / 完整日志文本）
+- shell 命令显式组合参数，禁止 eval/exec 任意用户输入
+- 部署脚本路径从 sys_config 读取，仅 root/admin 可后台修改
+
+#### 可靠性保障
+
+- 更新过程双重锁（进程内 mutex + Redis SET NX EX）防并发触发
+- 锁超时 600s 自动释放（防死锁）
+- 失败自动回滚到 `commit_before`（`git reset --hard` + 重跑脚本 + 健康检查）
+- 健康检查通过后才标记 success；失败立即触发回滚
+- 完整步骤日志（`steps_json` JSON 数组 + `log_text` 人类可读文本）
+
+#### 适配性
+
+- 部署脚本通过 `DEPLOY_MODE` 环境变量适配 systemd / docker-compose / pm2 / 无外部监管（none）
+- 健康检查 URL 可配置（生产可指向负载均衡健康端点）
+- 自动开关关闭时仅记录通知，由管理员手动触发（半自动模式）
+- 与现有 migration.Run 启动迁移机制兼容（部署脚本不重复执行 migration）
+
+#### 验证
+
+- `go test ./internal/update/`：37 个用例全 PASS
+- `go test ./...`：13 个测试包全 PASS（无回归）
+- `go build ./...`：通过
+- `go vet ./...`：0 警告
+
+---
+
 ### [新增] 灰度发布体系（v0.4.x 第七项：三策略 + Hash 桶 + 跨租户查询 + 编辑接口）
 
 #### 背景
