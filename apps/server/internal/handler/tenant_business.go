@@ -133,40 +133,63 @@ func TenantDashboard(deps *Deps) gin.HandlerFunc {
 		deps.DB.Model(&model.Agent{}).Where("tenant_id = ?", tenantID).Count(&agentTotal)
 
 		// ---- 收入趋势（近 7 天）----
+		// Bug 2 P0：前端 tenant.ts/Dashboard.vue 期望字段名 amount（非 revenue），统一改 amount
 		type revenueTrendItem struct {
-			Date    string  `json:"date"`
-			Revenue float64 `json:"revenue"`
+			Date   string  `json:"date"`
+			Amount float64 `json:"amount"`
 		}
 		sevenDaysAgo := todayStart.AddDate(0, 0, -6)
 		var trendRows []revenueTrendItem
 		deps.DB.Model(&model.AppOrder{}).
-			Select("DATE(paid_at) as date, COALESCE(SUM(total_amount), 0) as revenue").
+			Select("DATE(paid_at) as date, COALESCE(SUM(total_amount), 0) as amount").
 			Where("tenant_id = ? AND pay_status = ? AND paid_at >= ?", tenantID, "paid", sevenDaysAgo).
 			Group("DATE(paid_at)").Order("date ASC").Scan(&trendRows)
 		trendMap := make(map[string]float64, len(trendRows))
 		for _, r := range trendRows {
-			trendMap[r.Date] = r.Revenue
+			trendMap[r.Date] = r.Amount
 		}
 		revenueTrend := make([]revenueTrendItem, 0, 7)
 		for i := 0; i < 7; i++ {
 			d := sevenDaysAgo.AddDate(0, 0, i).Format("2006-01-02")
-			revenueTrend = append(revenueTrend, revenueTrendItem{Date: d, Revenue: trendMap[d]})
+			revenueTrend = append(revenueTrend, revenueTrendItem{Date: d, Amount: trendMap[d]})
 		}
 
 		// ---- 最近 10 个订单 ----
-		var recentOrders []model.AppOrder
-		deps.DB.Where("tenant_id = ?", tenantID).Order("id DESC").Limit(10).Find(&recentOrders)
+		// Bug 4 P0：前端 Dashboard.vue 表格列期望 amount/status（非 total_amount/pay_status）
+		type recentOrderItem struct {
+			ID        uint64  `json:"id"`
+			OrderNo   string  `json:"order_no"`
+			Amount    float64 `json:"amount"`
+			Status    string  `json:"status"`
+			CreatedAt string  `json:"created_at"`
+		}
+		var rawOrders []model.AppOrder
+		deps.DB.Where("tenant_id = ?", tenantID).Order("id DESC").Limit(10).Find(&rawOrders)
+		recentOrders := make([]recentOrderItem, 0, len(rawOrders))
+		for _, o := range rawOrders {
+			recentOrders = append(recentOrders, recentOrderItem{
+				ID:        o.ID,
+				OrderNo:   o.OrderNo,
+				Amount:    o.TotalAmount,
+				Status:    o.PayStatus,
+				CreatedAt: o.CreatedAt.Format(time.RFC3339),
+			})
+		}
 
 		// ---- Top 5 应用（按卡密数排序）----
+		// Bug 3 P0：前端 Dashboard.vue 期望 id/name/revenue 字段名 + revenue 聚合字段
 		type topAppItem struct {
-			AppID     uint64 `json:"app_id"`
-			AppName   string `json:"app_name"`
-			CardCount int64  `json:"card_count"`
+			ID        uint64  `json:"id"`
+			Name      string  `json:"name"`
+			CardCount int64   `json:"card_count"`
+			Revenue   float64 `json:"revenue"`
 		}
 		var topApps []topAppItem
 		deps.DB.Table("app_card").
-			Select("app_card.app_id, app.name as app_name, COUNT(*) as card_count").
+			Select("app_card.app_id as id, app.name as name, COUNT(*) as card_count, "+
+				"COALESCE(SUM(app_order.total_amount), 0) as revenue").
 			Joins("LEFT JOIN app ON app.id = app_card.app_id").
+			Joins("LEFT JOIN app_order ON app_order.app_id = app_card.app_id AND app_order.pay_status = 'paid'").
 			Where("app_card.tenant_id = ?", tenantID).
 			Group("app_card.app_id, app.name").
 			Order("card_count DESC").
@@ -181,11 +204,11 @@ func TenantDashboard(deps *Deps) gin.HandlerFunc {
 			"card_used":          cardUsed,
 			"device_online":      deviceOnline,
 			"device_total":       deviceTotal,
-			"order_today":       orderToday,
+			"order_today":        orderToday,
 			"revenue_today":      revenueToday,
 			"revenue_month":      revenueMonth,
-			"settlement_pending":  settlementPending,
-			"settlement_amount":   settlementAmount,
+			"settlement_pending": settlementPending,
+			"settlement_amount":  settlementAmount,
 			"agent_total":        agentTotal,
 			"revenue_trend":      revenueTrend,
 			"recent_orders":      recentOrders,
@@ -206,7 +229,8 @@ type deviceListItem struct {
 	DeviceID    string     `json:"device_id"` // 对应 hwid
 	DeviceName  string     `json:"device_name"`
 	IP          string     `json:"ip"`
-	UserAgent   string     `json:"user_agent"` // 待核实：AppDevice 无 user_agent 字段，需从 Redis 心跳详情读取
+	Location    string     `json:"location"` // Bug 6 P0：前端表格列期望 location，暂返回空字符串（IP→地理位置需 GeoIP 依赖，v0.6.x 再接入）
+	UserAgent   string     `json:"user_agent"`
 	HeartbeatAt *time.Time `json:"heartbeat_at"`
 	CreatedAt   time.Time  `json:"created_at"`
 	IsOnline    bool       `json:"is_online"`
@@ -399,9 +423,20 @@ func TenantListOrders(deps *Deps) gin.HandlerFunc {
 // ============== 5. 云变量列表 ==============
 
 // cloudVarListItem 云变量列表项
+// Bug 1 P0：前端 tenant.ts/CloudVars.vue 期望 key/value/value_type/description 字段名
+//   - 不再嵌入 model.AppCloudVar（避免 var_key/var_value/var_type/remark 透传导致前端字段全错）
 type cloudVarListItem struct {
-	model.AppCloudVar
-	AppName string `json:"app_name"`
+	ID          uint64 `json:"id"`
+	AppID       uint64 `json:"app_id"`
+	AppName     string `json:"app_name"`
+	Key         string `json:"key"`
+	Value       string `json:"value"`
+	ValueType   string `json:"value_type"`
+	ReadOnly    bool   `json:"read_only"`
+	Description string `json:"description"` // 对应 model.Remark
+	Status      string `json:"status"`
+	UpdatedAt   string `json:"updated_at"`
+	CreatedAt   string `json:"created_at"`
 }
 
 // TenantListCloudVars 云变量列表
@@ -416,7 +451,11 @@ func TenantListCloudVars(deps *Deps) gin.HandlerFunc {
 		page, pageSize := parsePagination(c)
 
 		q := deps.DB.Table("app_cloud_var").
-			Select("app_cloud_var.*, app.name as app_name").
+			Select("app_cloud_var.id, app_cloud_var.app_id, app.name as app_name, "+
+				"app_cloud_var.var_key as key, app_cloud_var.var_value as value, "+
+				"app_cloud_var.var_type as value_type, app_cloud_var.read_only, "+
+				"app_cloud_var.remark as description, app_cloud_var.status, "+
+				"app_cloud_var.updated_at, app_cloud_var.created_at").
 			Joins("LEFT JOIN app ON app.id = app_cloud_var.app_id").
 			Where("app_cloud_var.tenant_id = ?", tenantID)
 
@@ -450,11 +489,12 @@ func TenantListCloudVars(deps *Deps) gin.HandlerFunc {
 
 // upsertCloudVarReq 云变量 upsert 请求
 type upsertCloudVarReq struct {
-	AppID     uint64 `json:"app_id" binding:"required"`
-	Key       string `json:"key" binding:"required,min=1,max=128"`
-	Value     string `json:"value" binding:"omitempty"`
-	ValueType string `json:"value_type" binding:"omitempty,oneof=string number json bool"`
-	ReadOnly  bool   `json:"read_only"`
+	AppID       uint64 `json:"app_id" binding:"required"`
+	Key         string `json:"key" binding:"required,min=1,max=128"`
+	Value       string `json:"value" binding:"omitempty"`
+	ValueType   string `json:"value_type" binding:"omitempty,oneof=string number json bool"`
+	ReadOnly    bool   `json:"read_only"`
+	Description string `json:"description" binding:"omitempty,max=255"` // 写入 model.Remark
 }
 
 // TenantUpsertCloudVar 创建/更新云变量
@@ -492,6 +532,7 @@ func TenantUpsertCloudVar(deps *Deps) gin.HandlerFunc {
 				VarValue: req.Value,
 				VarType:  valueType,
 				ReadOnly: req.ReadOnly,
+				Remark:   req.Description,
 				Status:   "active",
 			}
 			if err := deps.DB.Create(&cv).Error; err != nil {
@@ -506,6 +547,7 @@ func TenantUpsertCloudVar(deps *Deps) gin.HandlerFunc {
 				"var_value": req.Value,
 				"var_type":  valueType,
 				"read_only": req.ReadOnly,
+				"remark":    req.Description,
 			}
 			if err := deps.DB.Model(&model.AppCloudVar{}).Where("id = ?", cv.ID).Updates(updates).Error; err != nil {
 				middleware.Fail(c, http.StatusInternalServerError, 5002, "更新云变量失败: "+err.Error())
@@ -606,15 +648,15 @@ func TenantListVersions(deps *Deps) gin.HandlerFunc {
 
 // createVersionReq 创建版本请求（v0.4.0 升级：含灰度发布字段）
 type createVersionReq struct {
-	AppID              uint64  `json:"app_id" binding:"required"`
-	Version            string  `json:"version" binding:"required,min=1,max=32"`
-	Channel            string  `json:"channel" binding:"omitempty,oneof=stable beta dev"`
-	MinVersion         string  `json:"min_version" binding:"omitempty,max=32"`
-	DownloadURL        string  `json:"download_url" binding:"omitempty,max=255"`
-	BackupURL          string  `json:"backup_url" binding:"omitempty,max=255"` // v0.4.0：补全原 DTO 遗漏字段
-	ForceUpdate        bool    `json:"force_update"`
-	UpdateLog          string  `json:"update_log" binding:"omitempty,max=5000"`
-	Published          bool    `json:"published"`
+	AppID       uint64 `json:"app_id" binding:"required"`
+	Version     string `json:"version" binding:"required,min=1,max=32"`
+	Channel     string `json:"channel" binding:"omitempty,oneof=stable beta dev"`
+	MinVersion  string `json:"min_version" binding:"omitempty,max=32"`
+	DownloadURL string `json:"download_url" binding:"omitempty,max=255"`
+	BackupURL   string `json:"backup_url" binding:"omitempty,max=255"` // v0.4.0：补全原 DTO 遗漏字段
+	ForceUpdate bool   `json:"force_update"`
+	UpdateLog   string `json:"update_log" binding:"omitempty,max=5000"`
+	Published   bool   `json:"published"`
 	// v0.4.0 灰度发布字段
 	ReleaseStrategy    string  `json:"release_strategy" binding:"omitempty,oneof=full grayscale canary"`
 	GrayscaleRate      float64 `json:"grayscale_rate" binding:"omitempty,min=0,max=100"`
@@ -1037,7 +1079,17 @@ func TenantGenInviteCode(deps *Deps) gin.HandlerFunc {
 		// 默认佣金比例从 sys_config 读取（铁律 05）
 		defaultRate := deps.CfgCache.GetFloat64(ctx, "agent.default_commission_rate", 10.00)
 
-		codes := make([]string, 0, req.Count)
+		// Bug 5 P0：前端 InviteCodes.vue 期望 codes 为对象数组（含 code 字段），而非 []string
+		type genInviteCodeItem struct {
+			Code       string    `json:"code"`
+			MaxUses    int       `json:"max_uses"`
+			UsedCount  int       `json:"used_count"`
+			ValidDays  int       `json:"valid_days"`
+			ExpiresAt  time.Time `json:"expires_at"`
+			Status     string    `json:"status"`
+			Commission float64   `json:"commission_rate"`
+		}
+		codes := make([]genInviteCodeItem, 0, req.Count)
 		expiresAt := time.Now().AddDate(0, 0, req.ExpireDays)
 
 		txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
@@ -1060,7 +1112,15 @@ func TenantGenInviteCode(deps *Deps) gin.HandlerFunc {
 				if err := tx.Create(ic).Error; err != nil {
 					return fmt.Errorf("入库第 %d 个邀请码失败: %w", i+1, err)
 				}
-				codes = append(codes, code)
+				codes = append(codes, genInviteCodeItem{
+					Code:       code,
+					MaxUses:    ic.MaxUses,
+					UsedCount:  ic.UsedCount,
+					ValidDays:  ic.ValidDays,
+					ExpiresAt:  ic.ExpiresAt,
+					Status:     ic.Status,
+					Commission: ic.DefaultCommissionRate,
+				})
 			}
 			return nil
 		})
@@ -1169,10 +1229,13 @@ type payConfigDetail struct {
 
 // payConfigItem 支付配置列表项
 type payConfigItem struct {
-	ID     uint64          `json:"id"`
-	Channel string         `json:"channel"`
-	Config  payConfigDetail `json:"config"`
-	Status  string         `json:"status"` // active/disabled
+	ID        uint64          `json:"id"`
+	TenantID  uint64          `json:"tenant_id"` // Bug 15 P1：前端 TenantPayConfig.tenant_id 期望字段
+	Channel   string          `json:"channel"`
+	Config    payConfigDetail `json:"config"`
+	Status    string          `json:"status"`     // active/disabled
+	CreatedAt string          `json:"created_at"` // Bug 15 P1：前端期望字段
+	UpdatedAt string          `json:"updated_at"` // Bug 15 P1：前端期望字段
 }
 
 // TenantListPayConfig 开发者支付配置列表
@@ -1204,8 +1267,9 @@ func TenantListPayConfig(deps *Deps) gin.HandlerFunc {
 				status = "active"
 			}
 			items = append(items, payConfigItem{
-				ID:      cfg.ID,
-				Channel: cfg.Channel,
+				ID:       cfg.ID,
+				TenantID: cfg.TenantID,
+				Channel:  cfg.Channel,
 				Config: payConfigDetail{
 					PID:       cfg.PID,
 					Key:       keyPlain,
@@ -1213,7 +1277,9 @@ func TenantListPayConfig(deps *Deps) gin.HandlerFunc {
 					NotifyURL: cfg.NotifyPath,
 					ReturnURL: cfg.ReturnPath,
 				},
-				Status: status,
+				Status:    status,
+				CreatedAt: cfg.CreatedAt.Format("2006-01-02 15:04:05"),
+				UpdatedAt: cfg.UpdatedAt.Format("2006-01-02 15:04:05"),
 			})
 		}
 
@@ -1225,9 +1291,9 @@ func TenantListPayConfig(deps *Deps) gin.HandlerFunc {
 
 // savePayConfigReq 保存支付配置请求
 type savePayConfigReq struct {
-	Channel string           `json:"channel" binding:"required,oneof=epay wechat alipay"`
-	Config  payConfigDetail  `json:"config"`
-	Status  string           `json:"status" binding:"omitempty,oneof=active disabled"`
+	Channel string          `json:"channel" binding:"required,oneof=epay wechat alipay"`
+	Config  payConfigDetail `json:"config"`
+	Status  string          `json:"status" binding:"omitempty,oneof=active disabled"`
 }
 
 // TenantSavePayConfig 保存支付配置
@@ -1399,7 +1465,7 @@ func TenantTestPayConfig(deps *Deps) gin.HandlerFunc {
 type noticeListItem struct {
 	model.Notice
 	// 冗余字段，便于前端直接消费
-	Pinned   bool   `json:"pinned"`     // 映射 IsPinned
+	Pinned    bool   `json:"pinned"`     // 映射 IsPinned
 	PublishAt string `json:"publish_at"` // 映射 StartAt
 	ExpireAt  string `json:"expire_at"`  // 映射 EndAt
 }
@@ -1733,14 +1799,14 @@ func TenantDeleteNotice(deps *Deps) gin.HandlerFunc {
 		}
 
 		// 事务删除：先删关联的 NoticeTarget / NoticeRead，再删 Notice 本身，避免脏数据
-	deps.DB.Where("notice_id = ?", id).Delete(&model.NoticeRead{})
-	deps.DB.Where("notice_id = ?", id).Delete(&model.NoticeTarget{})
-	if err := deps.DB.Delete(&model.Notice{}, id).Error; err != nil {
-		middleware.Fail(c, http.StatusInternalServerError, 5002, "删除公告失败: "+err.Error())
-		return
-	}
+		deps.DB.Where("notice_id = ?", id).Delete(&model.NoticeRead{})
+		deps.DB.Where("notice_id = ?", id).Delete(&model.NoticeTarget{})
+		if err := deps.DB.Delete(&model.Notice{}, id).Error; err != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "删除公告失败: "+err.Error())
+			return
+		}
 
-	middleware.Success(c, gin.H{"id": id, "deleted": true})
+		middleware.Success(c, gin.H{"id": id, "deleted": true})
 	}
 }
 
@@ -1927,7 +1993,7 @@ func TenantUpdateSecurity(deps *Deps) gin.HandlerFunc {
 		}
 
 		RecordOperation(deps, c, "tenant_security", "update", "success", "tenant_security_config", &tenantID, map[string]interface{}{
-			"ip_blacklist_count":         len(req.IPBlacklist),
+			"ip_blacklist_count":        len(req.IPBlacklist),
 			"verify_rate_limit_per_min": req.VerifyRateLimitPerMin,
 			"login_rate_limit_per_min":  req.LoginRateLimitPerMin,
 		})

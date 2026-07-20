@@ -120,7 +120,8 @@ export const deleteTenantCloudVarApi = (id: number) => {
 
 // ============== 版本管理 ==============
 
-export type VersionChannel = 'stable' | 'beta' | 'alpha'
+// Bug 7 P1：后端 model.AppVersion.Channel 枚举为 stable/beta/dev（非 alpha）
+export type VersionChannel = 'stable' | 'beta' | 'dev'
 
 export interface TenantVersion {
   id: number
@@ -129,7 +130,8 @@ export interface TenantVersion {
   version: string
   channel: VersionChannel
   download_url: string
-  update_log: string
+  // Bug 8 P1：后端 model.AppVersion.UpdateContent 的 json tag 为 update_content
+  update_content: string
   min_version: string
   force_update: boolean
   published: boolean
@@ -183,10 +185,18 @@ export const updateTenantAgentApi = (id: number, data: Partial<Pick<TenantAgent,
 
 // ============== 邀请码 ==============
 
+// Bug 11 P1：后端 AgentInviteCode.Status 枚举 active/disabled/exhausted/expired
+export type TenantInviteCodeStatus = 'active' | 'disabled' | 'exhausted' | 'expired'
+
 export interface TenantInviteCode {
   id: number
   code: string
-  status: 'unused' | 'used' | 'expired' | 'disabled'
+  status: TenantInviteCodeStatus
+  max_uses: number
+  used_count: number
+  valid_days: number
+  expires_at: string
+  default_commission_rate: number
   used_by_username?: string
   used_at: string | null
   expire_at: string | null
@@ -250,12 +260,16 @@ export const testTenantPayConfigApi = (channel: string) => {
 
 // ============== 公告（开发者发布给代理/H5） ==============
 
+// Bug 9/10 P1：后端 Notice.Type 枚举 platform/developer/app/agent_notify；Notice.Status 枚举 draft/published/offline
+export type TenantNoticeType = 'platform' | 'developer' | 'app' | 'agent_notify'
+export type TenantNoticeStatus = 'draft' | 'published' | 'offline'
+
 export interface TenantNotice {
   id: number
-  type: 'tenant' | 'agent' | 'h5'
+  type: TenantNoticeType
   title: string
   content: string
-  status: 'draft' | 'published' | 'archived'
+  status: TenantNoticeStatus
   pinned: boolean
   publish_at: string
   expire_at: string | null

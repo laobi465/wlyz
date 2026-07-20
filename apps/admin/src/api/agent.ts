@@ -96,8 +96,10 @@ export interface AgentOrder {
   commission_amount: number
 }
 
-export type CommissionType = 'purchase' | 'withdraw' | 'adjust' | 'recharge'
-export type CommissionStatus = 'pending' | 'approved' | 'rejected' | 'paid'
+// Bug 12 P1：后端 AgentBalanceLog.Type 枚举 recharge/deduct/commission/withdraw/adjust
+// Bug 13 P1：后端 AgentBalanceLog.Status 枚举 pending/settled/rejected
+export type CommissionType = 'recharge' | 'deduct' | 'commission' | 'withdraw' | 'adjust'
+export type CommissionStatus = 'pending' | 'settled' | 'rejected'
 
 export interface AgentCommission {
   id: number
@@ -204,7 +206,8 @@ export const agentRechargeApi = (data: {
 
 export interface AgentNotice {
   id: number
-  type: 'platform' | 'tenant' | 'agent'
+  // Bug 10 P1：与后端 Notice.Type 枚举对齐 platform/developer/app/agent_notify
+  type: 'platform' | 'developer' | 'app' | 'agent_notify'
   title: string
   content: string
   pinned: boolean

@@ -14,14 +14,14 @@
     <div class="app-card">
       <div class="search-bar">
         <el-select v-model="filter.type" placeholder="类型" clearable style="width: 140px" @change="loadList">
-          <el-option label="开发者" value="tenant" />
-          <el-option label="代理" value="agent" />
-          <el-option label="H5 终端" value="h5" />
+          <el-option label="开发者" value="developer" />
+          <el-option label="应用" value="app" />
+          <el-option label="代理" value="agent_notify" />
         </el-select>
         <el-select v-model="filter.status" placeholder="状态" clearable style="width: 140px" @change="loadList">
           <el-option label="草稿" value="draft" />
           <el-option label="已发布" value="published" />
-          <el-option label="已归档" value="archived" />
+          <el-option label="已下线" value="offline" />
         </el-select>
         <el-button @click="loadList">刷新</el-button>
       </div>
@@ -75,9 +75,9 @@
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top">
         <el-form-item label="类型" prop="type">
           <el-select v-model="form.type" placeholder="选择类型">
-            <el-option label="开发者" value="tenant" />
-            <el-option label="代理" value="agent" />
-            <el-option label="H5 终端" value="h5" />
+            <el-option label="开发者" value="developer" />
+            <el-option label="应用" value="app" />
+            <el-option label="代理" value="agent_notify" />
           </el-select>
         </el-form-item>
         <el-form-item label="标题" prop="title">
@@ -90,7 +90,7 @@
           <el-select v-model="form.status" placeholder="选择状态">
             <el-option label="草稿" value="draft" />
             <el-option label="已发布" value="published" />
-            <el-option label="已归档" value="archived" />
+            <el-option label="已下线" value="offline" />
           </el-select>
         </el-form-item>
         <el-form-item label="置顶">
@@ -155,7 +155,7 @@ const submitLoading = ref(false)
 const formRef = ref<FormInstance>()
 
 const form = reactive({
-  type: 'agent',
+  type: 'agent_notify',
   title: '',
   content: '',
   status: 'published',
@@ -173,18 +173,20 @@ const rules = {
 
 const typeTag = (t: string): any => {
   const map: Record<string, any> = {
-    tenant: 'primary',
-    agent: 'success',
-    h5: 'warning'
+    platform: 'danger',
+    developer: 'primary',
+    app: 'warning',
+    agent_notify: 'success'
   }
   return map[t] || 'info'
 }
 
 const typeText = (t: string) => {
   const map: Record<string, string> = {
-    tenant: '开发者',
-    agent: '代理',
-    h5: 'H5 终端'
+    platform: '平台',
+    developer: '开发者',
+    app: '应用',
+    agent_notify: '代理'
   }
   return map[t] || t
 }
@@ -193,7 +195,7 @@ const statusTag = (s: string): any => {
   const map: Record<string, any> = {
     published: 'success',
     draft: 'warning',
-    archived: 'info'
+    offline: 'info'
   }
   return map[s] || 'info'
 }
@@ -202,7 +204,7 @@ const statusText = (s: string) => {
   const map: Record<string, string> = {
     draft: '草稿',
     published: '已发布',
-    archived: '已归档'
+    offline: '已下线'
   }
   return map[s] || s
 }

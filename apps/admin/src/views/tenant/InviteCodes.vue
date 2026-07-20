@@ -22,8 +22,8 @@
     <div class="app-card">
       <div class="search-bar">
         <el-select v-model="filter.status" placeholder="状态" clearable style="width: 140px" @change="loadList">
-          <el-option label="未使用" value="unused" />
-          <el-option label="已使用" value="used" />
+          <el-option label="可用" value="active" />
+          <el-option label="已用尽" value="exhausted" />
           <el-option label="已过期" value="expired" />
           <el-option label="已禁用" value="disabled" />
         </el-select>
@@ -68,13 +68,13 @@
         </el-table-column>
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
-            <el-button v-if="row.status === 'unused'" type="danger" link size="small" @click="disable(row)">禁用</el-button>
+            <el-button v-if="row.status === 'active'" type="danger" link size="small" @click="disable(row)">禁用</el-button>
             <el-button type="primary" link size="small" @click="copy(row.code)">复制</el-button>
           </template>
         </el-table-column>
 
         <template #mobile-actions="{ item }">
-          <el-button v-if="item.status === 'unused'" type="danger" size="small" @click="disable(item)">禁用</el-button>
+          <el-button v-if="item.status === 'active'" type="danger" size="small" @click="disable(item)">禁用</el-button>
           <el-button type="primary" size="small" @click="copy(item.code)">复制</el-button>
         </template>
       </ResponsiveTable>
@@ -165,8 +165,8 @@ const generatedCodes = ref<TenantInviteCode[]>([])
 
 const statusTag = (s: string): any => {
   const map: Record<string, any> = {
-    unused: 'success',
-    used: 'info',
+    active: 'success',
+    exhausted: 'info',
     expired: 'info',
     disabled: 'danger'
   }
@@ -175,8 +175,8 @@ const statusTag = (s: string): any => {
 
 const statusText = (s: string) => {
   const map: Record<string, string> = {
-    unused: '未使用',
-    used: '已使用',
+    active: '可用',
+    exhausted: '已用尽',
     expired: '已过期',
     disabled: '已禁用'
   }

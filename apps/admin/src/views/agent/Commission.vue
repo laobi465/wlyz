@@ -37,16 +37,16 @@
     <div class="app-card">
       <div class="search-bar">
         <el-select v-model="filter.type" placeholder="流水类型" clearable style="width: 140px" @change="loadList">
-          <el-option label="购卡佣金" value="purchase" />
+          <el-option label="购卡佣金" value="commission" />
+          <el-option label="购卡扣款" value="deduct" />
           <el-option label="提现申请" value="withdraw" />
           <el-option label="充值" value="recharge" />
           <el-option label="调整" value="adjust" />
         </el-select>
         <el-select v-model="filter.status" placeholder="状态" clearable style="width: 140px" @change="loadList">
-          <el-option label="待审核" value="pending" />
-          <el-option label="已通过" value="approved" />
+          <el-option label="待处理" value="pending" />
+          <el-option label="已结算" value="settled" />
           <el-option label="已拒绝" value="rejected" />
-          <el-option label="已打款" value="paid" />
         </el-select>
       </div>
 
@@ -203,14 +203,16 @@ const rules = {
 }
 
 const typeTag = (t: string): any => ({
-  purchase: 'success',
+  commission: 'success',
+  deduct: 'danger',
   withdraw: 'warning',
   recharge: 'primary',
   adjust: 'info'
 }[t] || 'info')
 
 const typeText = (t: string) => ({
-  purchase: '购卡佣金',
+  commission: '购卡佣金',
+  deduct: '购卡扣款',
   withdraw: '提现申请',
   recharge: '充值',
   adjust: '调整'
@@ -218,16 +220,14 @@ const typeText = (t: string) => ({
 
 const statusTag = (s: string): any => ({
   pending: 'warning',
-  approved: 'primary',
-  rejected: 'danger',
-  paid: 'success'
+  settled: 'success',
+  rejected: 'danger'
 }[s] || 'info')
 
 const statusText = (s: string) => ({
-  pending: '待审核',
-  approved: '已通过',
-  rejected: '已拒绝',
-  paid: '已打款'
+  pending: '待处理',
+  settled: '已结算',
+  rejected: '已拒绝'
 }[s] || s)
 
 const methodText = (m: string) => ({

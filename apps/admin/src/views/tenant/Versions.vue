@@ -17,7 +17,7 @@
         <el-select v-model="filter.channel" placeholder="渠道" clearable style="width: 120px" @change="loadList">
           <el-option label="稳定版" value="stable" />
           <el-option label="测试版" value="beta" />
-          <el-option label="内测版" value="alpha" />
+          <el-option label="内测版" value="dev" />
         </el-select>
         <el-button @click="loadList">刷新</el-button>
       </div>
@@ -104,7 +104,7 @@
           <el-select v-model="form.channel" placeholder="选择渠道">
             <el-option label="稳定版" value="stable" />
             <el-option label="测试版" value="beta" />
-            <el-option label="内测版" value="alpha" />
+            <el-option label="内测版" value="dev" />
           </el-select>
         </el-form-item>
         <el-form-item label="下载 URL" prop="download_url">
@@ -193,7 +193,7 @@ const channelTag = (c: string): any => {
   const map: Record<string, any> = {
     stable: 'success',
     beta: 'warning',
-    alpha: 'info'
+    dev: 'info'
   }
   return map[c] || 'info'
 }
@@ -202,7 +202,7 @@ const channelText = (c: string) => {
   const map: Record<string, string> = {
     stable: '稳定版',
     beta: '测试版',
-    alpha: '内测版'
+    dev: '内测版'
   }
   return map[c] || c || '-'
 }

@@ -1329,10 +1329,10 @@ func AgentListInviteCodes(deps *Deps) gin.HandlerFunc {
 		}
 
 		middleware.Success(c, gin.H{
-			"list":  codes,
-			"total": total,
-			"page":  page,
-			"size":  size,
+			"list":      codes,
+			"total":     total,
+			"page":      page,
+			"page_size": size, // Bug 14 P1：统一分页字段名为 page_size
 		})
 	}
 }

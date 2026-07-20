@@ -16,13 +16,14 @@
       <div class="search-bar">
         <el-select v-model="filter.type" placeholder="类型" clearable style="width: 140px" @change="loadList">
           <el-option label="平台公告" value="platform" />
-          <el-option label="开发者公告" value="tenant" />
-          <el-option label="代理公告" value="agent" />
+          <el-option label="开发者公告" value="developer" />
+          <el-option label="应用公告" value="app" />
+          <el-option label="代理通知" value="agent_notify" />
         </el-select>
         <el-select v-model="filter.status" placeholder="状态" clearable style="width: 140px" @change="loadList">
           <el-option label="草稿" value="draft" />
           <el-option label="已发布" value="published" />
-          <el-option label="已归档" value="archived" />
+          <el-option label="已下线" value="offline" />
         </el-select>
         <el-input v-model="filter.keyword" placeholder="标题关键词" clearable style="width: 200px" @change="loadList" />
         <el-button @click="loadList">刷新</el-button>
@@ -86,8 +87,9 @@
         <el-form-item label="类型" prop="type">
           <el-select v-model="form.type" style="width: 100%">
             <el-option label="平台公告" value="platform" />
-            <el-option label="开发者公告" value="tenant" />
-            <el-option label="代理公告" value="agent" />
+            <el-option label="开发者公告" value="developer" />
+            <el-option label="应用公告" value="app" />
+            <el-option label="代理通知" value="agent_notify" />
           </el-select>
         </el-form-item>
         <el-form-item label="标题" prop="title">
@@ -100,7 +102,7 @@
           <el-select v-model="form.status" style="width: 100%">
             <el-option label="草稿" value="draft" />
             <el-option label="已发布" value="published" />
-            <el-option label="已归档" value="archived" />
+            <el-option label="已下线" value="offline" />
           </el-select>
         </el-form-item>
         <el-form-item label="置顶">
@@ -195,7 +197,7 @@ const statusTag = (s: string): any => {
   const map: Record<string, any> = {
     draft: 'info',
     published: 'success',
-    archived: 'info'
+    offline: 'info'
   }
   return map[s] || 'info'
 }
@@ -204,7 +206,7 @@ const statusText = (s: string) => {
   const map: Record<string, string> = {
     draft: '草稿',
     published: '已发布',
-    archived: '已归档'
+    offline: '已下线'
   }
   return map[s] || s
 }
@@ -212,8 +214,9 @@ const statusText = (s: string) => {
 const typeTag = (t: string): any => {
   const map: Record<string, any> = {
     platform: 'danger',
-    tenant: 'primary',
-    agent: 'success'
+    developer: 'primary',
+    app: 'warning',
+    agent_notify: 'success'
   }
   return map[t] || 'info'
 }
@@ -221,8 +224,9 @@ const typeTag = (t: string): any => {
 const typeText = (t: string) => {
   const map: Record<string, string> = {
     platform: '平台公告',
-    tenant: '开发者',
-    agent: '代理'
+    developer: '开发者',
+    app: '应用',
+    agent_notify: '代理通知'
   }
   return map[t] || t
 }

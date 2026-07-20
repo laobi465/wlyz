@@ -134,8 +134,9 @@ export const updateAdminAgentApi = (id: number, data: Partial<Pick<AdminAgent, '
 
 // ============== 公告管理 ==============
 
-export type NoticeType = 'platform' | 'tenant' | 'agent'
-export type NoticeStatus = 'draft' | 'published' | 'archived'
+// Bug 9/10 P1：后端 Notice.Type 枚举 platform/developer/app/agent_notify；Notice.Status 枚举 draft/published/offline
+export type NoticeType = 'platform' | 'developer' | 'app' | 'agent_notify'
+export type NoticeStatus = 'draft' | 'published' | 'offline'
 
 export interface AdminNotice {
   id: number
