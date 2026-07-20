@@ -1245,7 +1245,7 @@ return uint32 % 100   // 0~99 稳定桶号
   - `rolled_back_from BIGINT`：若为回滚，原失败更新 id（0=非回滚）
 - 3 个索引：`idx_update_log_status` / `idx_update_log_created` / `idx_update_log_trigger`
 
-#### 配置项（sys_config 8 项，可后台调整）
+#### 配置项（sys_config 10 项，可后台调整）
 
 | Key | 默认值 | 含义 |
 |---|---|---|
@@ -1257,6 +1257,8 @@ return uint32 % 100   // 0~99 稳定桶号
 | `update.healthcheck.timeout` | `30` | 健康检查超时秒数 |
 | `update.rollback.enabled` | `1` | 失败自动回滚开关 |
 | `update.lock.timeout` | `600` | 更新锁超时秒数（防死锁自动释放） |
+| `update.poll.enabled` | `1` | v0.4.0 弹窗通知总开关：1=前端 AdminLayout 启用 30s 轮询 /admin/update/poll；0=关闭弹窗通知 |
+| `update.poll.interval_seconds` | `30` | v0.4.0 弹窗通知轮询间隔（秒），最小 10 秒（后端 `PollIntervalMin` 强制下限） |
 
 #### Webhook 签名校验（`update.VerifyWebhookSignature`）
 
@@ -1315,6 +1317,7 @@ GitHub 算法：`HMAC-SHA256(secret, body)` → hex 编码 → 前缀 `sha256=`
 | `GET /api/v1/admin/update/history` | admin JWT | 分页查询审计日志（status / trigger_source 筛选） |
 | `POST /api/v1/admin/update/rollback` | admin JWT | 手动回滚到指定失败日志的 commit_before |
 | `GET /api/v1/admin/update/logs/:id` | admin JWT | 单条审计日志详情（含完整 log_text） |
+| `GET /api/v1/admin/update/poll` | admin JWT | v0.4.0 弹窗通知轻量轮询：仅返回 enabled + interval_seconds + current_commit + is_locked + 最近一次更新元信息 8 字段（不含 log_text/steps_json 重字段）；前端 UpdateNotifier 组件按 interval_seconds 自适应轮询 |
 
 #### 安全机制
 

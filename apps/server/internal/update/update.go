@@ -44,7 +44,12 @@ const (
 	CfgKeyHealthCheckTimeout = "update.healthcheck.timeout"
 	CfgKeyRollbackEnabled   = "update.rollback.enabled"
 	CfgKeyLockTimeout       = "update.lock.timeout"
+	CfgKeyPollEnabled       = "update.poll.enabled"          // v0.4.0 弹窗通知总开关
+	CfgKeyPollInterval      = "update.poll.interval_seconds" // v0.4.0 弹窗通知轮询间隔（秒）
 )
+
+// PollIntervalMin 轮询间隔下限（秒），防止配置错误导致前端打爆后端
+const PollIntervalMin = 10
 
 // TriggerSource 触发源
 const (

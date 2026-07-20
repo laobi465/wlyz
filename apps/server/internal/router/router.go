@@ -97,12 +97,13 @@ func Register(container *config.Container) *gin.Engine {
 		adminAuth.GET("/versions", handler.AdminListVersions(deps))
 		adminAuth.GET("/versions/:id", handler.AdminGetVersion(deps))
 
-		// 在线更新（v0.4.0 GitHub Webhook 自动更新 + 手动触发 + 回滚）
+		// 在线更新（v0.4.0 GitHub Webhook 自动更新 + 手动触发 + 回滚 + 弹窗通知轮询）
 		adminAuth.GET("/update/status", handler.AdminUpdateStatus(deps))
 		adminAuth.POST("/update/trigger", handler.AdminTriggerUpdate(deps))
 		adminAuth.GET("/update/history", handler.AdminListUpdateHistory(deps))
 		adminAuth.POST("/update/rollback", handler.AdminRollbackUpdate(deps))
 		adminAuth.GET("/update/logs/:id", handler.AdminGetUpdateLog(deps))
+		adminAuth.GET("/update/poll", handler.AdminUpdatePoll(deps)) // v0.4.0 弹窗通知轻量轮询
 
 		// 数据备份恢复（v0.4.0 全库 SQL 备份 + SHA-256 校验 + AES-256-GCM 加密 + gzip 压缩 + 过期清理）
 		adminAuth.GET("/backup/status", handler.AdminBackupStatus(deps))

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -337,5 +338,67 @@ func AdminGetUpdateLog(deps *Deps) gin.HandlerFunc {
 		}
 
 		middleware.Success(c, log)
+	}
+}
+
+// ============== 7. 管理后台：轻量轮询（v0.4.0 弹窗通知） ==============
+
+// AdminUpdatePoll GET /admin/update/poll
+// v0.4.0 管理员弹窗通知专用轻量轮询端点
+// 仅返回 commit + 锁状态 + 最近一次更新元信息（不含 log_text 重字段）
+// 前端 AdminLayout 中的 UpdateNotifier 组件按 update.poll.interval_seconds 间隔轮询
+// 检测到 current_commit 与 localStorage 中记录的 last_known_commit 不一致时弹窗提示
+// 严格遵循铁律 04/05：轮询开关 / 间隔 全部从 sys_config 读取
+func AdminUpdatePoll(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+
+		// 弹窗通知总开关（关闭时前端不轮询，但接口仍可调用便于排查）
+		enabled := deps.CfgCache.GetBool(ctx, update.CfgKeyPollEnabled, true)
+
+		// 建议轮询间隔（秒），强制下限 PollIntervalMin 防配置错误打爆后端
+		intervalSec := deps.CfgCache.GetInt(ctx, update.CfgKeyPollInterval, 30)
+		if intervalSec < update.PollIntervalMin {
+			intervalSec = update.PollIntervalMin
+		}
+
+		mgr := update.NewManager(deps.DB, deps.CfgCache)
+		currentCommit := mgr.GetLatestCommit(ctx)
+		isLocked := mgr.IsLocked(ctx)
+
+		// 仅 SELECT 轻量字段（避免 log_text 大字段）
+		var latest struct {
+			Status        string `gorm:"column:status"`
+			TriggerSource string `gorm:"column:trigger_source"`
+			CommitAfter   string `gorm:"column:commit_after"`
+			CreatedAt     time.Time `gorm:"column:created_at"`
+		}
+		hasLatest := true
+		if err := deps.DB.Table("system_update_log").
+			Order("id DESC").
+			Limit(1).
+			Select("status, trigger_source, commit_after, created_at").
+			Scan(&latest).Error; err != nil || latest.Status == "" {
+			hasLatest = false
+		}
+
+		resp := gin.H{
+			"enabled":          enabled,
+			"interval_seconds": intervalSec,
+			"current_commit":   currentCommit,
+			"is_locked":        isLocked,
+			"last_update_at":   nil,
+			"last_status":      nil,
+			"last_trigger":     nil,
+			"last_commit":      nil,
+		}
+		if hasLatest {
+			resp["last_update_at"] = latest.CreatedAt.Unix()
+			resp["last_status"] = latest.Status
+			resp["last_trigger"] = latest.TriggerSource
+			resp["last_commit"] = latest.CommitAfter
+		}
+
+		middleware.Success(c, resp)
 	}
 }

@@ -39,6 +39,7 @@
 - 通知系统（v0.4.0 短信/邮件/站内信三通道 + 模板引擎 + 服务商抽象 + 失败重试 + 限流，Aliyun SMS + SMTP Email 双实现）
 - 终端用户体系（v0.4.0 H5 注册/登录/绑卡/个人中心 + HMAC-SHA256 access token + SHA-512 哈希 refresh token + jti 单点踢出 + bcrypt cost=12）
 - API 开放平台（v0.4.0 开发者 API Token + Webhook 事件推送 + 第三方接入授权；SHA-512 哈希存储 Token + HMAC-SHA256 签名 + AES-256-GCM 加密 Webhook secret + 退避重试 + 阈值自动 disable）
+- 管理员更新弹窗通知（v0.4.0 前端 AdminLayout 挂载 UpdateNotifier 组件轻量轮询 /admin/update/poll + localStorage 持久化 last_known_commit + 自适应间隔 + 防重复弹窗 + PollIntervalMin=10 强制下限）
 - 心跳保活 + 离线宽限期
 - 云变量远程下发
 - 多语言 SDK（Python / Node.js / Java / C# / Go / PHP / C++ / 易语言）
@@ -276,8 +277,9 @@ SDK 校验签名 → 通过则解锁功能
 | 通知系统 | `notify_template`（code/channel/subject/body_html/tenant_id/status）+ `notify_log`（tenant_id/channel/recipient/template_code/status/provider_msg_id/error_message/retry_count/priority） | v0.4.0 通知系统（短信/邮件/站内信三通道 + 模板 CRUD + 日志 + 失败重试，migration 014 + 16 项 notify.* sys_config） | v0.4.0 |
 | 终端用户 | `end_user`（tenant_id/username/email/phone/password_hash/status/last_login_at/last_login_ip）+ `end_user_card`（user_id/card_id/tenant_id）+ `end_user_token`（user_id/refresh_token_hash/access_jti/expires_at/user_agent/ip/revoked）+ `app_card.end_user_id` | v0.4.0 终端用户体系（H5 注册/登录/绑卡/单点踢出 + HMAC-SHA256 access token + SHA-512 哈希 refresh token + jti 单点踢出，migration 015 + 10 项 enduser.* sys_config） | v0.4.0 |
 | API 开放平台 | `developer_api_token`（tenant_id/name/token_hash/prefix/scopes/expires_at/last_used_at/last_used_ip/status/revoked_at）+ `webhook_endpoint`（tenant_id/name/url/secret_enc/events/status/failure_count/last_response_code/last_response_at/last_error）+ `webhook_delivery`（tenant_id/endpoint_id/event_type/event_id/payload/status/response_code/response_body/attempt_count/max_retry/next_retry_at/delivered_at） | v0.4.0 API 开放平台（开发者 API Token SHA-512 哈希存储 + Webhook HMAC-SHA256 签名 + AES-256-GCM 加密 secret + 退避重试 + 阈值自动 disable，migration 016 + 8 项 openapi.*/webhook.* sys_config） | v0.4.0 |
+| 弹窗通知 | `sys_config` 新增 `update.poll.enabled` / `update.poll.interval_seconds` | v0.4.0 管理员更新弹窗通知（前端 AdminLayout 挂载 UpdateNotifier 组件轻量轮询 /admin/update/poll + localStorage 持久化 last_known_commit + 自适应间隔 + 防重复弹窗，migration 017 + 2 项 update.poll.* sys_config + PollIntervalMin=10 强制下限） | v0.4.0 |
 
-> migration 文件：`apps/server/migrations/` 共 16 套（001 ~ 016），由 `internal/migration/migrator.go` 在 `InitContainer` 阶段自动执行。
+> migration 文件：`apps/server/migrations/` 共 17 套（001 ~ 017），由 `internal/migration/migrator.go` 在 `InitContainer` 阶段自动执行。
 
 ### 4.2 Redis 缓存键设计
 
@@ -568,5 +570,5 @@ pnpm dev
 ---
 
 **文档版本**：0.4.0
-**最后更新**：2026-07-20（v0.4.0 第八项迁移：在线更新体系 migration 011 system_update_log 表 + 8 项 sys_config + update 包 Manager.ExecuteUpdate/Rollback/HealthCheck + VerifyWebhookSignature + GitHubWebhook/AdminUpdateStatus/AdminTriggerUpdate/AdminListUpdateHistory/AdminRollbackUpdate/AdminGetUpdateLog handler + scripts/deploy_update.sh + 37 个测试全 PASS）
+**最后更新**：2026-07-20（v0.4.0 第十四项迁移：管理员更新弹窗通知 migration 017 + 2 项 update.poll.* sys_config + update 包 CfgKeyPollEnabled/CfgKeyPollInterval/PollIntervalMin 常量 + AdminUpdatePoll 轻量轮询 handler + 前端 UpdateNotifier.vue 组件 + AdminLayout 挂载 + 13 个测试全 PASS）
 **维护者**：KeyAuth SaaS Team

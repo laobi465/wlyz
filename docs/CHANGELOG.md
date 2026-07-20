@@ -11,6 +11,75 @@
 
 ## [0.4.0] - 2026-07-20（v0.4.x 迁移项推进）
 
+### [新增] 管理员更新弹窗通知（v0.4.x 第十四项：前端轻量轮询 + 自适应间隔 + 防重复弹窗）
+
+#### 背景
+
+- v0.4.0 第十二项之前完成的「在线更新」已支持 GitHub Webhook 自动拉取 + 手动触发 + 回滚 + 健康检查，但管理员需要手动刷新页面才能感知新版本上线
+- TODO.md `[迁移] 管理员弹窗通知 → v0.4.x 前端轮询 /admin/update/poll 检测新 commit`
+- 商业诉求：管理员日常工作时无需手动检查更新页面，新版本部署后自动弹窗提示刷新
+
+#### 实现
+
+**`migrations/017_v0.4.0_admin_update_poll.up.sql`**：
+- `sys_config` 新增 2 项 `update.poll.*` 配置（铁律 05：弹窗通知开关 + 间隔全部走后台可视化编辑）：
+  - `update.poll.enabled` = `1`（弹窗通知总开关，1=启用 0=关闭）
+  - `update.poll.interval_seconds` = `30`（轮询间隔秒，最小 10 秒由后端 `PollIntervalMin` 常量强制下限）
+- 配套 `017_v0.4.0_admin_update_poll.down.sql` 回滚
+
+**`internal/update/update.go`**：
+- 新增 2 个配置键常量（铁律 04：禁止硬编码）：
+  - `CfgKeyPollEnabled = "update.poll.enabled"`
+  - `CfgKeyPollInterval = "update.poll.interval_seconds"`
+- 新增 `PollIntervalMin = 10` 常量（轮询间隔下限，防配置错误导致前端打爆后端）
+
+**`internal/handler/update.go`**：
+- 新增 `AdminUpdatePoll(deps)` handler，挂载 `GET /admin/update/poll`（adminAuth 组）
+- 轻量响应：仅返回 `enabled` / `interval_seconds` / `current_commit` / `is_locked` / `last_update_at` / `last_status` / `last_trigger` / `last_commit` 共 8 个字段
+- **关键设计**：不返回 `log_text` / `steps_json` 重字段，降低高频轮询带宽
+- 间隔下限保护：从 sys_config 读取后若 < `PollIntervalMin` 强制提升到 10 秒
+- 配置即时生效：每次轮询都重新读取 sys_config，后端调整开关/间隔后下一次轮询立即生效
+
+**`internal/router/router.go`**：
+- `adminAuth` 组新增 `GET /admin/update/poll` 路由
+
+**`internal/handler/update_poll_test.go`**（新建测试）：
+- 13 个测试用例全 PASS，覆盖：
+  - 默认配置 + 自定义间隔 + 间隔下限保护 + 等于下限保留
+  - enabled=0 关闭弹窗通知
+  - 有审计日志时返回最近一次更新元信息 + 多条日志取最新 + 空表时 last_* 全部 nil
+  - 响应字段不含 log_text/steps_json + 回滚状态正确返回
+  - 配置动态变更即时生效
+  - 配置键常量正确 + 响应包含所有预期字段
+
+**前端 `apps/admin/src/api/update.ts`**（新建）：
+- 新增 `UpdatePoll` 接口 + `pollUpdateApi()` API 函数
+- 同时补全既有 `updateStatusApi` / `triggerUpdateApi` / `listUpdateHistoryApi` / `getUpdateLogApi` / `rollbackUpdateApi` 共 6 个 API
+
+**前端 `apps/admin/src/components/UpdateNotifier.vue`**（新建）：
+- 无 UI 仅逻辑组件，挂载于 `AdminLayout.vue`，对所有管理员页面生效
+- `localStorage` key `keyauth_admin_last_known_commit` 持久化上次已知 commit，跨会话检测更新
+- 自适应间隔：每次轮询后用响应中的 `interval_seconds` 动态调整定时器，后端调整配置即时生效
+- `pollOnce()` 异步函数：调 `pollUpdateApi`，返回后端建议间隔（秒），`enabled=false` 返回 0 信号停止定时器，异常返回 30 兜底
+- `scheduleNext(intervalSec)` 自适应定时器：检测到间隔变更时重置 setInterval
+- `showRefreshDialog(newCommit)` 使用 `ElMessageBox.confirm` 弹窗，`notifiedCommit` ref 防本会话重复弹窗
+- 用户选「立即刷新」→ `window.location.reload()` 强制重新加载所有资源
+- 用户选「稍后提醒」→ 本会话不再打扰（`notifiedCommit` 标记）
+- `onMounted` 启动轮询，`onBeforeUnmount` 停止定时器
+- 强制下限 10 秒与后端 `PollIntervalMin` 对齐
+
+**前端 `apps/admin/src/layouts/AdminLayout.vue`**：
+- 挂载 `<UpdateNotifier />` 组件（与 `<BasicLayout>` 同级，无 UI 不影响布局）
+
+#### 验证
+
+- `go build ./...` 通过
+- `go vet ./...` 通过
+- `go test ./...` 全 PASS（handler 包含 13 个新测试，update 包无回归）
+- `vue-tsc --noEmit` 前端 TypeScript 检查通过
+
+---
+
 ### [新增] API 开放平台（v0.4.x 第十三项：开发者 API Token + Webhook 事件推送 + 第三方接入授权）
 
 #### 背景

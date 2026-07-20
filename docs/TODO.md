@@ -356,7 +356,7 @@
 - [x] [已完成 2026-07-20] 自动拉取构建重启 - v0.4.0（Manager.ExecuteUpdate 6 步流程：加锁 → pending 日志 → git fetch+reset → bash 部署脚本 → 健康检查 → 失败回滚；scripts/deploy_update.sh 默认脚本支持 systemd/docker/pm2/none 自适应）
 - [x] [已完成 2026-07-20] 后台更新管理面板（S-13） - v0.4.0（AdminUpdateStatus 返回当前 commit+锁状态+自动开关+最近审计日志+成功/失败统计；AdminTriggerUpdate 异步触发；AdminListUpdateHistory 分页查询+status/trigger_source 筛选；AdminGetUpdateLog 单条详情含 log_text）
 - [x] [已完成 2026-07-20] 版本回滚 - v0.4.0（Manager.Rollback 回滚到失败日志的 commit_before + 重跑脚本 + 健康检查；maybeRollback 自动回滚若 update.rollback.enabled=1；AdminRollbackUpdate 手动回滚接口）
-- [ ] [待开始] 管理员弹窗通知 - v0.4.0（前端轮询 /admin/update/status 检测新 commit；后续前端实现）
+- [x] [已完成 2026-07-20] 管理员弹窗通知 - v0.4.0（migration 017 新增 update.poll.enabled + update.poll.interval_seconds 2 项 sys_config；AdminUpdatePoll GET /admin/update/poll 轻量轮询端点仅返回 commit+锁状态+最近一次更新元信息 8 字段，不含 log_text/steps_json 重字段；PollIntervalMin=10 强制下限防配置错误打爆后端；前端 UpdateNotifier.vue 组件挂载于 AdminLayout，localStorage 持久化 last_known_commit 跨会话检测更新，自适应间隔每次轮询后用响应 interval_seconds 重置定时器后端调整配置即时生效，ElMessageBox.confirm 弹窗 + notifiedCommit ref 防本会话重复弹窗；13 个测试全 PASS）
 - 详见 references/11-github-auto-update.md
 
 #### API 开放平台
@@ -487,7 +487,7 @@
 | v0.3.4 | 2026-07-19 | ✅ 已完成（结算与对账闭环：开发者 balance/frozen_balance + tenant_balance_log + tenant_withdraw + 批量结算 + 对账报表 + 双审核页面） |
 | v0.3.5 | 2026-07-19 | ✅ 已完成（P0 修复：RSA 脚本 / 数据库迁移 / H5 公共 API / 套餐配额） |
 | v0.3.6 | 2026-07-20 | ✅ 已完成（剩余 P1 收尾 + 单元测试 + 客户端 SDK 签名对齐测试） |
-| v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移 + JWT jti 单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 + 全语言 SDK 扩展 + 多级代理体系 + 灰度发布 + 在线更新 + 数据备份恢复 + 监控告警 + 通知系统 + 终端用户体系 + API 开放平台 已完成；管理员弹窗通知 待开始） |
+| v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移 + JWT jti 单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 + 全语言 SDK 扩展 + 多级代理体系 + 灰度发布 + 在线更新 + 数据备份恢复 + 监控告警 + 通知系统 + 终端用户体系 + API 开放平台 + 管理员弹窗通知 已完成；14 项迁移全绿） |
 
 ---
 
