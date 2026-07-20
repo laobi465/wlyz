@@ -93,12 +93,13 @@ func TestIsOnline_Online(t *testing.T) {
 }
 
 func TestIsOnline_Offline(t *testing.T) {
-	rdb, mr := setupMiniRedis(t)
+	rdb, _ := setupMiniRedis(t)
 	ctx := context.Background()
 	require.NoError(t, Record(ctx, rdb, 1, 100, "", ""))
 
-	// 推进 miniredis 时间 200 秒（超过 180 秒超时）
-	mr.FastForward(200 * time.Second)
+	// 直接将 score 设为 200 秒前，模拟心跳超时（miniredis.FastForward 不影响 Go time.Now()）
+	pastScore := float64(time.Now().Add(-200 * time.Second).Unix())
+	require.NoError(t, rdb.ZAdd(ctx, onlineKey(1), redis.Z{Score: pastScore, Member: "100"}).Err())
 
 	online, err := IsOnline(ctx, rdb, 1, 100, 180)
 	require.NoError(t, err)
@@ -135,7 +136,7 @@ func TestIsOnline_NilRedis(t *testing.T) {
 // ============== Remove ==============
 
 func TestRemove_Success(t *testing.T) {
-	rdb, mr := setupMiniRedis(t)
+	rdb, _ := setupMiniRedis(t)
 	ctx := context.Background()
 	require.NoError(t, Record(ctx, rdb, 1, 100, "", ""))
 	require.NoError(t, Record(ctx, rdb, 1, 200, "", ""))
@@ -186,13 +187,15 @@ func TestCountOnline(t *testing.T) {
 }
 
 func TestCountOnline_ExcludesOffline(t *testing.T) {
-	rdb, mr := setupMiniRedis(t)
+	rdb, _ := setupMiniRedis(t)
 	ctx := context.Background()
 	require.NoError(t, Record(ctx, rdb, 1, 100, "", ""))
 	require.NoError(t, Record(ctx, rdb, 1, 200, "", ""))
 
-	// 推进 200 秒，使所有设备离线
-	mr.FastForward(200 * time.Second)
+	// 将 score 设为 200 秒前，使所有设备离线
+	pastScore := float64(time.Now().Add(-200 * time.Second).Unix())
+	require.NoError(t, rdb.ZAdd(ctx, onlineKey(1), redis.Z{Score: pastScore, Member: "100"}).Err())
+	require.NoError(t, rdb.ZAdd(ctx, onlineKey(1), redis.Z{Score: pastScore, Member: "200"}).Err())
 
 	count, err := CountOnline(ctx, rdb, 1, 180)
 	require.NoError(t, err)
@@ -300,7 +303,7 @@ func TestDetailKey_Format(t *testing.T) {
 // ============== 端到端：Record → IsOnline → Remove 闭环 ==============
 
 func TestHeartbeat_RoundTrip(t *testing.T) {
-	rdb, mr := setupMiniRedis(t)
+	rdb, _ := setupMiniRedis(t)
 	ctx := context.Background()
 
 	// 1. 记录心跳
@@ -308,8 +311,9 @@ func TestHeartbeat_RoundTrip(t *testing.T) {
 	online, _ := IsOnline(ctx, rdb, 5, 500, 60)
 	assert.True(t, online)
 
-	// 2. 推进时间 100 秒（超过 60 秒超时）→ 离线
-	mr.FastForward(100 * time.Second)
+	// 2. 将 score 设为 100 秒前（超过 60 秒超时）→ 离线
+	pastScore := float64(time.Now().Add(-100 * time.Second).Unix())
+	require.NoError(t, rdb.ZAdd(ctx, onlineKey(5), redis.Z{Score: pastScore, Member: "500"}).Err())
 	online, _ = IsOnline(ctx, rdb, 5, 500, 60)
 	assert.False(t, online)
 

@@ -259,6 +259,7 @@ func TestCheckMaxAgents_BelowLimit(t *testing.T) {
 		require.NoError(t, db.Create(&model.Agent{
 			BaseModel: model.BaseModel{ID: uint64(i)},
 			TenantID:  1,
+			Username:  "agent-" + strconv.Itoa(i),
 		}).Error)
 	}
 	err := CheckMaxAgents(db, 1)
@@ -273,6 +274,7 @@ func TestCheckMaxAgents_AtLimit(t *testing.T) {
 		require.NoError(t, db.Create(&model.Agent{
 			BaseModel: model.BaseModel{ID: uint64(i)},
 			TenantID:  1,
+			Username:  "agent-" + strconv.Itoa(i),
 		}).Error)
 	}
 	err := CheckMaxAgents(db, 1)

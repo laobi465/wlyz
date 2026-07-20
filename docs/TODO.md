@@ -470,17 +470,17 @@
 | v0.3.3 | 2026-07-19 | ✅ 已完成（日志系统：异步 Worker + 三表独立查询 + CSV 导出 + 前端 3 Tab 升级） |
 | v0.3.4 | 2026-07-19 | ✅ 已完成（结算与对账闭环：开发者 balance/frozen_balance + tenant_balance_log + tenant_withdraw + 批量结算 + 对账报表 + 双审核页面） |
 | v0.3.5 | 2026-07-19 | ✅ 已完成（P0 修复：RSA 脚本 / 数据库迁移 / H5 公共 API / 套餐配额） |
-| v0.3.6 | 待定 | [进行中] 剩余 P1 收尾（文档同步 + 卡密 CSV + 设备强制下线 + 安装向导 + 代理注册付费 ✓ + 开发者自有易支付 ✓ + SDK 三语言） |
+| v0.3.6 | 2026-07-20 | ✅ 已完成（剩余 P1 收尾 + 单元测试 + 客户端 SDK 签名对齐测试） |
 | v0.4.0 | 待定 | [待开始] 三期商业化 |
 
 ---
 
-## v0.3.5 进度统计
+## v0.3.6 进度统计
 
 - **总任务数**：约 110 项
-- **已完成**：约 90 项（v0.2.0 ~ v0.3.5 全部已发布版本累积）
-- **进行中**：1 项（v0.3.6 文档同步）
-- **待开始**：约 19 项（v0.3.6 收尾 + v0.4.x 商业化）
+- **已完成**：约 100 项（v0.2.0 ~ v0.3.6 全部已发布版本累积）
+- **进行中**：0 项
+- **待开始**：约 10 项（v0.4.x 商业化）
 
 ### 已完成版本汇总（v0.2.0 ~ v0.3.5）
 
@@ -501,9 +501,9 @@
 | v0.3.4 | 结算与对账闭环 | sys_tenant.balance + tenant_balance_log + tenant_withdraw + 批量结算 + 对账报表 |
 | v0.3.5 | P0 修复 | RSA 脚本 + 轻量级迁移机制 + H5 公共 API + quota 包 |
 
-### 待完成项（约 19 项）
+### 待完成项（约 10 项）
 
-**v0.3.6 剩余 P1 收尾（约 10 项）**：
+**v0.3.6 已完成（v0.3.6 已发布 2026-07-20）**：
 - [x] [已完成 2026-07-20] 卡密 CSV 导入导出（card.go 新增 TenantExportCardsCSV/TenantImportCardsCSV + 前端 Cards.vue 导出/导入对话框）
 - [x] [已完成 2026-07-20] 设备强制下线（card.go TenantBanCard 联动 heartbeat.Remove 清 Redis 心跳 + DB 标记 banned）
 - [x] [已完成 2026-07-20] 安装向导页面（/install，后端 install.go InstallStatus/Install + 前端 Install.vue 4 步向导 + 路由）
@@ -512,10 +512,10 @@
 - [x] [已完成 2026-07-20] 双层支付模式切换逻辑（CreatePayOrder 内 SysPackage.AllowCustomPay + TenantPayConfig.Enabled 双开关，TOP/ORD 前缀分发）
 - [x] [已完成 2026-07-20] 套餐 allow_custom_pay 字段生效（CreatePayOrder 内读取生效）
 - [x] [已完成 2026-07-20] 客户端 SDK（Python / Node.js / PHP 三语言）
-- [ ] [待开始] 单元测试 + 集成测试
+- [x] [已完成 2026-07-20] 单元测试 + 客户端 SDK 签名对齐测试（pkg/crypto + pkg/snowflake + pkg/epay + internal/quota + internal/heartbeat + 跨语言签名对齐）
 - [x] [已完成 2026-07-20] v0.3.6 文档同步
 
-**v0.4.x 三期商业化（约 9 项）**：
+**v0.4.x 三期商业化（约 10 项）**：
 - 多级代理（二级 + 三级 + 跨级佣金）
 - 全语言 SDK（Java / C# / Go / C++ / 易语言）
 - 高级安全（异地登录告警 + 风控引擎 + Cloudflare WAF）
@@ -529,5 +529,5 @@
 ---
 
 **文档版本**：0.3.6  
-**最后更新**：2026-07-20  
+**最后更新**：2026-07-20（v0.3.6 全部任务收尾，单元测试 + SDK 签名对齐测试完成）  
 **维护者**：KeyAuth SaaS Team

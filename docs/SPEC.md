@@ -1056,7 +1056,46 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 - **铁律 05**：SDK 内部无可调业务参数，路径前缀为常量
 - **铁律 06**：签名算法回退分支已标注「待核实」；PHP SDK 通过 `php -l` 语法校验；运行时集成测试待 v0.4.x
 
-### 7.5 慢查询监控
+### 7.5 测试规范（v0.3.6）
+
+#### 测试栈
+
+| 用途 | 库 | 版本 |
+|---|---|---|
+| 断言 / require | `github.com/stretchr/testify` | v1.11.1 |
+| 内存 Redis | `github.com/alicebob/miniredis/v2` | v2.38.0 |
+| SQLite 内存库 | `gorm.io/driver/sqlite` + `github.com/mattn/go-sqlite3` | v1.6.0 + v1.14.22 |
+
+#### 测试覆盖（5 个包，0 失败）
+
+| 包 | 测试文件 | 覆盖范围 |
+|---|---|---|
+| `pkg/crypto` | `crypto_test.go` | AES / HMAC（含 sha512/256 vs sha256 区分） / bcrypt / SHA-512 / MD5 / 易支付签名 / 卡密生成 / HWID |
+| `pkg/crypto` | `sign_alignment_test.go` | 跨语言签名对齐（Python / Node.js / PHP vs 后端 `HMACSHA256`） |
+| `pkg/snowflake` | `snowflake_test.go` | `NewNode` 边界 / `NextID` 并发安全 / `OrderNo` 三通道前缀 / `twepoch` 常量 |
+| `pkg/epay` | `epay_test.go` | `BuildSubmitURL` / `ParseNotify` / `VerifyNotify` / 端到端闭环 |
+| `internal/quota` | `quota_test.go` | `CheckMaxApps/Cards/Agents/Devices` 全场景 + `ExceededError` 类型匹配 |
+| `internal/heartbeat` | `heartbeat_test.go` | `Record/IsOnline/Remove/CountOnline/ListOnline/GetLastHeartbeatAt` 全场景 + 端到端闭环 |
+
+#### 测试原则
+
+1. **不依赖外部服务**：MySQL → SQLite 内存库；Redis → miniredis；HTTP → 直接函数调用
+2. **铁律 06（防幻觉）合规**：所有断言基于已知固定输入，无随机/不确定性；Node.js 沙箱环境不支持 `sha512/256` 时 `t.Skipf` 标注「环境限制」，不掩盖
+3. **跨语言签名对齐测试**：脚本位于 `sdks/tests/sign.{py,js,php}`，CLI 接收 `<secret> <msg>` 输出 hex；Go 测试通过 `exec.Command` 调用对比；运行时缺失或环境限制自动跳过
+4. **gorm default 值陷阱**：测试 `MaxApps=0` / `MaxCards=0`（不限）场景时，必须 Create 后用 `Updates(map[string]interface{})` 强制覆盖 gorm `default:` 标签
+5. **miniredis FastForward 限制**：`mr.FastForward` 不影响 Go `time.Now()`，需用 `rdb.ZAdd` 直接覆写 score 模拟心跳超时
+
+#### 运行命令
+
+```bash
+cd apps/server
+go test ./...                    # 全部测试
+go test -v ./pkg/crypto/ -run TestSignAlignment  # 仅签名对齐
+go vet ./...                     # 静态检查
+go build ./...                   # 编译验证
+```
+
+### 7.6 慢查询监控
 
 - 慢查询阈值：200ms
 - 慢查询日志：单独文件，便于分析

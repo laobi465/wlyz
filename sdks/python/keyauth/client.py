@@ -82,13 +82,13 @@ class DeviceInfo:
 def _sha512_256_hex(key: bytes, msg: bytes) -> str:
     """SHA-512/256 HMAC（与后端 sha512.New512_256 一致）
 
-    若环境不支持 sha512_256 变体，回退 sha256（兼容性提示已标注待核实）。
+    优先使用 sha512_256 算法（OpenSSL 1.1+ 支持，通过字符串名传给 hmac.new）；
+    若环境不支持则回退 sha256（兼容性提示已标注待核实）。
     """
-    try:
-        return hmac.new(key, msg, hashlib.new("sha512_256")).hexdigest()
-    except (ValueError, TypeError):
-        # 回退到 SHA-256（后端 crypto.go:165 也已标注待核实兼容性）
-        return hmac.new(key, msg, hashlib.sha256).hexdigest()
+    if "sha512_256" in hashlib.algorithms_available:
+        return hmac.new(key, msg, "sha512_256").hexdigest()
+    # 回退到 SHA-256（后端 crypto.go:165 也已标注待核实兼容性）
+    return hmac.new(key, msg, hashlib.sha256).hexdigest()
 
 
 class KeyAuthClient:

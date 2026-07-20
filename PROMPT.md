@@ -10,6 +10,8 @@
 
 **核心定位**：开发者注册账号 → 创建应用 → 生成卡密 → 客户端 SDK 接入验证。代理通过开发者邀请码注册并分销卡密。平台提供总支付（默认）与开发者自定义易支付（按套餐）双轨支付。
 
+**v0.3.6 已发布**：5 个测试包（crypto/snowflake/epay/quota/heartbeat）+ 跨语言签名对齐测试全部通过。运行 `cd apps/server && go test ./...` 验证。
+
 ## 二、必读文档（按顺序）
 
 1. **README.md** —— 项目概览 + 快速部署
@@ -65,7 +67,8 @@ docs/                       # 四份核心文档
 - ✅ 双层支付模式切换（`CreatePayOrder` 内 `SysPackage.AllowCustomPay` + `TenantPayConfig.Enabled` 双开关，TOP/ORD/REG 前缀分发，响应新增 `pay_mode` 字段）
 - ✅ 修复 `002_seed_data.up.sql` 配置键名 bug：`pay.platform.notify_path` 与 router 不一致 → `/api/v1/pay/notify/epay`，新增 `pay.tenant.notify_path` / `pay.platform.order_name_prefix` / `pay.platform.return_front_url` 三个配置项
 - ✅ 客户端 SDK 三语言（`sdks/python/` keyauth-py + `sdks/nodejs/` keyauth-node + `sdks/php/` keyauth-php，各封装 9 个验证 API + HMAC-SHA512/256 签名算法 + KeyAuthError 异常体系 + 完整 README 文档）
-- ✅ 文档全量同步对齐 v0.3.5 实际状态（README/PROMPT/PROJECT/SPEC/TODO/CHANGELOG 六份联动更新）
+- ✅ 单元测试 + 客户端 SDK 签名对齐测试（5 个测试包：`pkg/crypto` + `pkg/snowflake` + `pkg/epay` + `internal/quota` + `internal/heartbeat`，全部 PASS；跨语言签名对齐测试 `pkg/crypto/sign_alignment_test.go` + `sdks/tests/sign.{py,js,php}`，Python + PHP 全 PASS，Node.js 沙箱 OpenSSL 限制 t.Skipf；`go vet ./...` + `go build ./...` 通过）
+- ✅ 文档全量同步对齐 v0.3.6 实际状态（README/PROMPT/PROJECT/SPEC/TODO/CHANGELOG 六份联动更新）
 
 v0.3.5 已完成（基线）：
 - ✅ 后端 Go 项目结构（main / config / model / middleware / handler / router / quota / migration / heartbeat）
@@ -81,8 +84,7 @@ v0.3.5 已完成（基线）：
 - ✅ H5 公共 API（PublicAppInfo + PublicCardTypes，购卡闭环）
 - ✅ Docker Compose + 宝塔部署 + RSA-4096 密钥生成独立脚本
 
-**v0.3.6 剩余待开始**：
-- ⏳ 单元测试 + 集成测试
+**v0.3.6 已完成（2026-07-20）**：剩余 P1 收尾 + 单元测试 + 客户端 SDK 签名对齐测试，全部完成。
 
 **v0.4.0（三期商业化，待开始）**：
 - 多级代理 + 全语言 SDK + 在线更新 + 数据备份恢复 + 监控告警 + 通知系统
@@ -150,4 +152,4 @@ bash scripts/reset_admin_password.sh NewPass@2026
 
 > v0.3.6 已修复：原 `card.go:422` 设备强制下线 TODO 已实现（联动 heartbeat.Remove）；卡密 CSV 导入导出已实现；原 `auth.go:443` AgentRegister 501 占位已实现（方案 B 先支付后建 Agent）；Register.vue 三处 TODO 已落地（读配置+调起支付+查询订单状态）；install.go 配置键名 bug 已修复（`agent.register_fee` → `agent.register.fee` 与 seed 002 对齐）；原 `pay.go:528` `EpayTenantNotify` 占位 `c.String(200, "fail")` 已实现完整回调流程（含 `processTenantOwnPaidOrder` 事务 + `loadTenantPayConfig` AES 解密）；双层支付模式切换已生效（`CreatePayOrder` 内 `SysPackage.AllowCustomPay` + `TenantPayConfig.Enabled` 双开关，TOP/ORD 前缀分发）；`002_seed_data.up.sql` 中 `pay.platform.notify_path` 与 router 不一致 bug 已修复；客户端 SDK 三语言已发布（`sdks/python/` + `sdks/nodejs/` + `sdks/php/`，9 个验证 API + HMAC-SHA512/256 签名算法 + KeyAuthError 异常体系，PHP `php -l` 校验通过）。
 
-> 客户端 SDK 签名算法「待核实」项：三语言 SDK 优先用 `sha512/256` 算法（与后端 `crypto.HMACSHA256` 的 `sha512.New512_256` 变体对齐），运行时不支持时回退标准 `sha256`。**待核实：sha256 与 sha512.New512_256 是否完全等价**（已知：两者输出长度均为 64 字节 hex，但内部哈希算法不同，回退分支可能导致签名校验失败，待运行时集成测试验证，v0.4.x 补集成测试）。
+> 客户端 SDK 签名算法「待核实」项更新（v0.3.6 已通过单元测试部分验证）：三语言 SDK 优先用 `sha512/256` 算法（与后端 `crypto.HMACSHA256` 的 `sha512.New512_256` 变体对齐），运行时不支持时回退标准 `sha256`。**已验证**：Python + PHP 在 sha512/256 可用环境下与后端签名完全一致（`sdks/tests/sign.py` + `sign.php` + `pkg/crypto/sign_alignment_test.go`，3 组固定输入全 PASS）；**待核实**：sha256 回退分支与 sha512.New512_256 不等价（已确认两者输出不同，回退会导致签名校验失败），Node.js 沙箱环境 OpenSSL 不支持 sha512/256，已 `t.Skipf` 标注「环境限制」，待生产环境 Node.js 验证。

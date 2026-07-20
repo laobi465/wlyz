@@ -11,6 +11,76 @@
 
 ## [0.3.6] - 2026-07-20
 
+### [新增] 单元测试 + 客户端 SDK 签名对齐测试
+
+#### 测试栈
+- `github.com/stretchr/testify` v1.11.1（assert / require）
+- `github.com/alicebob/miniredis/v2` v2.38.0（内存 Redis，测试 heartbeat 不依赖真实 Redis）
+- `gorm.io/driver/sqlite` v1.6.0 + `github.com/mattn/go-sqlite3` v1.14.22（SQLite 内存库，测试 quota 不依赖 MySQL）
+
+#### 已通过的测试套件（5 个包，0 失败）
+
+##### `pkg/crypto/crypto_test.go`（核心加密模块）
+- AES-256-GCM 加解密往返、错误密文/密钥场景
+- `HMACSHA256` 输出格式（64 hex）+ 与标准 `sha512.New512_256` HMAC 完全相等 + 与标准 `sha256` HMAC **不**相等（明确区分两个变体）
+- `HashPassword` / `CheckPassword` bcrypt 往返
+- `SHA512Hex` / `SHA512Checksum8` / `MD5Hex` 格式
+- `SignEpayParams` / `VerifyEpaySign` 易支付签名闭环
+- `GenerateCardKey` 卡密格式（前缀 + 4 段随机 + 易混淆字符校验）
+- `RandomHex` / `GenerateAppKey` / `GenerateAppSecret` / `GenerateSignSecret` 长度与唯一性
+- `GenerateHWID` 设备指纹一致性
+
+##### `pkg/crypto/sign_alignment_test.go`（v0.3.6 新增：客户端 SDK 签名对齐测试）
+- 3 组固定输入（login / heartbeat 中文 / get_var 空 body）跨语言对齐
+- 后端 `HMACSHA256` 基准签名 vs 三语言 SDK 脚本签名逐字符对比
+- **Python**：3 case 全 PASS（`hashlib.algorithms_available` 检测 + `hmac.new(key, msg, "sha512_256")`）
+- **PHP**：3 case 全 PASS（`hash_hmac('sha512/256', ...)` 原生支持）
+- **Node.js**：沙箱环境 OpenSSL 不支持 `sha512/256`，3 case 自动 `t.Skipf`（脚本退出码 2，标注「环境限制」）
+- 后端确定性测试：同一输入两次调用签名相等
+- 测试脚本：`sdks/tests/sign.py` / `sign.js` / `sign.php`（无第三方依赖，CLI 接收 `<secret> <msg>` 输出 hex）
+
+##### `pkg/snowflake/snowflake_test.go`（雪花算法 ID 生成器）
+- `NewNode` workerID / datacenterID 边界（0~31 合法 / -1 / 32 报错）
+- `NextID` 单线程递增 + 50 goroutine × 200 次并发安全（无重复）
+- `OrderNo` 三通道前缀（ORD / TOP / REG，v0.3.6 关键路径）
+- `twepoch = 1767225600000`（2026-01-01 UTC）常量校验
+
+##### `pkg/epay/epay_test.go`（彩虹易支付协议）
+- `BuildSubmitURL` URL 拼接 + sign 注入
+- `ParseNotify` 参数解析
+- `VerifyNotify` 验签成功 / 失败 / 空 secret / 缺 sign 场景
+- 端到端：`BuildSubmitURL` → `ParseNotify` → `VerifyNotify` 闭环
+- `NotifyParams.IsSuccess` 状态判断
+
+##### `internal/quota/quota_test.go`（套餐配额校验，SQLite 内存库）
+- `ExceededError` 错误消息 + `errors.Is` 类型匹配
+- `CheckMaxApps`：低于上限 / 达到上限 / 不限（0） / 开发者不存在 / 已禁用 / 已过期 / 套餐已禁用
+- `CheckMaxCards`：低于上限 / 超限 / 不限（0）
+- `CheckMaxAgents`：低于上限 / 达到上限 / 不允许（0）
+- `CheckMaxDevices`：低于上限 / 达到上限 / 仅计 active / 不限（0） / 不同卡密隔离
+- **关键修复**：gorm `default:1` / `default:1000` 标签导致 Create 时 0 值被替换 → 改用 `Updates(map[string]interface{})` 强制覆盖；`AppCard.CardKeyHash` UNIQUE 约束 → 每条记录设置唯一 `card-{i}` / `hash-{i}` / `cs{i}`；`Agent.Username` UNIQUE 约束 → 设置 `agent-{i}`
+
+##### `internal/heartbeat/heartbeat_test.go`（心跳保活，miniredis）
+- `Record` 成功 / nil rdb 报错 / 同设备多次记录只增不删
+- `IsOnline` 在线 / 离线（直接覆写 ZSET score 模拟超时） / 从未心跳 / 默认超时 180s / nil rdb
+- `Remove` 成功 / 不存在设备 / nil rdb 静默返回
+- `CountOnline` 计数 / 排除超时设备 / 默认超时 / nil rdb
+- `ListOnline` 列表 / 分页 / nil rdb
+- `GetLastHeartbeatAt` 成功 / 从未心跳返回零时间 / nil rdb
+- Redis Key 规范：`heartbeat:online:{app_id}` / `heartbeat:detail:{app_id}:{device_id}`
+- 端到端：Record → IsOnline → 超时 → 再 Record → Remove → GetLastHeartbeatAt 闭环
+- **关键修复**：miniredis 的 `FastForward` 不影响 Go `time.Now()`，改为 `rdb.ZAdd` 直接覆写 score 为 `time.Now().Add(-200*time.Second).Unix()` 模拟心跳超时
+
+#### 验证
+- `go vet ./...` 0 错误 0 警告
+- `go test ./...` 全部 PASS（5 个测试包）
+- `go build ./...` 编译通过
+
+#### 铁律遵守
+- 铁律 04：测试用例不硬编码任何业务密钥，仅用固定测试输入（`test-sign-secret-12345` 等显式标注为测试用）
+- 铁律 05：测试无业务可调参数，所有配置通过 fixture / 测试 DB / miniredis 隔离
+- 铁律 06：Node.js 沙箱环境不支持 `sha512/256` 已诚实 `t.Skipf` 标注「环境限制」，未掩盖；签名回退分支「待核实」继续保留
+
 ### [新增] 客户端 SDK 三语言（Python / Node.js / PHP）
 
 #### 设计方案
