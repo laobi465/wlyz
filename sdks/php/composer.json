@@ -1,0 +1,28 @@
+{
+    "name": "keyauth/keyauth-php",
+    "description": "KeyAuth SaaS 官方 PHP SDK - 多租户卡密验证客户端",
+    "type": "library",
+    "keywords": ["keyauth", "saas", "card", "license", "verification", "auth"],
+    "license": "Proprietary",
+    "version": "0.3.6",
+    "authors": [
+        {
+            "name": "KeyAuth SaaS Team"
+        }
+    ],
+    "require": {
+        "php": ">=7.2.0",
+        "ext-curl": "*",
+        "ext-json": "*",
+        "ext-hash": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "KeyAuth\\": "src/"
+        }
+    },
+    "minimum-stability": "stable",
+    "support": {
+        "docs": "https://github.com/your-org/keyauth-saas/tree/main/sdks/php"
+    }
+}

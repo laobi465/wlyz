@@ -1,0 +1,16 @@
+{
+  "name": "keyauth-node",
+  "version": "0.3.6",
+  "description": "KeyAuth SaaS Node.js SDK - 多租户卡密验证客户端",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "scripts": {
+    "test": "node -e \"console.log('keyauth-node v0.3.6 loaded')\""
+  },
+  "keywords": ["keyauth", "saas", "license", "card-key", "authentication"],
+  "author": "KeyAuth SaaS",
+  "license": "Proprietary",
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

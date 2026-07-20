@@ -64,6 +64,7 @@ docs/                       # 四份核心文档
 - ✅ 开发者自有易支付回调（pay.go `EpayTenantNotify` 完整实现 + `processTenantOwnPaidOrder` 事务 + `loadTenantPayConfig` AES 解密 + Redis 防重入按 tenant_id 命名空间隔离）
 - ✅ 双层支付模式切换（`CreatePayOrder` 内 `SysPackage.AllowCustomPay` + `TenantPayConfig.Enabled` 双开关，TOP/ORD/REG 前缀分发，响应新增 `pay_mode` 字段）
 - ✅ 修复 `002_seed_data.up.sql` 配置键名 bug：`pay.platform.notify_path` 与 router 不一致 → `/api/v1/pay/notify/epay`，新增 `pay.tenant.notify_path` / `pay.platform.order_name_prefix` / `pay.platform.return_front_url` 三个配置项
+- ✅ 客户端 SDK 三语言（`sdks/python/` keyauth-py + `sdks/nodejs/` keyauth-node + `sdks/php/` keyauth-php，各封装 9 个验证 API + HMAC-SHA512/256 签名算法 + KeyAuthError 异常体系 + 完整 README 文档）
 - ✅ 文档全量同步对齐 v0.3.5 实际状态（README/PROMPT/PROJECT/SPEC/TODO/CHANGELOG 六份联动更新）
 
 v0.3.5 已完成（基线）：
@@ -81,7 +82,6 @@ v0.3.5 已完成（基线）：
 - ✅ Docker Compose + 宝塔部署 + RSA-4096 密钥生成独立脚本
 
 **v0.3.6 剩余待开始**：
-- ⏳ 客户端 SDK（Python / Node.js / PHP 三语言）
 - ⏳ 单元测试 + 集成测试
 
 **v0.4.0（三期商业化，待开始）**：
@@ -148,4 +148,6 @@ bash scripts/reset_admin_password.sh NewPass@2026
 - `migrations/002_seed_data.up.sql` 中默认超管密码哈希为占位，部署后通过 `/install` 向导重置（v0.3.6 替代原"占位 hash + 后置脚本"方案）
 - `scripts/reset_admin_password.sh` 中后端 `--reset-admin-password` subcommand 需在 main.go 实现
 
-> v0.3.6 已修复：原 `card.go:422` 设备强制下线 TODO 已实现（联动 heartbeat.Remove）；卡密 CSV 导入导出已实现；原 `auth.go:443` AgentRegister 501 占位已实现（方案 B 先支付后建 Agent）；Register.vue 三处 TODO 已落地（读配置+调起支付+查询订单状态）；install.go 配置键名 bug 已修复（`agent.register_fee` → `agent.register.fee` 与 seed 002 对齐）；原 `pay.go:528` `EpayTenantNotify` 占位 `c.String(200, "fail")` 已实现完整回调流程（含 `processTenantOwnPaidOrder` 事务 + `loadTenantPayConfig` AES 解密）；双层支付模式切换已生效（`CreatePayOrder` 内 `SysPackage.AllowCustomPay` + `TenantPayConfig.Enabled` 双开关，TOP/ORD 前缀分发）；`002_seed_data.up.sql` 中 `pay.platform.notify_path` 与 router 不一致 bug 已修复。
+> v0.3.6 已修复：原 `card.go:422` 设备强制下线 TODO 已实现（联动 heartbeat.Remove）；卡密 CSV 导入导出已实现；原 `auth.go:443` AgentRegister 501 占位已实现（方案 B 先支付后建 Agent）；Register.vue 三处 TODO 已落地（读配置+调起支付+查询订单状态）；install.go 配置键名 bug 已修复（`agent.register_fee` → `agent.register.fee` 与 seed 002 对齐）；原 `pay.go:528` `EpayTenantNotify` 占位 `c.String(200, "fail")` 已实现完整回调流程（含 `processTenantOwnPaidOrder` 事务 + `loadTenantPayConfig` AES 解密）；双层支付模式切换已生效（`CreatePayOrder` 内 `SysPackage.AllowCustomPay` + `TenantPayConfig.Enabled` 双开关，TOP/ORD 前缀分发）；`002_seed_data.up.sql` 中 `pay.platform.notify_path` 与 router 不一致 bug 已修复；客户端 SDK 三语言已发布（`sdks/python/` + `sdks/nodejs/` + `sdks/php/`，9 个验证 API + HMAC-SHA512/256 签名算法 + KeyAuthError 异常体系，PHP `php -l` 校验通过）。
+
+> 客户端 SDK 签名算法「待核实」项：三语言 SDK 优先用 `sha512/256` 算法（与后端 `crypto.HMACSHA256` 的 `sha512.New512_256` 变体对齐），运行时不支持时回退标准 `sha256`。**待核实：sha256 与 sha512.New512_256 是否完全等价**（已知：两者输出长度均为 64 字节 hex，但内部哈希算法不同，回退分支可能导致签名校验失败，待运行时集成测试验证，v0.4.x 补集成测试）。

@@ -11,6 +11,48 @@
 
 ## [0.3.6] - 2026-07-20
 
+### [新增] 客户端 SDK 三语言（Python / Node.js / PHP）
+
+#### 设计方案
+为软件开发者提供开箱即用的客户端 SDK，封装 9 个验证 API + HMAC-SHA512/256 签名算法。三语言 SDK 均无第三方依赖（或仅依赖标准库），签名算法与后端 `crypto.HMACSHA256`（`sha512.New512_256` 变体）严格对齐，不支持时回退标准 `sha256`（已标注「待核实」）。
+
+#### Python SDK（`sdks/python/`，包名 `keyauth-py`）
+- [新增] `keyauth/client.py` 主客户端类 `KeyAuthClient`：
+  - 9 个公共方法：`login` / `verify` / `heartbeat` / `bind` / `unbind` / `get_var` / `notice` / `version` / `logout`
+  - `_sha512_256_hex` 函数：优先用 `hashlib.new("sha512_256")`，不支持时回退 `hashlib.sha256`
+  - `_post` 内部方法：构造签名原文 `METHOD\nPATH\nTIMESTAMP\nNONCE\nBODY` + HMAC 签名 + 发请求 + 解析响应
+  - `KeyAuthError` 异常类：含 `code` / `message` / `http_status`
+  - `CardInfo` / `DeviceInfo` 数据类
+- [新增] `keyauth/__init__.py` 包入口，导出 `KeyAuthClient` / `KeyAuthError` / `CardInfo` / `DeviceInfo`，`__version__ = "0.3.6"`
+- [新增] `setup.py` 打包配置（`name="keyauth-py"`，`install_requires=["requests>=2.20"]`，`python_requires=">=3.7"`）
+- [新增] `README.md` 完整文档（安装说明 + 快速开始 + 9 API 速查表 + 签名算法说明 + 错误处理 + 错误码表）
+
+#### Node.js SDK（`sdks/nodejs/`，包名 `keyauth-node`）
+- [新增] `index.js` 主客户端类 `KeyAuthClient`：
+  - 9 个异步方法：`login` / `verify` / `heartbeat` / `bind` / `unbind` / `getVar` / `notice` / `version` / `logout`
+  - `hmacSha512_256Hex` 函数：`crypto.createHmac('sha512/256', secret)`，不支持时回退 `sha256`
+  - `httpRequest` 内置 HTTPS/HTTP 请求封装（不依赖 axios）
+  - `KeyAuthError` 错误类
+- [新增] `index.d.ts` TypeScript 类型定义：`ClientOptions` / `LoginResult` / `VerifyResult` / `HeartbeatResult` / `BindResult` / `UnbindResult` / `GetVarResult` / `NoticeResult` / `VersionResult` / `LogoutResult`
+- [新增] `package.json` 包配置（`name="keyauth-node"`，`engines.node>=14.0.0`，无 dependencies）
+- [新增] `README.md` 完整文档
+
+#### PHP SDK（`sdks/php/`，包名 `keyauth/keyauth-php`）
+- [新增] `src/KeyAuthClient.php` 主客户端类：
+  - 9 个公共方法（`login` / `verify` / `heartbeat` / `bind` / `unbind` / `getVar` / `notice` / `version` / `logout`）
+  - `hmacSha512256` 方法：`hash_hmac('sha512/256', $msg, $secret)`（PHP 7.1+ 原生支持），不支持时回退 `hash_hmac('sha256', ...)`
+  - cURL HTTP 请求封装（无第三方依赖，仅依赖 `ext-curl` / `ext-json` / `ext-hash` PHP 标配扩展）
+  - `declare(strict_types=1)` 全类型安全
+- [新增] `src/KeyAuthError.php` 异常类：含 `errorCode`（业务码）+ `httpStatus`（HTTP 状态码）+ getter
+- [新增] `composer.json` 包配置（PSR-4 自动加载 `KeyAuth\\`，`php>=7.2.0`）
+- [新增] `README.md` 完整文档
+- [校验] `php -l` 语法校验通过（KeyAuthClient.php + KeyAuthError.php 0 错误）
+
+#### 铁律遵守
+- 铁律 04：SDK 不硬编码任何密钥/域名/AppKey，全部由开发者通过构造函数传入；密钥从环境变量读取（README 有示例）
+- 铁律 05：SDK 内部无业务可调参数，所有可变项（API 路径前缀、超时、User-Agent）通过参数或常量管理
+- 铁律 06：签名算法回退分支已标注「待核实：sha256 与后端 sha512.New512_256 是否完全等价」；PHP SDK 校验通过 `php -l`；未提供运行时测试用例（待 v0.4.x 补集成测试）
+
 ### [新增] 开发者自有易支付回调 + 双层支付模式切换（#5）
 
 #### 设计方案

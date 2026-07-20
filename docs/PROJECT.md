@@ -167,7 +167,7 @@ SDK 校验签名 → 通过则解锁功能
 | D-13 | 操作日志 | ✅ | log_operation + 切面 RecordOperation（v0.3.3） |
 | D-14 | 财务统计 | ✅ | 结算记录 + 余额流水 + 提现申请 + 提现审核（v0.3.2 + v0.3.4） |
 | D-15 | 安全设置 | ☐ | IP 黑名单、频率限制（v0.4.x，目前仅超管侧） |
-| D-16 | SDK 下载 | ☐ | 各语言 SDK 包 + 文档（v0.3.6） |
+| D-16 | SDK 下载 | ✅ | Python / Node.js / PHP 三语言 SDK 已发布（v0.3.6，`sdks/` 目录）；Java/C#/Go/C++/易语言待 v0.4.0 |
 | D-17 | 开发者设置 | ✅ | 资料 + 公司信息 + 密码 + 2FA + 登录设备（v0.3.0） |
 | D-18 | 支付配置 | ✅ | 双层模式切换（平台总支付 / 自有易支付）（v0.3.6：CreatePayOrder 双层切换 + TOP/ORD 前缀分发 + EpayTenantNotify 完整实现） |
 | D-19 | 代理充值审核 | ✅ | 充值申请列表 + 批准/驳回 + 实际到账金额调整（v0.3.2） |
@@ -208,16 +208,18 @@ SDK 校验签名 → 通过则解锁功能
 
 ### 3.5 客户端 SDK
 
-| 语言 | 包名 | 已实现 |
-|---|---|---|
-| Python | `keyauth-py` | ☐（v0.3.6） |
-| Node.js | `keyauth-node` | ☐（v0.3.6） |
-| Java | `keyauth-java` | ☐（v0.4.0） |
-| C# | `keyauth-csharp` | ☐（v0.4.0） |
-| Go | `keyauth-go` | ☐（v0.4.0） |
-| PHP | `keyauth-php` | ☐（v0.3.6） |
-| C/C++ | `keyauth-cpp` | ☐（v0.4.0） |
-| 易语言 | 模块源码 | ☐（v0.4.0） |
+| 语言 | 包名 | 已实现 | 说明 |
+|---|---|---|---|
+| Python | `keyauth-py` | ✅（v0.3.6） | `sdks/python/` 9 API + HMAC-SHA512/256 + KeyAuthError + CardInfo/DeviceInfo 数据类 |
+| Node.js | `keyauth-node` | ✅（v0.3.6） | `sdks/nodejs/` 9 异步 API + crypto.createHmac('sha512/256') + index.d.ts 类型定义，无第三方依赖 |
+| PHP | `keyauth-php` | ✅（v0.3.6） | `sdks/php/` 9 API + hash_hmac('sha512/256') + cURL，无第三方依赖，PSR-4 自动加载 |
+| Java | `keyauth-java` | ☐（v0.4.0） | — |
+| C# | `keyauth-csharp` | ☐（v0.4.0） | — |
+| Go | `keyauth-go` | ☐（v0.4.0） | — |
+| C/C++ | `keyauth-cpp` | ☐（v0.4.0） | — |
+| 易语言 | 模块源码 | ☐（v0.4.0） | — |
+
+> 三语言 SDK 均封装 9 个验证 API（login/verify/heartbeat/bind/unbind/get_var/notice/version/logout），签名算法与后端 `crypto.HMACSHA256`（`sha512.New512_256` 变体）严格对齐，不支持时回退标准 `sha256`（待核实：与后端 sha512.New512_256 是否完全等价）。
 
 ---
 

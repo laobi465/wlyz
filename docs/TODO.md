@@ -300,10 +300,10 @@
 - [ ] [待开始] 代理业绩排行 - v0.4.x
 
 #### 客户端 SDK（3 语言）
-- [ ] [待开始] Python SDK（keyauth-py） - v0.3.6
-- [ ] [待开始] Node.js SDK（keyauth-node） - v0.3.6
-- [ ] [待开始] PHP SDK（keyauth-php） - v0.3.6
-- [ ] [待开始] SDK 文档与示例 - v0.3.6
+- [x] [已完成 2026-07-20] Python SDK（keyauth-py） - v0.3.6（`sdks/python/`：KeyAuthClient 9 API + HMAC-SHA512/256 + KeyAuthError + CardInfo/DeviceInfo 数据类 + setup.py + README）
+- [x] [已完成 2026-07-20] Node.js SDK（keyauth-node） - v0.3.6（`sdks/nodejs/`：KeyAuthClient 9 异步 API + crypto.createHmac('sha512/256') + index.d.ts 类型定义 + 无第三方依赖 + README）
+- [x] [已完成 2026-07-20] PHP SDK（keyauth-php） - v0.3.6（`sdks/php/`：KeyAuthClient 9 API + hash_hmac('sha512/256') + cURL 无第三方依赖 + KeyAuthError + composer.json PSR-4 + README + `php -l` 校验通过）
+- [x] [已完成 2026-07-20] SDK 文档与示例 - v0.3.6（三语言各自 README 含安装/快速开始/9 API 速查表/签名算法/错误码表）
 
 #### 日志系统
 - [x] [已完成] 验证日志写入（异步 channel worker，容量 4096，超出丢弃） - v0.3.3
@@ -511,7 +511,7 @@
 - [x] [已完成 2026-07-20] 开发者自有易支付回调实现（EpayTenantNotify + processTenantOwnPaidOrder + loadTenantPayConfig）
 - [x] [已完成 2026-07-20] 双层支付模式切换逻辑（CreatePayOrder 内 SysPackage.AllowCustomPay + TenantPayConfig.Enabled 双开关，TOP/ORD 前缀分发）
 - [x] [已完成 2026-07-20] 套餐 allow_custom_pay 字段生效（CreatePayOrder 内读取生效）
-- [ ] [待开始] 客户端 SDK（Python / Node.js / PHP 三语言）
+- [x] [已完成 2026-07-20] 客户端 SDK（Python / Node.js / PHP 三语言）
 - [ ] [待开始] 单元测试 + 集成测试
 - [x] [已完成 2026-07-20] v0.3.6 文档同步
 

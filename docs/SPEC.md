@@ -991,7 +991,72 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
    - 写 `TenantBalanceLog{type=settle, amount=total_amount, pay_method=tenant_epay, status=settled}`
 4. **不写 `PlatformSettlement`**（资金已直接到开发者易支付账户，平台不抽成）
 
-### 7.4 慢查询监控
+### 7.4 客户端 SDK 接入规范（v0.3.6）
+
+三语言 SDK（Python / Node.js / PHP）已发布于 `sdks/` 目录，统一封装 9 个验证 API + HMAC-SHA512/256 签名。
+
+#### 通用约定
+
+| 项 | 值 |
+|---|---|
+| 客户端 API 前缀 | `/api/v1/client` |
+| 签名算法 | HMAC-SHA512/256（与后端 `crypto.HMACSHA256` 的 `sha512.New512_256` 变体对齐） |
+| 签名原文 | `METHOD\nPATH?QUERY\nTIMESTAMP\nNONCE\nBODY` |
+| 请求头 | `X-App-Key` / `X-Timestamp` / `X-Nonce` / `X-Signature` |
+| 签名输出 | 64 位小写十六进制字符串 |
+| 回退策略 | 运行时不支持 `sha512/256` 时回退标准 `sha256`（**待核实**：与后端 sha512.New512_256 是否完全等价） |
+
+#### 9 个 API 端点
+
+| 方法 | 路径 | 必填参数 |
+|---|---|---|
+| `login` | `POST /api/v1/client/login` | `card_key` / `hwid` |
+| `verify` | `POST /api/v1/client/verify` | `card_key` / `hwid` |
+| `heartbeat` | `POST /api/v1/client/heartbeat` | `card_key` / `hwid` |
+| `bind` | `POST /api/v1/client/bind` | `card_key` / `hwid` |
+| `unbind` | `POST /api/v1/client/unbind` | `card_key` / `hwid` |
+| `get_var` | `POST /api/v1/client/get_var` | `card_key` / `var_key` |
+| `notice` | `POST /api/v1/client/notice` | — |
+| `version` | `POST /api/v1/client/version` | — |
+| `logout` | `POST /api/v1/client/logout` | `card_key` / `hwid` |
+
+#### 各语言实现要点
+
+##### Python SDK（`sdks/python/`，`keyauth-py` v0.3.6）
+- 构造函数：`KeyAuthClient(api_base, app_key, sign_secret, timeout=10)`
+- 签名函数：`_sha512_256_hex(key, msg)` 优先 `hashlib.new("sha512_256")`，不支持时回退 `hashlib.sha256`
+- 依赖：`requests>=2.20`（唯一第三方依赖）
+- Python 版本：`>=3.7`
+
+##### Node.js SDK（`sdks/nodejs/`，`keyauth-node` v0.3.6）
+- 构造函数：`new KeyAuthClient({ apiBase, appKey, signSecret, timeout })`
+- 签名函数：`hmacSha512_256Hex(secret, msg)` 用 `crypto.createHmac('sha512/256', secret)`，不支持时回退 `sha256`
+- 依赖：**无第三方依赖**（仅用 Node 内置 `https` / `crypto`）
+- Node 版本：`>=14.0.0`
+- TypeScript：提供 `index.d.ts` 完整类型定义
+
+##### PHP SDK（`sdks/php/`，`keyauth/keyauth-php` v0.3.6）
+- 构造函数：`new KeyAuthClient($apiBase, $appKey, $signSecret, $timeout=10)`
+- 签名方法：`hmacSha512256($secret, $msg)` 用 `hash_hmac('sha512/256', $msg, $secret)`，不支持时回退 `hash_hmac('sha256', ...)`
+- 依赖：**无第三方依赖**（仅依赖 `ext-curl` / `ext-json` / `ext-hash` PHP 标配扩展）
+- PHP 版本：`>=7.2.0`（推荐 7.4+ 或 8.x）
+- 自动加载：PSR-4 `KeyAuth\\` 命名空间
+- 类型安全：`declare(strict_types=1)`
+
+#### 错误处理
+
+三语言 SDK 统一通过 `KeyAuthError` 异常传递错误，含三个字段：
+- `message` —— 错误消息
+- `code` / `errorCode` —— 业务错误码（如 2001/2002/2003）
+- `httpStatus` / `http_status` —— HTTP 状态码（如 401/403/500）
+
+#### 铁律合规
+
+- **铁律 04**：SDK 不硬编码任何密钥/域名/AppKey，全部由开发者构造函数传入；README 推荐从环境变量读取
+- **铁律 05**：SDK 内部无可调业务参数，路径前缀为常量
+- **铁律 06**：签名算法回退分支已标注「待核实」；PHP SDK 通过 `php -l` 语法校验；运行时集成测试待 v0.4.x
+
+### 7.5 慢查询监控
 
 - 慢查询阈值：200ms
 - 慢查询日志：单独文件，便于分析
