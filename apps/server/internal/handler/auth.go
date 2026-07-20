@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/auth"
@@ -206,6 +207,8 @@ func doLogin(
 	}
 
 	// 6. 生成 Token
+	// v0.4.0：生成 jti 作为会话唯一标识，写入 JWT claims + refresh_token_device 表
+	jti := uuid.NewString()
 	tokenPair, err := auth.GenerateTokenPair(auth.TokenOptions{
 		Secret:     deps.Config.JWT.Secret,
 		Issuer:     params.Issuer,
@@ -215,6 +218,7 @@ func doLogin(
 		TenantID:   tenantID,
 		AccessTTL:  params.AccessTTL,
 		RefreshTTL: params.RefreshTTL,
+		JTI:        jti,
 	})
 	if err != nil {
 		middleware.Fail(c, http.StatusInternalServerError, 5004, "签发 Token 失败: "+err.Error())
@@ -228,9 +232,9 @@ func doLogin(
 		_ = err
 	}
 
-	// 7.1 写入会话记录（refresh_token_device 表，供 ListLoginDevices 查询）
+	// 7.1 写入会话记录（refresh_token_device 表，供 ListLoginDevices 查询 + KickDevice 精准黑名单）
 	ua := c.Request.Header.Get("User-Agent")
-	_ = recordLoginSession(deps, role, id, ip, ua, params.RefreshTTL)
+	_ = recordLoginSession(deps, role, id, jti, ip, ua, params.RefreshTTL)
 
 	// 8. 清除失败计数
 	_ = auth.ClearLoginFailure(ctx, deps.Redis, role, req.Username)
@@ -408,25 +412,28 @@ func TenantRegister(deps *Deps) gin.HandlerFunc {
 		}
 
 		// 9. 自动签发 Token（注册后免登录）
-		params := loadAuthParams(deps, auth.RoleTenant)
-		tokenPair, err := auth.GenerateTokenPair(auth.TokenOptions{
-			Secret:     deps.Config.JWT.Secret,
-			Issuer:     params.Issuer,
-			UserID:     tenant.ID,
-			Username:   tenant.Username,
-			Role:       auth.RoleTenant,
-			TenantID:   tenant.ID,
-			AccessTTL:  params.AccessTTL,
-			RefreshTTL: params.RefreshTTL,
-		})
-		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5004, "签发 Token 失败: "+err.Error())
-			return
-		}
+	// v0.4.0：生成 jti 与登录保持一致
+	params := loadAuthParams(deps, auth.RoleTenant)
+	jti := uuid.NewString()
+	tokenPair, err := auth.GenerateTokenPair(auth.TokenOptions{
+		Secret:     deps.Config.JWT.Secret,
+		Issuer:     params.Issuer,
+		UserID:     tenant.ID,
+		Username:   tenant.Username,
+		Role:       auth.RoleTenant,
+		TenantID:   tenant.ID,
+		AccessTTL:  params.AccessTTL,
+		RefreshTTL: params.RefreshTTL,
+		JTI:        jti,
+	})
+	if err != nil {
+		middleware.Fail(c, http.StatusInternalServerError, 5004, "签发 Token 失败: "+err.Error())
+		return
+	}
 
-		// 10. 写入会话记录（与登录保持一致）
-		_ = recordLoginSession(deps, auth.RoleTenant, tenant.ID, c.ClientIP(),
-			c.Request.Header.Get("User-Agent"), params.RefreshTTL)
+	// 10. 写入会话记录（与登录保持一致）
+	_ = recordLoginSession(deps, auth.RoleTenant, tenant.ID, jti, c.ClientIP(),
+		c.Request.Header.Get("User-Agent"), params.RefreshTTL)
 
 		middleware.Success(c, gin.H{
 			"token_pair": tokenPair,
@@ -686,8 +693,8 @@ func RefreshToken(deps *Deps) gin.HandlerFunc {
 			return
 		}
 
-		// 2. 检查黑名单
-		blacklisted, err := auth.IsRefreshTokenBlacklisted(deps.Redis, claims.UserID, claims.Role)
+		// 2. 检查黑名单（v0.4.0：按 jti 优先检查，兼容旧 token 回退 user 维度）
+		blacklisted, err := auth.IsRefreshTokenBlacklisted(deps.Redis, claims.UserID, claims.Role, claims.ID)
 		if err != nil {
 			middleware.Fail(c, http.StatusInternalServerError, 5009, "会话校验失败")
 			return
@@ -698,11 +705,17 @@ func RefreshToken(deps *Deps) gin.HandlerFunc {
 		}
 
 		// 3. 签发新 Token（轮换：旧 refresh token 立即失效）
-		// 将旧 refresh token 加入黑名单（剩余 TTL 由 ParseToken 的过期时间推算）
+		// v0.4.0：按 jti 黑名单旧 token（仅失效当前会话，不影响该用户其他设备）
 		params := loadAuthParams(deps, claims.Role)
-		_ = auth.BlacklistRefreshToken(deps.Redis, claims.UserID, claims.Role, params.RefreshTTL)
+		if claims.ID != "" {
+			_ = auth.BlacklistRefreshTokenByJTI(deps.Redis, claims.ID, params.RefreshTTL)
+		} else {
+			// 兼容旧 token（无 jti）：回退 user 维度
+			_ = auth.BlacklistRefreshToken(deps.Redis, claims.UserID, claims.Role, params.RefreshTTL)
+		}
 
-		// 重新生成
+		// 重新生成（v0.4.0：新 jti）
+		newJTI := uuid.NewString()
 		tokenPair, err := auth.GenerateTokenPair(auth.TokenOptions{
 			Secret:     deps.Config.JWT.Secret,
 			Issuer:     params.Issuer,
@@ -712,10 +725,18 @@ func RefreshToken(deps *Deps) gin.HandlerFunc {
 			TenantID:   claims.TenantID,
 			AccessTTL:  params.AccessTTL,
 			RefreshTTL: params.RefreshTTL,
+			JTI:        newJTI,
 		})
 		if err != nil {
 			middleware.Fail(c, http.StatusInternalServerError, 5004, "签发 Token 失败")
 			return
+		}
+
+		// v0.4.0：写入新会话记录 + 撤销旧会话记录（jti 轮换）
+		_ = recordLoginSession(deps, claims.Role, claims.UserID, newJTI,
+			c.ClientIP(), c.Request.Header.Get("User-Agent"), params.RefreshTTL)
+		if claims.ID != "" {
+			_ = revokeSessionByJTI(deps, claims.Role, claims.UserID, claims.ID)
 		}
 
 		middleware.Success(c, gin.H{"token_pair": tokenPair})
@@ -725,6 +746,7 @@ func RefreshToken(deps *Deps) gin.HandlerFunc {
 // ============== 登出 ==============
 
 // Logout 登出：将当前 refresh token 加入黑名单
+// v0.4.0：按 jti 黑名单（仅失效当前会话，不影响该用户其他设备）
 // 需要从客户端传 refresh_token（access token 自然过期即可）
 func Logout(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -741,12 +763,17 @@ func Logout(deps *Deps) gin.HandlerFunc {
 			return
 		}
 
-		// 加入黑名单（剩余 TTL = refresh token 剩余有效期）
+		// v0.4.0：按 jti 黑名单（仅当前会话失效）
 		params := loadAuthParams(deps, claims.Role)
-		_ = auth.BlacklistRefreshToken(deps.Redis, claims.UserID, claims.Role, params.RefreshTTL)
-
-		// 同步标记该用户的所有会话为已撤销（v0.3.1：与黑名单行为保持一致）
-		markAllSessionsRevoked(deps, claims.Role, claims.UserID)
+		if claims.ID != "" {
+			_ = auth.BlacklistRefreshTokenByJTI(deps.Redis, claims.ID, params.RefreshTTL)
+			// 同步撤销该 jti 对应的会话记录
+			_ = revokeSessionByJTI(deps, claims.Role, claims.UserID, claims.ID)
+		} else {
+			// 兼容旧 token（无 jti）：回退 user 维度（踢所有设备）
+			_ = auth.BlacklistRefreshToken(deps.Redis, claims.UserID, claims.Role, params.RefreshTTL)
+			markAllSessionsRevoked(deps, claims.Role, claims.UserID)
+		}
 
 		middleware.Success(c, gin.H{"logged_out": true})
 	}

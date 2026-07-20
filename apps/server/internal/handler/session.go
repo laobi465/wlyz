@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/auth"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
@@ -21,8 +20,9 @@ import (
 // ============== 会话记录 ==============
 
 // recordLoginSession 登录成功后写入一条 refresh_token_device 记录
-// refresh_jti 使用 uuid 作为会话标识（当前 JWT 不携带 jti，待核实 v0.4.x 将 jti 嵌入 claims 后即可精准单点踢出）
-func recordLoginSession(deps *Deps, role string, userID uint64, ip, uaStr string, refreshTTL time.Duration) error {
+// v0.4.0：jti 由调用方生成（与 JWT 一致），写入 RefreshJTI 字段供 KickDevice 精准黑名单
+// refresh_jti 同时也是 JWT 的 jti，黑名单该 jti 即让该会话的 access + refresh 同时失效
+func recordLoginSession(deps *Deps, role string, userID uint64, jti, ip, uaStr string, refreshTTL time.Duration) error {
 	now := time.Now()
 	expiresAt := now.Add(refreshTTL)
 	// v0.4.x：使用 pkg/ua 统一解析（一次解析复用结果，避免重复扫描 UA）
@@ -30,7 +30,7 @@ func recordLoginSession(deps *Deps, role string, userID uint64, ip, uaStr string
 	session := &model.RefreshTokenDevice{
 		UserRole:     role,
 		UserID:       userID,
-		RefreshJTI:   uuid.NewString(),
+		RefreshJTI:   jti,
 		DeviceName:   info.DeviceName,
 		DeviceType:   info.DeviceType,
 		ClientIP:     ip,
@@ -52,7 +52,7 @@ func touchSessionActive(deps *Deps, role string, userID uint64) {
 }
 
 // markAllSessionsRevoked 将某用户的所有未过期会话标记为已撤销
-// 用于 Logout / ChangePassword / Disable2FA 场景
+// 用于 Logout（旧 token 兼容）/ ChangePassword / Disable2FA 场景
 func markAllSessionsRevoked(deps *Deps, role string, userID uint64) {
 	now := time.Now()
 	deps.DB.Model(&model.RefreshTokenDevice{}).
@@ -61,6 +61,22 @@ func markAllSessionsRevoked(deps *Deps, role string, userID uint64) {
 			"revoked":     true,
 			"revoked_at":  now,
 		})
+}
+
+// revokeSessionByJTI 按 jti 撤销单个会话记录（v0.4.0 新增）
+// 用于 Logout / RefreshToken 轮换 / KickDevice：仅撤销指定会话，不影响该用户其他设备
+func revokeSessionByJTI(deps *Deps, role string, userID uint64, jti string) error {
+	if jti == "" {
+		return nil
+	}
+	now := time.Now()
+	return deps.DB.Model(&model.RefreshTokenDevice{}).
+		Where("user_role = ? AND user_id = ? AND refresh_jti = ? AND revoked = 0",
+			role, userID, jti).
+		Updates(map[string]interface{}{
+			"revoked":    true,
+			"revoked_at": now,
+		}).Error
 }
 
 // detectDeviceType 设备类型判定（v0.4.x 改为调用 pkg/ua）
@@ -202,8 +218,8 @@ func ListLoginDevicesFull(deps *Deps) gin.HandlerFunc {
 
 // KickDeviceFull 完整版踢设备下线
 // POST /{role}/auth/devices/:id/kick
-// 注：当前 JWT 不携带 jti，单点踢出会同时黑名单该用户所有 refresh token
-//     已知限制 v0.4.x：将 jti 嵌入 JWT claims 后实现精准单点踢出
+// v0.4.0：按 jti 黑名单指定会话，仅踢出该设备，不影响该用户其他设备
+// 兼容：若会话无 jti（v0.3.x 旧记录），回退到 user 维度（踢所有设备）
 func KickDeviceFull(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		role := getRole(c)
@@ -238,10 +254,16 @@ func KickDeviceFull(deps *Deps) gin.HandlerFunc {
 			return
 		}
 
-		// 3. 黑名单当前用户 refresh token（已知限制：会踢出该用户所有设备）
-		//    待核实 v0.4.x：将 jti 嵌入 JWT 后改为只黑名单指定 jti
+		// 3. v0.4.0：按 jti 黑名单（仅失效该会话，不影响其他设备）
 		params := loadAuthParams(deps, role)
-		_ = auth.BlacklistRefreshToken(deps.Redis, userID, role, params.RefreshTTL)
+		kickedAll := false
+		if session.RefreshJTI != "" {
+			_ = auth.BlacklistRefreshTokenByJTI(deps.Redis, session.RefreshJTI, params.RefreshTTL)
+		} else {
+			// 兼容旧记录（无 jti）：回退 user 维度（会踢出该用户所有设备）
+			_ = auth.BlacklistRefreshToken(deps.Redis, userID, role, params.RefreshTTL)
+			kickedAll = true
+		}
 
 		// 4. 异步清理该用户其他已过期会话标记（避免列表累积）
 		go func(deps *Deps, role string, userID uint64) {
@@ -254,10 +276,15 @@ func KickDeviceFull(deps *Deps) gin.HandlerFunc {
 				Update("revoked", true)
 		}(deps, role, userID)
 
-		middleware.Success(c, gin.H{
-			"device_id":    deviceID,
-			"kicked":       true,
-			"note":         "当前实现会同时踢出该用户所有设备，待 v0.4.x 支持精准单点踢出",
-		})
+		resp := gin.H{
+			"device_id": deviceID,
+			"kicked":    true,
+		}
+		if kickedAll {
+			resp["note"] = "旧会话记录无 jti，已回退到踢出该用户所有设备"
+		} else {
+			resp["jti"] = session.RefreshJTI
+		}
+		middleware.Success(c, resp)
 	}
 }

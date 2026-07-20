@@ -279,6 +279,8 @@ SDK 校验签名 → 通过则解锁功能
 | `2fa:setup:{user_id}` | 10min | 2FA setup 中转（待 verify 前临时存 totp_secret） |
 | `2fa:backup:{user_id}` | persistent | 2FA 备用码（持久化） |
 | `login:fail:{username}` | 15min | 登录失败次数（达阈值锁定账号） |
+| `auth:refresh:blacklist:jti:{jti}` | refresh_ttl | v0.4.0：jti 维度黑名单（精准单点踢出，KickDevice/Logout/RefreshToken 轮换） |
+| `auth:refresh:blacklist:{role}:{user_id}` | refresh_ttl | user 维度黑名单（修改密码/关闭 2FA 强制所有设备重登） |
 
 ---
 
@@ -403,14 +405,14 @@ keyauth-saas/
 │   │   ├── cmd/
 │   │   │   └── main.go           # 程序入口（含 StartVerifyLogWorker + StartOperationLogWorker）
 │   │   ├── internal/
-│   │   │   ├── auth/             # JWT/TOTP/login_lock（v0.2.1）
+│   │   │   ├── auth/             # JWT/TOTP/login_lock（v0.2.1）+ jti 单点踢出（v0.4.0：BlacklistRefreshTokenByJTI + IsRefreshTokenBlacklisted 双维度）
 │   │   │   ├── config/           # 配置加载 + sys_config 缓存（cache.go）
 │   │   │   ├── handler/          # HTTP 处理器（18 个文件，148 条路由，v0.3.6 新增 3 条代理注册公开路由）
 │   │   │   │   ├── admin.go / admin_business.go / admin_finance.go  # 超管 3 文件
 │   │   │   │   ├── tenant_business.go / tenant_finance.go / tenant_settle.go  # 开发者 3 文件
 │   │   │   │   ├── agent_business.go  # 代理 1 文件
 │   │   │   │   ├── app.go / card.go / client.go  # 应用/卡密/客户端验证
-│   │   │   │   ├── auth.go / session.go / profile.go / public.go  # 鉴权/会话/账号设置/公开 API（auth.go 含 v0.3.6 AgentRegister 代理注册付费流程）
+│   │   │   │   ├── auth.go / session.go / profile.go / public.go  # 鉴权/会话/账号设置/公开 API（auth.go 含 v0.3.6 AgentRegister 代理注册付费流程 + v0.4.0 jti 单点踢出；session.go 含 v0.4.0 revokeSessionByJTI）
 │   │   │   │   ├── install.go  # 安装向导（v0.3.6，首次部署配置）
 │   │   │   │   ├── pay.go  # 平台总支付 + 开发者自有易支付占位（v0.3.6 EpayNotify 前缀分发 + processAgentRegisterPaid）
 │   │   │   │   ├── log_worker.go  # 异步日志 worker（验证 4096 + 操作 2048）
@@ -537,6 +539,6 @@ pnpm dev
 
 ---
 
-**文档版本**：0.3.6  
-**最后更新**：2026-07-20  
+**文档版本**：0.4.0  
+**最后更新**：2026-07-20（v0.4.0 第二项迁移：JWT jti 精准单点踢出，auth 包 BlacklistRefreshTokenByJTI + revokeSessionByJTI 双维度黑名单）  
 **维护者**：KeyAuth SaaS Team

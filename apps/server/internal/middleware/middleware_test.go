@@ -133,6 +133,37 @@ func TestJWTAuth_ValidToken(t *testing.T) {
 	assert.Contains(t, body, `"role":"tenant"`)
 }
 
+// TestJWTAuth_JTI注入上下文 v0.4.0：JWTAuth 应将 jti 注入 gin.Context
+// 用于下游单点踢出（KickDevice / Logout / RefreshToken 轮换）
+func TestJWTAuth_JTI注入上下文(t *testing.T) {
+	r := setupGinRouter()
+	secret := "test-jwt-secret-v040"
+	r.Use(JWTAuth(secret, "admin"))
+	r.GET("/test", func(c *gin.Context) {
+		jti, _ := c.Get("jti")
+		c.JSON(200, gin.H{"jti": jti})
+	})
+
+	// 1. 带 jti 的 token
+	testJTI := "jti-in-claims-12345"
+	claims := JWTClaims{
+		UserID:   1,
+		Username: "admin",
+		Role:     "admin",
+	}
+	claims.ID = testJTI
+	token, err := GenerateToken(secret, "keyauth-test", 1, claims)
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	r.ServeHTTP(w, req)
+
+	assert.Equal(t, 200, w.Code)
+	assert.Contains(t, w.Body.String(), `"jti":"`+testJTI+`"`, "JWTAuth 应将 jti 注入上下文")
+}
+
 func TestJWTAuth_MissingToken(t *testing.T) {
 	r := setupGinRouter()
 	r.Use(JWTAuth("secret", "tenant"))

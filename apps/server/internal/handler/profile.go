@@ -675,10 +675,10 @@ func ListLoginDevices(deps *Deps) gin.HandlerFunc {
 
 // ============== 8. KickDevice 踢指定设备下线 ==============
 
-// KickDevice 完整版：标记会话为已撤销 + 黑名单当前用户 refresh token
+// KickDevice 完整版：标记会话为已撤销 + 按 jti 黑名单指定会话
 // 实现见 session.go 的 KickDeviceFull
 // POST /{role}/auth/devices/:id/kick
-// 已知限制 v0.4.x：当前实现会同时踢出该用户所有设备（因 JWT 未携带 jti）
+// v0.4.0：已支持精准单点踢出（按 jti 黑名单，不影响该用户其他设备）
 func KickDevice(deps *Deps) gin.HandlerFunc {
 	return KickDeviceFull(deps)
 }

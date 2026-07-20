@@ -9,6 +9,86 @@
 
 ---
 
+## [0.4.0] - 2026-07-20（v0.4.x 迁移项推进）
+
+### [新增] JWT jti 精准单点踢出（v0.4.x 迁移项第二项）
+
+#### 背景
+
+- v0.3.x 的 `KickDevice` / `Logout` 是按 user 维度黑名单，会踢出该用户所有设备
+- TODO.md 第 253 行 `[迁移] JWT jti 精确单设备踢出 → v0.4.x`
+- v0.4.x 第二项迁移：将 jti 嵌入 JWT claims，黑名单改为按 jti 维度（仅失效指定会话）
+
+#### 实现
+
+**`internal/middleware/auth.go`**：
+- `JWTClaims` 通过 `jwt.RegisteredClaims.ID` 携带 jti（无需自定义字段）
+- `JWTAuth` 中间件注入 `c.Set("jti", claims.ID)` 供下游使用
+- `GenerateToken` 保留 `claims.ID`（v0.4.0 修复：原实现重置整个 RegisteredClaims 导致 jti 丢失）
+
+**`internal/auth/jwt.go`**：
+- `TokenOptions` 新增 `JTI string` 字段
+- `GenerateTokenPair`：access + refresh 携带同一 jti（同一会话共享）
+- `BlacklistRefreshTokenByJTI(rdb, jti, ttl)` 新增：按 jti 黑名单（Redis Key: `auth:refresh:blacklist:jti:{jti}`）
+- `IsRefreshTokenBlacklisted(rdb, userID, role, jti)` 改造：优先按 jti 检查，jti 为空时回退 user 维度（兼容 v0.3.x 旧 token）
+- 保留 `BlacklistRefreshToken`（user 维度，用于修改密码 / 关闭 2FA 强制所有设备重登场景）
+
+**`internal/handler/auth.go`**：
+- `Login`：生成 `jti := uuid.NewString()` → 传给 `GenerateTokenPair` + `recordLoginSession`
+- `RegisterTenant`：注册成功自动登录同样生成 jti
+- `RefreshToken`：解析旧 jti → `BlacklistRefreshTokenByJTI` 旧 jti → 生成新 jti → 写入新会话记录 + 撤销旧会话记录
+- `Logout`：按 jti 黑名单（仅失效当前会话，不影响其他设备）+ 撤销该 jti 会话记录；旧 token 无 jti 时回退 user 维度
+
+**`internal/handler/session.go`**：
+- `recordLoginSession` 增加 `jti` 参数（由调用方传入，与 JWT 一致）
+- `KickDeviceFull` 改造：查 `session.RefreshJTI` → 按 jti 黑名单（仅踢该设备）+ 撤销会话记录；旧记录无 jti 时回退 user 维度
+- 新增 `revokeSessionByJTI(deps, role, userID, jti)` 辅助函数：按 jti 撤销单个会话记录
+- 移除「待核实 v0.4.x：将 jti 嵌入 JWT 后改为只黑名单指定 jti」标注
+
+**`internal/handler/profile.go`**：
+- `ChangePassword` / `Disable2FA` 保留 `BlacklistRefreshToken`（user 维度）——这两个场景确实需要踢所有设备重登
+- `KickDevice` 注释更新：从「已知限制 v0.4.x」改为「v0.4.0 已支持精准单点踢出」
+
+#### 测试（`internal/auth/jwt_test.go`，18 个测试全 PASS）
+
+- `TestGenerateTokenPair_JTI写入`：access + refresh 都携带同一 jti
+- `TestGenerateTokenPair_空JTI`：JTI 为空时仍可生成（兼容旧调用方）
+- `TestGenerateTokenPair_空Secret`：返回错误
+- `TestParseToken_错误签名` / `TestParseToken_过期Token`：返回错误
+- `TestBlacklistRefreshTokenByJTI_基本功能`：按 jti 加入黑名单
+- `TestBlacklistRefreshTokenByJTI_不影响其他JTI`：不同 jti 互不影响
+- `TestBlacklistRefreshTokenByJTI_同一用户不同设备`：手机被踢，笔记本不受影响（核心场景）
+- `TestIsRefreshTokenBlacklisted_兼容旧Token`：旧 token 无 jti 时回退 user 维度
+- `TestBlacklistRefreshTokenByJTI_空参数`：nil 安全
+- `TestBlacklistRefreshTokenByJTI_TTL过期`：miniredis FastForward 验证 TTL 过期
+- `TestClearRefreshBlacklist`：清除 user 维度黑名单
+- `TestExtractBearer`：5 个子用例
+- `TestJTI黑名单端到端`：登录两设备 → 踢一设备 → 验证另一设备不受影响 → 修改密码强制所有设备重登
+- `TestJWTClaims_JTI通过RegisteredClaims`：集成验证
+
+**middleware 测试新增**：
+- `TestJWTAuth_JTI注入上下文`：验证 `c.Set("jti", claims.ID)`
+
+#### 铁律遵守
+
+- 铁律 04（禁硬编码）：jti 由 `uuid.NewString()` 生成，无硬编码
+- 铁律 05（配置后台化）：黑名单 TTL 走 `loadAuthParams` 的 `RefreshTTL`，无硬编码
+- 铁律 06（防幻觉）：18 个 auth 测试 + 1 个 middleware 测试覆盖核心场景；移除「待核实 v0.4.x：将 jti 嵌入 JWT 后改为只黑名单指定 jti」标注（已落地）
+
+#### 兼容性
+
+- 旧 token（v0.3.x 签发，无 jti）：`IsRefreshTokenBlacklisted` 回退 user 维度检查，不会误放行
+- 旧会话记录（v0.3.x 写入，RefreshJTI 为随机 uuid）：`KickDeviceFull` 检测 `session.RefreshJTI != ""` 走 jti 路径（旧 uuid 也按 jti 黑名单，行为等价）
+- 修改密码 / 关闭 2FA 场景：仍走 `BlacklistRefreshToken`（user 维度），强制所有设备重登（业务语义不变）
+
+#### 验证
+
+- `go test ./...`：8 个测试包全 PASS（新增 `internal/auth`）
+- `go vet ./...`：0 警告
+- `go build ./...`：通过
+
+---
+
 ## [0.4.0] - 2026-07-20（UA 解析迁移，进行中）
 
 ### [新增] pkg/ua 包：User-Agent 解析工具（v0.4.x 迁移项首项）

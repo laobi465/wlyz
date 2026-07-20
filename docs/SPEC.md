@@ -1066,7 +1066,7 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 | 内存 Redis | `github.com/alicebob/miniredis/v2` | v2.38.0 |
 | SQLite 内存库 | `gorm.io/driver/sqlite` + `github.com/mattn/go-sqlite3` | v1.6.0 + v1.14.22 |
 
-#### 测试覆盖（7 个包，0 失败）
+#### 测试覆盖（8 个包，0 失败）
 
 | 包 | 测试文件 | 覆盖范围 |
 |---|---|---|
@@ -1077,7 +1077,8 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 | `pkg/ua` | `ua_test.go` | UA 解析：Chrome/Firefox/Safari/Edge/curl/Bot/空字符串 + OS 版本号提取 + 设备类型 + 优先级匹配（20 个测试） |
 | `internal/quota` | `quota_test.go` | `CheckMaxApps/Cards/Agents/Devices` 全场景 + `ExceededError` 类型匹配 |
 | `internal/heartbeat` | `heartbeat_test.go` | `Record/IsOnline/Remove/CountOnline/ListOnline/GetLastHeartbeatAt` 全场景 + 端到端闭环 |
-| `internal/middleware` | `middleware_test.go` | JWT 鉴权 / TenantScope 租户隔离 / SignatureAuth HMAC 签名闭环 / RateLimitByIP 滑动窗口 / IPBlacklist / RecordCardFailure 自动封禁 / Response 格式（21 个测试） |
+| `internal/middleware` | `middleware_test.go` | JWT 鉴权（含 v0.4.0 JTI 注入上下文测试） / TenantScope 租户隔离 / SignatureAuth HMAC 签名闭环 / RateLimitByIP 滑动窗口 / IPBlacklist / RecordCardFailure 自动封禁 / Response 格式（22 个测试） |
+| `internal/auth` | `jwt_test.go` | v0.4.0 JTI 精准单点踢出：GenerateTokenPair 写入 JTI / BlacklistRefreshTokenByJTI 隔离性 / 同一用户不同设备互不影响 / IsRefreshTokenBlacklisted 兼容旧 token 回退 user 维度 / TTL 过期 / JTI 黑名单端到端闭环（登录两设备 → 踢一设备 → 另一设备不受影响 → 改密强制全部重登）/ ExtractBearer 5 子用例（18 个测试） |
 
 #### 测试原则
 
@@ -1090,6 +1091,7 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 7. **ConfigReader mock**：中间件测试用 `mockConfigReader`（内存 map）实现 `ConfigReader` 接口，避免依赖 sys_config 表
 8. **CryptoManager 注入**：`SetCryptoManager` 在测试 setup 时注入测试 AES 密钥（32 字节），`t.Cleanup` 恢复 nil
 9. **UA 解析纯函数测试**：`pkg/ua` 无外部依赖，纯函数测试基于固定 UA 字符串断言；iOS/macOS UA 用 `_` 分隔版本号，`cleanVersion` 必须允许 `_` 通过再由 `parseOS` 转换为 `.`；浏览器匹配顺序 Edge → curl → Bot → Firefox → Chrome → Safari（避免 Edge UA 含 Chrome/ 被误识别为 Chrome）
+10. **JWT jti 黑名单测试（v0.4.0）**：`internal/auth/jwt_test.go` 使用 miniredis 验证 `BlacklistRefreshTokenByJTI` 隔离性（不同 jti 互不影响）+ `IsRefreshTokenBlacklisted` 兼容旧 token（无 jti 时回退 user 维度）+ TTL 过期（`mr.FastForward` 推进 Redis 时间，不影响 Go `time.Now()`）；端到端测试覆盖「登录两设备 → 踢一设备 → 另一设备不受影响 → 修改密码强制全部重登」核心业务语义。中间件 `TestJWTAuth_JTI注入上下文` 用 `httptest.NewRecorder` 验证 `c.Set("jti", claims.ID)` 注入正确
 
 #### 运行命令
 

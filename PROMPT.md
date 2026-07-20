@@ -12,7 +12,7 @@
 
 **v0.3.6 已发布**：6 个测试包（crypto/snowflake/epay/quota/heartbeat/middleware）+ 跨语言签名对齐测试全部通过。运行 `cd apps/server && go test ./...` 验证。
 
-**v0.4.0 进行中**：UA 解析迁移已完成（`pkg/ua` 包 + handler 层接入 + ListLoginDevices 响应增强，7 个测试包全 PASS）。
+**v0.4.0 进行中**：UA 解析迁移 + JWT jti 精准单点踢出已完成（`pkg/ua` 包 + handler 层接入 + ListLoginDevices 响应增强 + `internal/auth` 包 18 个测试 + middleware JTI 注入测试，8 个测试包全 PASS）。
 
 ## 二、必读文档（按顺序）
 
@@ -76,6 +76,7 @@ docs/                       # 四份核心文档
 
 v0.4.0 已新增完成（进行中）：
 - ✅ UA 解析库迁移（`pkg/ua` 自实现零第三方依赖 + 20 个测试全 PASS；handler 层 `parseDeviceName` / `detectDeviceType` / `ListLoginDevicesFull` 全部接入；ListLoginDevices 响应新增 `os`/`os_version`/`browser`/`browser_version`/`is_bot` 字段，不改 DB schema 向前兼容；移除 profile.go「待核实 v0.4.x：引入更完整的 UA 解析库」标注）
+- ✅ JWT jti 精准单点踢出（jti 嵌入 JWT `RegisteredClaims.ID` + `auth.BlacklistRefreshTokenByJTI` + `revokeSessionByJTI`；`KickDevice` / `Logout` / `RefreshToken` 轮换全部改造为 jti 维度，仅失效指定会话不影响其他设备；`ChangePassword` / `Disable2FA` 仍走 user 维度 `BlacklistRefreshToken` 强制全部重登；`internal/auth/jwt_test.go` 18 个测试 + `internal/middleware/middleware_test.go` 新增 `TestJWTAuth_JTI注入上下文`，8 个测试包全 PASS；兼容旧 token：无 jti 时 `IsRefreshTokenBlacklisted` 回退 user 维度）
 
 v0.3.5 已完成（基线）：
 - ✅ 后端 Go 项目结构（main / config / model / middleware / handler / router / quota / migration / heartbeat）
@@ -93,7 +94,7 @@ v0.3.5 已完成（基线）：
 
 **v0.3.6 已完成（2026-07-20）**：剩余 P1 收尾 + 单元测试 + 客户端 SDK 签名对齐测试，全部完成。
 
-**v0.4.0 进行中（2026-07-20）**：UA 解析迁移已完成（pkg/ua + handler 接入 + ListLoginDevices 增强），后续推进多级代理 / 全语言 SDK 等。
+**v0.4.0 进行中（2026-07-20）**：UA 解析迁移 + JWT jti 精准单点踢出已完成，后续推进多级代理 / 全语言 SDK 等。
 
 **v0.4.0（三期商业化，待开始）**：
 - 多级代理 + 全语言 SDK + 在线更新 + 数据备份恢复 + 监控告警 + 通知系统
@@ -164,3 +165,5 @@ bash scripts/reset_admin_password.sh NewPass@2026
 > 客户端 SDK 签名算法「待核实」项更新（v0.3.6 已通过单元测试部分验证）：三语言 SDK 优先用 `sha512/256` 算法（与后端 `crypto.HMACSHA256` 的 `sha512.New512_256` 变体对齐），运行时不支持时回退标准 `sha256`。**已验证**：Python + PHP 在 sha512/256 可用环境下与后端签名完全一致（`sdks/tests/sign.py` + `sign.php` + `pkg/crypto/sign_alignment_test.go`，3 组固定输入全 PASS）；**待核实**：sha256 回退分支与 sha512.New512_256 不等价（已确认两者输出不同，回退会导致签名校验失败），Node.js 沙箱环境 OpenSSL 不支持 sha512/256，已 `t.Skipf` 标注「环境限制」，待生产环境 Node.js 验证。
 
 > v0.4.0 已落地：UA 解析库迁移完成（`pkg/ua` 自实现零第三方依赖 + 20 个测试全 PASS；handler 层 `parseDeviceName` / `detectDeviceType` / `ListLoginDevicesFull` 全部接入；ListLoginDevices 响应新增 `os` / `os_version` / `browser` / `browser_version` / `is_bot` 字段，不改 DB schema 向前兼容）；profile.go 中原「待核实 v0.4.x：引入更完整的 UA 解析库」标注已移除。
+
+> v0.4.0 已落地：JWT jti 精准单点踢出完成（`internal/auth` 包新增 `BlacklistRefreshTokenByJTI` + `IsRefreshTokenBlacklisted` 改造为双维度优先 jti；`internal/middleware/auth.go` `JWTAuth` 注入 `c.Set("jti", claims.ID)` + `GenerateToken` 保留 `claims.ID` 修复 jti 丢失 bug；`internal/handler/auth.go` Login/RegisterTenant/RefreshToken/Logout 全部生成并传递 jti；`internal/handler/session.go` `recordLoginSession` 增加 jti 参数 + 新增 `revokeSessionByJTI`；`internal/handler/profile.go` KickDevice 注释更新为「v0.4.0 已支持精准单点踢出」，ChangePassword/Disable2FA 故意保留 user 维度；18 个 auth 测试 + 1 个 middleware JTI 注入测试全 PASS，8 个测试包全绿；兼容旧 token：无 jti 回退 user 维度）；session.go 中原「待核实 v0.4.x：将 jti 嵌入 JWT 后改为只黑名单指定 jti」标注已移除。
