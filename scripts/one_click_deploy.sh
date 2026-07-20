@@ -578,8 +578,38 @@ fi
 # ---------- Step 10: 生成 /root/keyauth_deploy_info.txt ----------
 step "Step 10/10: 生成部署信息文件 /root/keyauth_deploy_info.txt"
 
-SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-[[ -z "$SERVER_IP" ]] && SERVER_IP="<你的服务器IP>"
+# 获取服务器 IP：优先公网 IP（curl 公网服务返回），失败回退 hostname -I 第一个 IP
+# 关键：hostname -I 在某些云主机返回内网 IP（如 10.0.0.5），用户无法用此 IP 访问
+log "获取服务器 IP..."
+
+# 公网 IP 探测服务（顺序尝试，任一成功即用）
+PUBLIC_IP=""
+for ip_service in "https://api.ipify.org" "https://ifconfig.me" "https://icanhazip.com" "https://ipinfo.io/ip"; do
+    PUBLIC_IP=$(curl -fsSL --connect-timeout 5 --max-time 8 "$ip_service" 2>/dev/null | tr -d '[:space:]' || true)
+    # 简单校验：必须是合法 IPv4 或 IPv6
+    if [[ -n "$PUBLIC_IP" ]] && [[ "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ || "$PUBLIC_IP" =~ : ]]; then
+        log "  公网 IP（来源 $ip_service）：$PUBLIC_IP"
+        break
+    fi
+    PUBLIC_IP=""
+done
+
+# 回退：用 hostname -I 取本机 IP（通常是内网 IP）
+if [[ -z "$PUBLIC_IP" ]]; then
+    FALLBACK_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    if [[ -n "$FALLBACK_IP" ]]; then
+        warn "  无法获取公网 IP（可能服务器无公网或外网受限），使用本机 IP：$FALLBACK_IP"
+        warn "  如这是内网 IP，请手动替换访问地址中的 IP 为你的公网 IP"
+        PUBLIC_IP="$FALLBACK_IP"
+    fi
+fi
+
+if [[ -z "$PUBLIC_IP" ]]; then
+    warn "  无法获取服务器 IP，请手动替换访问地址中的 <服务器IP>"
+    PUBLIC_IP="<服务器IP>"
+fi
+
+SERVER_IP="$PUBLIC_IP"
 DEPLOY_STATE[server_ip]="$SERVER_IP"
 DEPLOY_STATE[frontend_url]="http://${SERVER_IP}:${DEPLOY_STATE[admin_port]}"
 DEPLOY_STATE[api_url]="http://${SERVER_IP}:${DEPLOY_STATE[server_port]}"
@@ -811,22 +841,40 @@ echo ""
 echo -e "${BOLD}查看部署信息：${NC}"
 echo "  cat $DEPLOY_INFO_FILE"
 echo ""
-echo -e "${BOLD}下一步必做（详见 txt 第七章反代教程）：${NC}"
-echo "  1. 查看部署信息：cat $DEPLOY_INFO_FILE"
-echo "  2. 域名 A 记录解析到本服务器 IP（${DEPLOY_STATE[server_ip]}）"
-echo "  3. 宝塔「网站」添加站点 → 反代到 127.0.0.1:${DEPLOY_STATE[admin_port]}"
-echo "  4. 宝塔「SSL」申请 Let's Encrypt 免费证书 + 强制 HTTPS"
-echo "  5. 登录后台 ${DEPLOY_STATE[frontend_url]}/admin/login → 用 admin/admin123 登录后立即改密"
-echo "  6. 宝塔「安全」关闭 ${DEPLOY_STATE[admin_port]}/${DEPLOY_STATE[server_port]}/${DEPLOY_STATE[mysql_host_port]}/${DEPLOY_STATE[redis_host_port]} 公网端口"
+echo -e "${CYAN}${BOLD}==================== 下一步必做（按顺序执行）====================${NC}"
+echo ""
+echo -e "${BOLD}[验证部署]${NC} 立即可做（无需域名）"
+echo "  1. 浏览器打开：${DEPLOY_STATE[frontend_url]}/admin/login"
+echo "  2. 用 ${GREEN}admin / ${DEPLOY_STATE[admin_password]}${NC} 登录测试"
+echo "  3. 如登录失败，查后端日志：cd ${DEPLOY_STATE[project_dir]} && docker compose logs --tail=50 server"
+echo ""
+echo -e "${BOLD}[安全加固]${NC} 登录成功后立即做"
+echo "  4. 进入「个人资料 > 修改密码」改掉默认密码 admin123"
+echo "  5. 进入「个人资料 > 2FA」开启 TOTP 双因素认证"
+echo ""
+echo -e "${BOLD}[域名 + HTTPS]${NC} 有域名时做（详见 txt 第七章反代教程）"
+echo "  6. 域名 A 记录解析到本服务器 IP（${DEPLOY_STATE[server_ip]}）"
+echo "  7. 宝塔「网站」→ 添加站点 → 反代到 http://127.0.0.1:${DEPLOY_STATE[admin_port]}"
+echo "  8. 宝塔「SSL」→ Let's Encrypt → 申请免费证书 → 强制 HTTPS"
+echo "  9. 登录后台「系统配置」→ 修改 platform.domain 为你的域名"
+echo ""
+echo -e "${BOLD}[防火墙]${NC} 域名 + SSL 配置完成后做"
+echo "  10. 宝塔「安全」→ 只放行 22 80 443 ${DEPLOY_STATE[bt_port]}"
+echo "  11. 关闭公网端口：${DEPLOY_STATE[admin_port]} ${DEPLOY_STATE[server_port]} ${DEPLOY_STATE[mysql_host_port]} ${DEPLOY_STATE[redis_host_port]}"
+echo ""
+echo -e "${BOLD}[完整文档]${NC}"
+echo "  cat $DEPLOY_INFO_FILE"
+echo "  （含宝塔入口/管理员账号/密钥/反代教程/运维命令/备份建议 9 大章节）"
+echo ""
 if [[ $PORT_CHANGED -eq 1 ]]; then
-    echo ""
     echo -e "${YELLOW}⚠️ 端口已自动调整（避免与宿主机已有服务冲突）：${NC}"
     echo "  ${PORT_CHANGELOG}"
     echo "  容器之间通信端口不变，仅宿主机映射端口改变（详见 .env）"
+    echo ""
 fi
 if [[ $BT_FRESH_INSTALLED -eq 1 ]]; then
-    echo "  7. 首次安装宝塔，请登录面板后修改默认账号密码和端口"
+    echo -e "${YELLOW}⚠️ 首次安装宝塔，请登录面板后立即修改默认账号密码和端口${NC}"
+    echo ""
 fi
-echo ""
 echo -e "${YELLOW}提示：${DEPLOY_INFO_FILE} 已设置 chmod 600（仅 root 可读），含敏感信息，请妥善保管${NC}"
-echo -e "${GREEN}==================================================${NC}"
+echo -e "${GREEN}==================================================================${NC}"
