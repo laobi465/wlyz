@@ -705,6 +705,9 @@ func MaskCardKey(key string) string {
 | 时序攻击 | 常量时间比较 `hmac.Equal()` |
 | 路径遍历 | 文件路径校验 `filepath.Clean()` |
 | DDoS | Cloudflare WAF + Nginx 限流 |
+| 异常登录 | v0.4.0 风控规则引擎：5 条内置规则（异地登录/新设备/异常 UA/异常时段/高频请求）+ 评分累计阈值升级 alert→challenge→block |
+| 异地登录 | v0.4.0 IP 网段比较（IPv4 /24、IPv6 /64，无需 GeoIP 数据库）+ login_geo_alert 告警表 + 多通道通知（inapp/email/sms） |
+| 真实 IP 伪造 | v0.4.0 CloudflareRealIP 中间件：从 CF-Connecting-IP 头取真实 IP + 受信 CIDR 列表校验来源 + RealIP(c) 统一 IP 获取入口 |
 
 ### 6.5 安全头配置（Nginx）
 

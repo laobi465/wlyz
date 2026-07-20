@@ -23,9 +23,10 @@ const (
 // RateLimitByIP 按 IP 限流
 // limitKey 标识限流策略（如 verify/login/pay）
 // cfgReader 用于读取 sys_config 中的限流阈值
+// v0.4.0：优先使用 RealIP(c)（兼容 Cloudflare 真实 IP）
 func RateLimitByIP(rdb *redis.Client, cfgReader ConfigReader, limitKey string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ip := c.ClientIP()
+		ip := RealIP(c)
 		ctx := c.Request.Context()
 
 		// 读取限流配置
@@ -63,9 +64,10 @@ func RateLimitByIP(rdb *redis.Client, cfgReader ConfigReader, limitKey string) g
 }
 
 // IPBlacklist IP 黑名单检查
+// v0.4.0：优先使用 RealIP(c)（兼容 Cloudflare 真实 IP）
 func IPBlacklist(rdb *redis.Client, db interface{}) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ip := c.ClientIP()
+		ip := RealIP(c)
 		ctx := c.Request.Context()
 
 		// 1. 查 Redis 缓存

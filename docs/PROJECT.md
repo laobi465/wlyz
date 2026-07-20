@@ -278,8 +278,9 @@ SDK 校验签名 → 通过则解锁功能
 | 终端用户 | `end_user`（tenant_id/username/email/phone/password_hash/status/last_login_at/last_login_ip）+ `end_user_card`（user_id/card_id/tenant_id）+ `end_user_token`（user_id/refresh_token_hash/access_jti/expires_at/user_agent/ip/revoked）+ `app_card.end_user_id` | v0.4.0 终端用户体系（H5 注册/登录/绑卡/单点踢出 + HMAC-SHA256 access token + SHA-512 哈希 refresh token + jti 单点踢出，migration 015 + 10 项 enduser.* sys_config） | v0.4.0 |
 | API 开放平台 | `developer_api_token`（tenant_id/name/token_hash/prefix/scopes/expires_at/last_used_at/last_used_ip/status/revoked_at）+ `webhook_endpoint`（tenant_id/name/url/secret_enc/events/status/failure_count/last_response_code/last_response_at/last_error）+ `webhook_delivery`（tenant_id/endpoint_id/event_type/event_id/payload/status/response_code/response_body/attempt_count/max_retry/next_retry_at/delivered_at） | v0.4.0 API 开放平台（开发者 API Token SHA-512 哈希存储 + Webhook HMAC-SHA256 签名 + AES-256-GCM 加密 secret + 退避重试 + 阈值自动 disable，migration 016 + 8 项 openapi.*/webhook.* sys_config） | v0.4.0 |
 | 弹窗通知 | `sys_config` 新增 `update.poll.enabled` / `update.poll.interval_seconds` | v0.4.0 管理员更新弹窗通知（前端 AdminLayout 挂载 UpdateNotifier 组件轻量轮询 /admin/update/poll + localStorage 持久化 last_known_commit + 自适应间隔 + 防重复弹窗，migration 017 + 2 项 update.poll.* sys_config + PollIntervalMin=10 强制下限） | v0.4.0 |
+| 高级安全 | `risk_rule`（name/rule_type/condition/score/action/priority/status/created_by）+ `risk_event`（rule_id/rule_type/risk_score/action_taken/detail/acknowledged）+ `login_geo_alert`（current_ip/current_network/previous_ip/previous_network/alert_status）+ `app_device` 新增 6 字段（hwid_components/user_agent/client_ip_ext/screen_resolution/timezone/language） | v0.4.0 高级安全（5 条内置风控规则 geo_login/new_device/abnormal_ua/abnormal_time/high_frequency + custom 自定义 + 评分累计阈值升级 alert→challenge→block + 异地登录 IP 网段比较 IPv4 /24 IPv6 /64 无需 GeoIP + CloudflareRealIP 中间件 CF-Connecting-IP 取真实 IP + 受信 CIDR 校验 + RealIP(c) 统一 IP 入口 + admin 风控面板 11 端点，migration 018 + 16 项 cloudflare.*/risk.* sys_config） | v0.4.0 |
 
-> migration 文件：`apps/server/migrations/` 共 17 套（001 ~ 017），由 `internal/migration/migrator.go` 在 `InitContainer` 阶段自动执行。
+> migration 文件：`apps/server/migrations/` 共 18 套（001 ~ 018），由 `internal/migration/migrator.go` 在 `InitContainer` 阶段自动执行。
 
 ### 4.2 Redis 缓存键设计
 
@@ -570,5 +571,5 @@ pnpm dev
 ---
 
 **文档版本**：0.4.0
-**最后更新**：2026-07-20（v0.4.0 第十四项迁移：管理员更新弹窗通知 migration 017 + 2 项 update.poll.* sys_config + update 包 CfgKeyPollEnabled/CfgKeyPollInterval/PollIntervalMin 常量 + AdminUpdatePoll 轻量轮询 handler + 前端 UpdateNotifier.vue 组件 + AdminLayout 挂载 + 13 个测试全 PASS）
+**最后更新**：2026-07-20（v0.4.0 第十五项迁移：高级安全 migration 018 + 3 张新表 risk_rule/risk_event/login_geo_alert + app_device 6 字段扩展 + 16 项 cloudflare.*/risk.* sys_config + 5 条 seed 内置规则 + internal/risk 包 901 行 + middleware/cloudflare.go CloudflareRealIP 中间件 + middleware/risk_engine.go 匿名请求风控评估 + ratelimit/IPBlacklist 接入 RealIP(c) + handler/auth.go 登录流程接入风控评估 + handler/risk.go 11 端点 admin 风控面板 + router 注册 11 条路由 + risk 包 ~30 测试 + cloudflare 5 测试全 PASS）
 **维护者**：KeyAuth SaaS Team

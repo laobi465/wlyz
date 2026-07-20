@@ -335,10 +335,10 @@
 - [x] [已完成 2026-07-20] 易语言模块 - v0.4.0（`sdks/epl/`：纯中文 API + 精易模块 v9.0+ 依赖 + HMAC-SHA256（易语言生态无 SHA-512/256，仅在后端回退场景匹配）；`sdks/tests/sign.e.txt` 签名对齐脚本；Windows-only 永久 `t.Skip`）
 
 #### 高级安全
-- [ ] [待开始] 异地登录告警 - v0.4.0
-- [ ] [待开始] 风控规则引擎 - v0.4.0
-- [ ] [待开始] 设备指纹升级（多维度） - v0.4.0
-- [ ] [待开始] Cloudflare WAF 集成 - v0.4.0
+- [x] [已完成 2026-07-20] 异地登录告警 - v0.4.0（migration 018 login_geo_alert 表 + IP 网段比较 IPv4 /24 IPv6 /64 无需 GeoIP + 4 项 risk.geo_login_alert.* 配置可后台调整 + 风控引擎自动写入告警 + admin/geo_alerts 列表/确认/关闭 3 端点）
+- [x] [已完成 2026-07-20] 风控规则引擎 - v0.4.0（migration 018 risk_rule + risk_event 表 + internal/risk 包：5 条内置规则 geo_login/new_device/abnormal_ua/abnormal_time/high_frequency + custom 自定义 + 评分累计阈值升级 alert→challenge→block + EvaluateLogin 接入登录流程 ShouldBlock 撤销会话 + admin 风控面板 11 端点 + ~30 测试全 PASS）
+- [x] [已完成 2026-07-20] 设备指纹升级（多维度） - v0.4.0（migration 018 ALTER app_device 增加 6 字段 hwid_components/user_agent/client_ip_ext/screen_resolution/timezone/language 向前兼容）
+- [x] [已完成 2026-07-20] Cloudflare WAF 集成 - v0.4.0（middleware/cloudflare.go CloudflareRealIP 中间件从 CF-Connecting-IP 取真实 IP + 受信 CIDR 列表校验来源 + 4 项 cloudflare.* 配置可后台调整 + RealIP(c) 工具函数统一 IP 获取入口 + ratelimit/IPBlacklist 已接入 + 5 测试全 PASS）
 
 #### 灰度发布
 - [x] [已完成 2026-07-20] 应用版本灰度推送 - v0.4.0（migration 010 app_version 5 字段 + `internal/grayscale` 包 Match/HashBucket/ParseList + ClientVersion 遍历候选版本匹配 + 3 项 sys_config）
@@ -541,7 +541,7 @@
 **v0.4.x 三期商业化（约 8 项）**：
 - ~~多级代理（二级 + 三级 + 跨级佣金）~~ ✓ 已完成
 - ~~全语言 SDK（Java / C# / Go / C++ / 易语言）~~ ✓ 已完成
-- 高级安全（异地登录告警 + 风控引擎 + Cloudflare WAF）
+- ~~高级安全（异地登录告警 + 风控引擎 + Cloudflare WAF）~~ ✓ 已完成
 - ~~灰度发布 + Webhook 自动更新~~ ✓ 已完成
 - ~~数据备份恢复~~ ✓ 已完成
 - ~~API 开放平台（开发者 API Token + Webhook 事件推送 + 第三方接入授权）~~ ✓ 已完成
@@ -552,5 +552,5 @@
 ---
 
 **文档版本**：0.4.0  
-**最后更新**：2026-07-20（v0.4.0 第八项迁移：API 开放平台 后端全栈实现 + 61 个单元测试全 PASS）  
+**最后更新**：2026-07-20（v0.4.0 第十五项迁移：高级安全 migration 018 + 3 张新表 risk_rule/risk_event/login_geo_alert + app_device 6 字段扩展 + 16 项 cloudflare.*/risk.* sys_config + 5 条 seed 内置规则 + internal/risk 包 901 行 + middleware/cloudflare.go CloudflareRealIP 中间件 + middleware/risk_engine.go 匿名请求风控评估 + ratelimit/IPBlacklist 接入 RealIP(c) + handler/auth.go 登录流程接入风控评估 + handler/risk.go 11 端点 admin 风控面板 + router 注册 11 条路由 + risk 包 ~30 测试 + cloudflare 5 测试全 PASS）  
 **维护者**：KeyAuth SaaS Team

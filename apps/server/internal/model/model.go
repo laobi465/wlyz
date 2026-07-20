@@ -178,18 +178,24 @@ func (AppCard) TableName() string { return "app_card" }
 // AppDevice 设备绑定
 type AppDevice struct {
 	BaseModel
-	TenantID        uint64     `gorm:"index;not null" json:"tenant_id"`
-	AppID           uint64     `gorm:"index;not null" json:"app_id"`
-	CardID          uint64     `gorm:"index;not null" json:"card_id"`
-	HWID            string     `gorm:"size:128;not null" json:"hwid"`
-	HWIDRaw         string     `gorm:"type:text" json:"hwid_raw"`
-	DeviceName      string     `gorm:"size:128" json:"device_name"`
-	DeviceType      string     `gorm:"size:32" json:"device_type"`
-	IPAddress       string     `gorm:"size:45" json:"ip_address"`
-	Status          string     `gorm:"size:32;index;not null;default:active" json:"status"` // active/offline/banned/unbound
-	LastHeartbeatAt *time.Time `gorm:"index" json:"last_heartbeat_at"`
-	FirstBoundAt    time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP" json:"first_bound_at"`
-	UnboundAt       *time.Time `json:"unbound_at"`
+	TenantID          uint64     `gorm:"index;not null" json:"tenant_id"`
+	AppID             uint64     `gorm:"index;not null" json:"app_id"`
+	CardID            uint64     `gorm:"index;not null" json:"card_id"`
+	HWID              string     `gorm:"size:128;not null" json:"hwid"`
+	HWIDRaw           string     `gorm:"type:text" json:"hwid_raw"`
+	HWIDComponents    string     `gorm:"type:text" json:"hwid_components"`     // v0.4.0 多维指纹 JSON（cpu/motherboard/mac/disk/bios 等）
+	UserAgent         string     `gorm:"size:512" json:"user_agent"`           // v0.4.0 客户端 UA
+	ClientIPExt       string     `gorm:"size:45" json:"client_ip_ext"`         // v0.4.0 首次绑定 IP
+	ScreenResolution  string     `gorm:"size:32" json:"screen_resolution"`     // v0.4.0 屏幕分辨率
+	Timezone          string     `gorm:"size:64" json:"timezone"`              // v0.4.0 客户端时区
+	Language          string     `gorm:"size:32" json:"language"`              // v0.4.0 客户端语言
+	DeviceName        string     `gorm:"size:128" json:"device_name"`
+	DeviceType        string     `gorm:"size:32" json:"device_type"`
+	IPAddress         string     `gorm:"size:45" json:"ip_address"`
+	Status            string     `gorm:"size:32;index;not null;default:active" json:"status"` // active/offline/banned/unbound
+	LastHeartbeatAt   *time.Time `gorm:"index" json:"last_heartbeat_at"`
+	FirstBoundAt      time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP" json:"first_bound_at"`
+	UnboundAt         *time.Time `json:"unbound_at"`
 }
 
 func (AppDevice) TableName() string { return "app_device" }
@@ -802,3 +808,69 @@ type WebhookDelivery struct {
 }
 
 func (WebhookDelivery) TableName() string { return "webhook_delivery" }
+
+// ============== v0.4.0 高级安全（风控规则引擎 + 异地登录告警） ==============
+
+// RiskRule 风控规则配置表
+// - 内置规则由 system 创建（rule_type 固定，仅可调阈值/启停）
+// - 自定义规则由管理员创建（rule_type=custom，condition 为 JSON 表达式）
+type RiskRule struct {
+	ID          uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	Name        string    `gorm:"size:64;not null" json:"name"`
+	Description string    `gorm:"size:255;not null;default:''" json:"description"`
+	RuleType    string    `gorm:"size:32;index;not null" json:"rule_type"` // geo_login/new_device/abnormal_ua/abnormal_time/high_frequency/custom
+	Condition   string    `gorm:"type:text;not null" json:"condition"`     // JSON 条件
+	Score       int       `gorm:"not null;default:0" json:"score"`         // 命中加分 0-100
+	Action      string    `gorm:"size:32;not null;default:alert" json:"action"` // alert/challenge/block
+	Priority    int       `gorm:"index;not null;default:100" json:"priority"`
+	Status      string    `gorm:"size:32;not null;default:active" json:"status"` // active/disabled
+	CreatedBy   string    `gorm:"size:64;not null;default:system" json:"created_by"`
+	CreatedAt   time.Time `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+	UpdatedAt   time.Time `gorm:"not null;default:CURRENT_TIMESTAMP;ON UPDATE:CURRENT_TIMESTAMP" json:"updated_at"`
+}
+
+func (RiskRule) TableName() string { return "risk_rule" }
+
+// RiskEvent 风控事件审计表
+type RiskEvent struct {
+	ID             uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	RuleID         uint64     `gorm:"not null;default:0" json:"rule_id"` // 0=内置规则
+	RuleType       string     `gorm:"size:32;index;not null" json:"rule_type"`
+	RuleName       string     `gorm:"size:64;not null" json:"rule_name"` // 快照
+	UserType       string     `gorm:"size:32;not null;default:''" json:"user_type"` // admin/tenant/agent/enduser
+	UserID         uint64     `gorm:"not null;default:0" json:"user_id"`
+	Username       string     `gorm:"size:64;not null;default:''" json:"username"`
+	ClientIP       string     `gorm:"size:45;index;not null;default:''" json:"client_ip"`
+	UserAgent      string     `gorm:"size:512;not null;default:''" json:"user_agent"`
+	RiskScore      int        `gorm:"not null;default:0" json:"risk_score"`
+	ActionTaken    string     `gorm:"size:32;index;not null;default:alert" json:"action_taken"` // alert/challenge/block
+	Detail         string     `gorm:"type:text;not null" json:"detail"`                         // JSON 详情
+	Acknowledged   bool       `gorm:"index;not null;default:false" json:"acknowledged"`
+	AcknowledgedBy string     `gorm:"size:64;not null;default:''" json:"acknowledged_by"`
+	AcknowledgedAt *time.Time `json:"acknowledged_at"`
+	CreatedAt      time.Time  `gorm:"index;not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+}
+
+func (RiskEvent) TableName() string { return "risk_event" }
+
+// LoginGeoAlert 异地登录告警表
+// 触发：登录 IP 网段（IPv4 /24 或 IPv6 /64）与上次登录不同
+type LoginGeoAlert struct {
+	ID               uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	UserType         string     `gorm:"size:32;index;not null" json:"user_type"` // admin/tenant/agent/enduser
+	UserID           uint64     `gorm:"not null" json:"user_id"`
+	Username         string     `gorm:"size:64;not null" json:"username"`
+	CurrentIP        string     `gorm:"size:45;not null" json:"current_ip"`
+	CurrentNetwork   string     `gorm:"size:64;not null" json:"current_network"` // 如 1.2.3.0/24
+	PreviousIP       string     `gorm:"size:45;not null" json:"previous_ip"`
+	PreviousNetwork  string     `gorm:"size:64;not null" json:"previous_network"`
+	UserAgent        string     `gorm:"size:512;not null;default:''" json:"user_agent"`
+	AlertStatus      string     `gorm:"size:32;index;not null;default:pending" json:"alert_status"` // pending/acknowledged/closed
+	NotifyChannels   string     `gorm:"size:128;not null;default:''" json:"notify_channels"`         // 逗号分隔：inapp,email,sms
+	AcknowledgedBy   string     `gorm:"size:64;not null;default:''" json:"acknowledged_by"`
+	AcknowledgedAt   *time.Time `json:"acknowledged_at"`
+	ClosedAt         *time.Time `json:"closed_at"`
+	CreatedAt        time.Time  `gorm:"index;not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+}
+
+func (LoginGeoAlert) TableName() string { return "login_geo_alert" }

@@ -8,6 +8,7 @@ import (
 	"github.com/your-org/keyauth-saas/apps/server/internal/handler"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/openapi"
+	"github.com/your-org/keyauth-saas/apps/server/internal/risk"
 )
 
 // Register 注册所有路由
@@ -29,6 +30,9 @@ func Register(container *config.Container) *gin.Engine {
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 	}))
+	// v0.4.0 Cloudflare 真实 IP 中间件：必须在 IPBlacklist / RateLimitByIP 之前
+	// 从 CF-Connecting-IP 头取真实 IP 并注入 c.Set("real_ip", ip)
+	r.Use(middleware.CloudflareRealIP(container.ConfigCache()))
 	r.Use(middleware.IPBlacklist(container.Redis, container.DB))
 
 	// 注入全局加密管理器
@@ -49,6 +53,7 @@ func Register(container *config.Container) *gin.Engine {
 		Crypto:   container.Crypto,
 		Config:   container.Config,
 		CfgCache: container.ConfigCache(),
+		RiskMgr:  risk.NewManager(container.DB, container.ConfigCache()), // v0.4.0 风控规则引擎
 	}
 
 	// ----- 客户端验证 API（HMAC 签名鉴权） -----
@@ -163,6 +168,19 @@ func Register(container *config.Container) *gin.Engine {
 		adminAuth.GET("/security/ip_blacklist", handler.AdminListIPBlacklist(deps))
 		adminAuth.POST("/security/ip_blacklist", handler.AdminAddIPBlacklist(deps))
 		adminAuth.DELETE("/security/ip_blacklist/:id", handler.AdminRemoveIPBlacklist(deps))
+
+		// v0.4.0 高级安全：风控规则引擎 + 异地登录告警
+		adminAuth.GET("/security/risk/stats", handler.AdminRiskStats(deps))
+		adminAuth.GET("/security/risk/rules", handler.AdminListRiskRules(deps))
+		adminAuth.POST("/security/risk/rules", handler.AdminCreateRiskRule(deps))
+		adminAuth.GET("/security/risk/rules/:id", handler.AdminGetRiskRule(deps))
+		adminAuth.PUT("/security/risk/rules/:id", handler.AdminUpdateRiskRule(deps))
+		adminAuth.DELETE("/security/risk/rules/:id", handler.AdminDeleteRiskRule(deps))
+		adminAuth.GET("/security/risk/events", handler.AdminListRiskEvents(deps))
+		adminAuth.POST("/security/risk/events/:id/acknowledge", handler.AdminAckRiskEvent(deps))
+		adminAuth.GET("/security/geo_alerts", handler.AdminListGeoAlerts(deps))
+		adminAuth.POST("/security/geo_alerts/:id/acknowledge", handler.AdminAckGeoAlert(deps))
+		adminAuth.POST("/security/geo_alerts/:id/close", handler.AdminCloseGeoAlert(deps))
 
 		// 支付结算管理（v0.2.3 + v0.3.4 升级）
 		adminAuth.GET("/settlements", handler.AdminListSettlements(deps))

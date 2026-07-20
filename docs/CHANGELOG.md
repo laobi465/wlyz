@@ -11,6 +11,126 @@
 
 ## [0.4.0] - 2026-07-20（v0.4.x 迁移项推进）
 
+### [新增] 高级安全（v0.4.x 第十五项：异地登录告警 + 风控规则引擎 + 设备指纹升级 + Cloudflare WAF 集成）
+
+#### 背景
+
+- v0.3.x 安全中心仅支持 IP 黑名单和登录失败日志，缺少主动风控规则引擎和异地登录告警能力
+- TODO.md `[迁移] 高级安全 → v0.4.0 异地登录告警 / 风控规则引擎 / 设备指纹升级（多维度）/ Cloudflare WAF 集成`
+- 商业诉求：平台需要主动识别异常登录行为（异地/新设备/异常 UA/异常时段/高频请求）并触发 alert/challenge/block 三级动作；接入 Cloudflare 后真实 IP 需从 CF-Connecting-IP 头获取
+
+#### 实现
+
+**`migrations/018_v0.4.0_advanced_security.up.sql`**：
+- 新建 `risk_rule` 表：风控规则配置（name/rule_type/condition/score/action/priority/status/created_by，rule_type 支持 geo_login/new_device/abnormal_ua/abnormal_time/high_frequency/custom）
+- 新建 `risk_event` 表：风控事件审计（rule_id/rule_type/risk_score/action_taken/detail/acknowledged，记录每次评估命中详情）
+- 新建 `login_geo_alert` 表：异地登录告警（current_ip/current_network/previous_ip/previous_network/alert_status，alert_status 支持 pending/acknowledged/closed）
+- ALTER `app_device` ADD 6 字段（v0.4.0 设备指纹多维度升级，向前兼容）：
+  - `hwid_components` TEXT — 硬件指纹组件 JSON
+  - `user_agent` VARCHAR(512) — 完整 UA
+  - `client_ip_ext` VARCHAR(45) — 客户端 IP 扩展
+  - `screen_resolution` VARCHAR(32) — 屏幕分辨率
+  - `timezone` VARCHAR(64) — 时区
+  - `language` VARCHAR(32) — 语言
+- `sys_config` 新增 16 项配置（铁律 05：全部走后台可视化编辑）：
+  - `cloudflare.enabled` = `0` / `cloudflare.real_ip_header` = `CF-Connecting-IP` / `cloudflare.ip_country_header` = `CF-IPCountry` / `cloudflare.trusted_cidrs` = Cloudflare 官方 IPv4/IPv6 CIDR 列表
+  - `risk.engine.enabled` = `1` / `risk.engine.block_threshold` = `100` / `risk.engine.challenge_threshold` = `50`
+  - `risk.geo_login_alert.enabled` = `1` / `risk.geo_login_alert.ipv4_prefix` = `24` / `risk.geo_login_alert.ipv6_prefix` = `64` / `risk.geo_login_alert.notify_channels` = `inapp,email`
+  - `risk.new_device_score` = `40` / `risk.abnormal_ua_score` = `30` / `risk.abnormal_time_start` = `02:00` / `risk.abnormal_time_end` = `06:00` / `risk.high_frequency_threshold` = `10`
+- 5 条内置 seed 规则（system 创建，禁止删除/改类型）：
+  - 异地登录（geo_login，60 分，alert）
+  - 新设备（new_device，40 分，alert）
+  - 异常 UA（abnormal_ua，30 分，alert）
+  - 异常时段（abnormal_time，20 分，disabled，默认禁用）
+  - 高频请求（high_frequency，50 分，challenge）
+- 配套 `018_v0.4.0_advanced_security.down.sql` 回滚（删除 16 项 sys_config + system 规则 + 3 张表 + app_device 6 字段）
+
+**`internal/model/model.go`**：
+- `AppDevice` 扩展 6 字段（HWIDComponents/UserAgent/ClientIPExt/ScreenResolution/Timezone/Language）
+- 新增 `RiskRule` / `RiskEvent` / `LoginGeoAlert` 三个 struct + TableName
+
+**`internal/risk/risk.go`**（新建包，901 行，风控规则引擎核心）：
+- 16 个配置键常量（铁律 04）+ 6 个规则类型常量 + 3 个动作常量 + 2 个状态常量 + 4 个用户类型常量
+- `ConfigReader` 接口（GetBool/GetInt/GetString，与 middleware.ConfigReader 兼容）
+- `EvalContext` 评估上下文（UserType/UserID/Username/ClientIP/UserAgent/HWID/Operation/OccurredAt）
+- `EngineOutput` 引擎输出（TotalScore/Action/HitRules/ShouldBlock/ShouldChallenge）
+- `Manager.EvaluateLogin(ctx, ec)` 主入口：遍历 active 规则 → 评估 → 累计评分 → 阈值升级动作
+- `Manager.RecordEvent(ctx, ec, out)` 落盘：写 risk_event + 异地登录额外写 login_geo_alert
+- 5 条内置规则评估函数：
+  - `evalGeoLogin`：IP 网段比较（查 RefreshTokenDevice 表上次登录 IP），无需 GeoIP 数据库
+  - `evalNewDevice`：UA 比对近似（检查 RefreshTokenDevice 表历史 UA）
+  - `evalAbnormalUA`：curl/wget/python-requests/bot 关键词 + pkg/ua Bot 识别
+  - `evalAbnormalTime`：HH:MM 范围判断（支持跨午夜）
+  - `evalHighFrequency`：统计 risk_event 表近期事件数
+- `NetworkOf(ipStr, ipv4Prefix, ipv6Prefix)` 工具函数：计算 IP 网段 CIDR
+- CRUD：`ListRules` / `GetRule` / `CreateRule`（仅 custom 类型，默认 CreatedBy = "admin"）/ `UpdateRule`（内置不可改 rule_type）/ `DeleteRule`（内置不可删）
+- 事件/告警查询：`ListEvents` + `AcknowledgeEvent` / `ListGeoAlerts` + `AcknowledgeGeoAlert` + `CloseGeoAlert`
+- `GetStats` 风控看板：今日/本周事件数 + 各动作计数 + 待处理告警 + TOP 10 异常 IP + 最近 10 条事件
+
+**`internal/middleware/cloudflare.go`**（新建，150 行）：
+- `CloudflareRealIP(cfgReader)` 中间件：
+  - `cloudflare.enabled=0` 时 `c.Set(ContextKeyRealIP, c.ClientIP())` 直接回退
+  - `cloudflare.enabled=1` 时从配置的头名取真实 IP（默认 `CF-Connecting-IP`）+ 校验来源 IP 在 `cloudflare.trusted_cidrs` 列表内 + 注入 `real_ip` + `ip_country` 到 gin.Context
+  - 校验失败回退 `c.ClientIP()`，确保非 Cloudflare 部署环境也能正常工作
+- `RealIP(c)` 工具函数：优先取 `ContextKeyRealIP`，回退 `c.ClientIP()`
+- `IPCountry(c)` 工具函数：取 `ContextKeyIPCountry`
+- `ipInCIDRList(ipStr, cidrList)` / `hostFromAddr(addr)` 辅助函数
+
+**`internal/middleware/risk_engine.go`**（新建，55 行）：
+- `RiskEngineForAnonymous(mgr)` 中间件：对匿名请求做风控评估（不阻塞流程，仅记录命中规则）
+- 命中 block 时返回 403 + code 1006「请求已被风控引擎拦截」
+
+**`internal/middleware/ratelimit.go`**（修改）：
+- `RateLimitByIP` 中 `c.ClientIP()` → `RealIP(c)`（2 处变更）
+- `IPBlacklist` 中 `c.ClientIP()` → `RealIP(c)`
+- 确保 Cloudflare 部署环境下 IP 限流和黑名单基于真实客户端 IP
+
+**`internal/handler/deps.go`**（修改）：
+- `Deps` 新增 `RiskMgr *risk.Manager` 字段（nil = 禁用风控）
+
+**`internal/handler/auth.go`**（修改）：
+- 步骤 7.1（写入会话记录）之后、步骤 8（清除失败计数）之前插入步骤 7.2 风控评估：
+  - 调用 `deps.RiskMgr.EvaluateLogin(ctx, ec)` 评估
+  - `out.ShouldBlock` 时撤销会话（revokeSessionByJTI）+ 清除失败计数 + 记录事件 + 返回 403「登录已被风控引擎拦截」
+  - `len(out.HitRules) > 0` 时记录事件（不阻塞登录）
+
+**`internal/handler/risk.go`**（新建，388 行）：
+- admin 风控面板 11 个端点：
+  - `GET /admin/security/risk/stats` — 风控看板统计
+  - `GET /admin/security/risk/rules` — 规则列表
+  - `POST /admin/security/risk/rules` — 创建规则（仅 custom）
+  - `GET /admin/security/risk/rules/:id` — 规则详情
+  - `PUT /admin/security/risk/rules/:id` — 更新规则
+  - `DELETE /admin/security/risk/rules/:id` — 删除规则（内置禁删）
+  - `GET /admin/security/risk/events` — 事件列表（支持 user_type/rule_type/action/is_acknowledged 筛选）
+  - `POST /admin/security/risk/events/:id/acknowledge` — 确认事件
+  - `GET /admin/security/geo_alerts` — 异地告警列表
+  - `POST /admin/security/geo_alerts/:id/acknowledge` — 确认告警
+  - `POST /admin/security/geo_alerts/:id/close` — 关闭告警
+
+**`internal/router/router.go`**（修改）：
+- import 添加 `internal/risk`
+- 全局中间件注册 `CloudflareRealIP`（在 IPBlacklist 之前）
+- Deps 注入 `RiskMgr: risk.NewManager(container.DB, container.ConfigCache())`
+- `adminAuth` 组注册 11 条新路由
+
+#### 验证
+
+- `go build ./...` 通过
+- `go vet ./...` 通过
+- `go test ./...` 全 PASS
+  - `internal/risk` 包 ~30 个测试全 PASS（NetworkOf/parseHHMM/actionLevel/异常 UA/异常时段/异地登录/新设备/高频请求/EvaluateLogin/RecordEvent/规则 CRUD/事件告警确认/统计）
+  - `internal/middleware` 包 5 个 cloudflare 测试全 PASS（CF 禁用回退/CF 启用取头/受信 CIDR 校验通过/受信 CIDR 校验失败回退/自定义头名）
+  - 全量已有测试无回归
+
+#### 铁律遵循
+
+- **铁律 04（禁硬编码）**：16 个配置键 + 6 个规则类型 + 3 个动作 + 2 个状态 + 4 个用户类型全部常量化
+- **铁律 05（配置走 sys_config）**：16 项 `cloudflare.*` / `risk.*` 配置全部走 sys_config 后台可视化编辑，实时生效
+- **铁律 06（反幻觉）**：所有测试基于固定输入断言，无随机性；异地登录检测基于 IP 网段比较无需 GeoIP 数据库；CF 中间件 enabled=0 时直接回退 c.ClientIP()
+
+---
+
 ### [新增] 管理员更新弹窗通知（v0.4.x 第十四项：前端轻量轮询 + 自适应间隔 + 防重复弹窗）
 
 #### 背景

@@ -5,6 +5,7 @@ package handler
 import (
 	"github.com/redis/go-redis/v9"
 	"github.com/your-org/keyauth-saas/apps/server/internal/config"
+	"github.com/your-org/keyauth-saas/apps/server/internal/risk"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/crypto"
 	"gorm.io/gorm"
 )
@@ -16,4 +17,5 @@ type Deps struct {
 	Crypto   *crypto.Manager
 	Config   *config.Config
 	CfgCache *config.ConfigCache
+	RiskMgr  *risk.Manager // v0.4.0 风控规则引擎（nil=禁用风控）
 }

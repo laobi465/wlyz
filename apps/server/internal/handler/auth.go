@@ -21,6 +21,7 @@ import (
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 	"github.com/your-org/keyauth-saas/apps/server/internal/quota"
+	"github.com/your-org/keyauth-saas/apps/server/internal/risk"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/crypto"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/epay"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/snowflake"
@@ -235,6 +236,34 @@ func doLogin(
 	// 7.1 写入会话记录（refresh_token_device 表，供 ListLoginDevices 查询 + KickDevice 精准黑名单）
 	ua := c.Request.Header.Get("User-Agent")
 	_ = recordLoginSession(deps, role, id, jti, ip, ua, params.RefreshTTL)
+
+	// 7.2 v0.4.0 风控评估（登录成功后）
+	// 命中 block 拒绝登录；命中 alert/challenge 仅记录，不阻塞（避免误杀合法用户）
+	// 异地登录告警 + 新设备告警 + 异常时段告警 + 异常 UA 告警 + 高频请求告警
+	if deps.RiskMgr != nil {
+		ec := risk.EvalContext{
+			UserType:   role,
+			UserID:     id,
+			Username:   req.Username,
+			ClientIP:   ip,
+			UserAgent:  ua,
+			Operation:  "login",
+			OccurredAt: time.Now(),
+		}
+		out := deps.RiskMgr.EvaluateLogin(ctx, ec)
+		if out.ShouldBlock {
+			// 命中 block：撤销刚签发的 refresh token 会话 + 拒绝登录
+			_ = revokeSessionByJTI(deps, role, id, jti)
+			_ = auth.ClearLoginFailure(ctx, deps.Redis, role, req.Username)
+			deps.RiskMgr.RecordEvent(ctx, ec, out)
+			middleware.Fail(c, http.StatusForbidden, 1006, "登录已被风控引擎拦截")
+			return
+		}
+		// 记录风控事件（含异地登录告警写 login_geo_alert 表）
+		if len(out.HitRules) > 0 {
+			deps.RiskMgr.RecordEvent(ctx, ec, out)
+		}
+	}
 
 	// 8. 清除失败计数
 	_ = auth.ClearLoginFailure(ctx, deps.Redis, role, req.Username)
