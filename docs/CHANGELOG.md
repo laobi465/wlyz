@@ -11,6 +11,107 @@
 
 ## [0.4.0] - 2026-07-20（v0.4.x 迁移项推进）
 
+### [新增] API 开放平台（v0.4.x 第十三项：开发者 API Token + Webhook 事件推送 + 第三方接入授权）
+
+#### 背景
+
+- v0.3.x 仅支持内部三角色（admin/tenant/agent）JWT 鉴权，第三方开发者无法通过 Token 接入平台
+- 业务事件（订单支付、卡密生成、代理注册等）只能在平台内部感知，无法实时通知到开发者自有系统
+- TODO.md `[迁移] API 开放平台 → v0.4.x 第三方接入授权 / Webhook 事件推送 / 开发者 API Token 管理`
+
+#### 实现
+
+**`migrations/016_v0.4.0_openapi_platform.up.sql`**：
+- 新建 `developer_api_token` 表：开发者 API Token 主表
+  - 字段：id / tenant_id / name / token_hash（SHA-512 哈希，不存明文）/ prefix（前 8 位明文，便于识别）/ scopes（逗号分隔权限范围）/ expires_at / last_used_at / last_used_ip / status / revoked_at
+  - 唯一索引 `uk_token_hash`（SHA-512 哈希查找）+ 普通索引 `idx_tenant` / `idx_status` / `idx_expires`
+- 新建 `webhook_endpoint` 表：Webhook 推送端点
+  - 字段：id / tenant_id / name / url / secret_enc（AES-256-GCM 加密存储）/ events（订阅事件列表）/ status / failure_count / last_response_code / last_response_at / last_error
+  - 索引 `idx_tenant` / `idx_status`
+- 新建 `webhook_delivery` 表：Webhook 推送日志
+  - 字段：id / tenant_id / endpoint_id / event_type / event_id（UUID 防重放）/ payload（TEXT）/ status / response_code / response_body / attempt_count / max_retry / next_retry_at / delivered_at
+  - 索引 `idx_tenant` / `idx_endpoint` / `idx_status` / `idx_event` / `idx_next_retry`
+- `sys_config` 新增 8 项 `openapi.*` / `webhook.*` 配置：
+  - `openapi.token.prefix` = `pat_`（Token 前缀，便于识别）
+  - `openapi.token.length` = `40`（Token 随机部分长度）
+  - `openapi.token.max_per_tenant` = `10`（单租户 Token 数量上限，0=不限）
+  - `openapi.token.default_ttl_days` = `365`（默认有效期天数，0=永久）
+  - `openapi.scope.available` = 8 个 scope 逗号分隔（card.read/write, order.read/write, agent.read/write, webhook.read/write）
+  - `webhook.timeout_seconds` = `10`（HTTP 推送超时）
+  - `webhook.max_retry` = `3`（最大重试次数）
+  - `webhook.failure_threshold` = `10`（连续失败阈值，达阈值自动 disable 端点）
+- 配套 `016_v0.4.0_openapi_platform.down.sql` 回滚
+
+**`internal/model/model.go`**：
+- 新增 `DeveloperAPIToken` / `WebhookEndpoint` / `WebhookDelivery` 三个 struct + TableName
+- `TokenHash` / `SecretEnc` 字段使用 `json:"-"` 不暴露到 API 响应
+
+**`internal/openapi/openapi.go`**（新建包，API 开放平台核心）：
+- 8 个配置键常量（铁律 04：禁止硬编码）+ Token/Endpoint/Delivery 状态常量 + 8 个 Scope 常量 + 5 个事件类型常量
+- `TokenManager.GenerateToken(ctx, tenantID, name, scopes, ttlDays)`：
+  - 校验 scopes 合法性 → 检查单租户数量上限 → 生成随机 Token（prefix+randomPart，crypto/rand）→ SHA-512 哈希存储 → 计算过期时间 → 写库
+  - 明文 Token 仅生成时返回一次（铁律 06：DB 不存明文，仅存 SHA-512 哈希）
+- `TokenManager.ValidateToken(ctx, plainToken, clientIP)`：SHA-512 哈希比对 → 状态校验 → 过期校验 → 异步更新 last_used_at/ip
+- `TokenManager.RevokeToken` / `ListTokens` / `GetToken`：撤销（status=revoked + revoked_at）/ 列表（分页 + 状态过滤）/ 详情
+- `WebhookManager.CreateEndpoint(ctx, *WebhookEndpoint, plainSecret)`：URL 校验 + AES-256-GCM 加密 secret
+- `WebhookManager.UpdateEndpoint` / `DeleteEndpoint` / `ListEndpoints` / `GetEndpoint`
+- `WebhookManager.DispatchEvent(ctx, tenantID, eventType, payload)`：
+  - payload 序列化 → 查询订阅该事件的 active 端点 → 为每个端点创建 delivery 记录 → 同步尝试发送
+  - HMAC-SHA256(secret, event_id|timestamp|payload) 签名头（用 `sha512.New512_256` + `hmac.Equal` 常量时间比较防时序攻击）
+  - 失败时设置 next_retry_at（2/4/6 分钟退避）+ 端点失败计数 + 阈值自动 disable
+- `WebhookManager.RetryDelivery`：手动重试（校验状态 + 重试次数 + 端点 active）
+- `WebhookManager.ListDeliveries` / `GetDelivery`：推送日志查询
+- `WebhookManager.ProcessPendingRetries(ctx, limit)`：后台 worker 调用，处理 next_retry_at <= now 的 failed delivery
+- `ValidateScopes` / `HasScope` / `ParseScopes` / `isSubscribed`：Scope 与事件订阅工具函数
+- 辅助函数：`hashToken`（SHA-512 hex，128 字符）/ `signWebhook`（HMAC-SHA256 用 sha512.New512_256）/ `VerifyWebhookSignature`（hmac.Equal 常量时间比较）/ `generateRandomString` / `generateUUID` / `truncate`
+
+**`internal/middleware/auth.go`**：
+- 新增 `APITokenAuth(mgr *openapi.TokenManager)` 中间件：
+  - 提取 `Authorization: Bearer pat_xxx` → 调用 `TokenManager.ValidateToken` → 注入 `api_token_id` / `api_tenant_id` / `api_scopes` / `api_token_name` 到 gin.Context
+  - 失败响应统一 401，不区分"不存在/已撤销/已过期"，防信息泄露
+  - 与 JWTAuth（内部账号）/ H5EndUserAuth（终端用户）鉴权分离
+- 新增 `RequireScope(scopes ...string)` 中间件：OR 语义（任一 scope 命中即通过），必须在 APITokenAuth 之后使用
+
+**`internal/handler/openapi.go`**（新建 handler）：
+- 平台管理端（adminAuth）：`AdminOpenAPIStatus` GET /admin/openapi/status（配置概览 + 全局统计）
+- 租户控制台（tenantAuth，13 个端点）：
+  - Token 管理：`TenantListAPITokens` / `TenantCreateAPIToken`（返回明文仅一次）/ `TenantGetAPIToken` / `TenantRevokeAPIToken`
+  - Webhook 端点 CRUD：`TenantListWebhookEndpoints` / `TenantCreateWebhookEndpoint` / `TenantGetWebhookEndpoint` / `TenantUpdateWebhookEndpoint` / `TenantDeleteWebhookEndpoint`
+  - Webhook 推送日志：`TenantListWebhookDeliveries` / `TenantGetWebhookDelivery` / `TenantRetryWebhookDelivery`
+  - 元信息：`TenantOpenAPIMeta`（可用 scope + 支持的事件类型，供前端表单勾选）
+- 第三方调用方（openapiAuth - API Token 鉴权）：`OpenAPIWhoami` GET /api/v1/openapi/whoami（调试 Token 是否生效）
+- `DispatchWebhookEvent(deps, tenantID, eventType, payload)`：异步分发 Webhook 事件辅助函数
+  - 异步执行（goroutine），不阻塞业务主流程；panic recover；context.Background()；best-effort
+
+**`internal/router/router.go`**：
+- 新增 `openapiAuth` 路由组（`/api/v1/openapi`）：API Token 鉴权，挂载 `OpenAPIWhoami`
+- `adminAuth` 新增 1 条路由：`GET /admin/openapi/status`
+- `tenantAuth` 新增 13 条路由：`/tenant/openapi/tokens`（5 条）+ `/tenant/openapi/webhooks`（5 条）+ `/tenant/openapi/webhooks/deliveries`（3 条）+ `/tenant/openapi/meta`
+
+**业务点 Webhook 事件接入**（5 个关键事件，全部异步分发）：
+- `TenantGenerateCards`（card.go）：卡密批量生成成功 → `card.generated`（仅批次级元信息，不含卡密明文）
+- `processPaidOrder`（pay.go）：订单支付成功 + 自动发卡 → `order.paid`
+- `processAgentRegisterPaid`（pay.go）：代理注册支付成功 + 创建 Agent → `agent.registered`
+- `TenantApproveRecharge`（tenant_finance.go）：代理充值审核通过 → `agent.recharge.approved`
+- `TenantPayWithdraw`（tenant_finance.go）：代理提现打款成功 → `agent.withdraw.paid`
+
+**`internal/openapi/openapi_test.go`**（新建测试）：
+- 61 个测试用例全 PASS，覆盖：
+  - 哈希/签名算法（hashToken / signWebhook / VerifyWebhookSignature 8 种场景）
+  - 随机数生成（generateRandomString / generateUUID）
+  - Scope 工具（ValidateScopes / HasScope / ParseScopes / isSubscribed）
+  - TokenManager 全方法（GenerateToken 6 场景 / ValidateToken 5 场景 / RevokeToken 4 场景 / ListTokens / GetToken）
+  - WebhookManager 全方法（CreateEndpoint / UpdateEndpoint / DeleteEndpoint / ListEndpoints / GetEndpoint / DispatchEvent 6 场景 / RetryDelivery 5 场景 / ListDeliveries / GetDelivery / ProcessPendingRetries 3 场景）
+  - 集成测试 + 边界测试（10KB 大 payload / nil payload / 最小 Token 长度 / hex 解码）
+
+#### 验证
+
+- `go build ./...` 通过
+- `go vet ./...` 通过
+- `go test ./...` 全 PASS（openapi 包 61 测试 + 全量已有测试无回归）
+
+---
+
 ### [新增] 终端用户体系（v0.4.x 第十二项：H5 注册/登录/绑卡/单点踢出 + HMAC access token + SHA-512 refresh token + jti）
 
 #### 背景

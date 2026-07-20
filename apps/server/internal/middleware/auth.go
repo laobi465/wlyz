@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/your-org/keyauth-saas/apps/server/internal/openapi"
 )
 
 // JWTClaims 自定义 JWT 载荷
@@ -154,4 +157,86 @@ func computeHMACSHA256(data, secret string) string {
 // hmacEqualConstTime 常量时间比较，防时序攻击
 func hmacEqualConstTime(a, b string) bool {
 	return hmac.Equal([]byte(a), []byte(b))
+}
+
+// APITokenAuth 开发者 API Token 鉴权中间件（v0.4.0）
+// 鉴权流程：① 提取 Authorization: Bearer <pat_xxx> ② 调用 TokenManager.ValidateToken 校验
+// ③ 注入 api_token_id / api_tenant_id / api_scopes 到 gin.Context
+//
+// 与 JWTAuth 的区别：
+//   - JWTAuth 服务端内部账号（admin/tenant/agent）
+//   - APITokenAuth 第三方开发者通过 API Token 访问开放平台接口
+//   - Token 明文不存库（仅 SHA-512 哈希），明文仅生成时返回一次
+//   - 失败响应码统一 401，错误信息不暴露内部细节（防信息泄露）
+func APITokenAuth(mgr *openapi.TokenManager) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// 1. 提取 Authorization: Bearer <token>
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 1002, "message": "未提供 API Token"})
+			return
+		}
+		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+		if tokenStr == authHeader {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 1002, "message": "Token 格式错误"})
+			return
+		}
+		// 2. 调用 TokenManager 校验
+		clientIP := c.ClientIP()
+		token, err := mgr.ValidateToken(c.Request.Context(), tokenStr, clientIP)
+		if err != nil {
+			// 统一错误信息，不区分"不存在/已撤销/已过期"，防信息泄露
+			msg := "API Token 无效"
+			code := 2002
+			switch {
+			case errors.Is(err, openapi.ErrTokenRevoked):
+				msg = "API Token 已撤销"
+			case errors.Is(err, openapi.ErrTokenExpired):
+				msg = "API Token 已过期"
+			case errors.Is(err, openapi.ErrTokenNotFound):
+				// 保持默认 msg
+			}
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": code, "message": msg})
+			return
+		}
+		// 3. 注入上下文（下游 handler / RequireScope 中间件使用）
+		c.Set("api_token_id", token.ID)
+		c.Set("api_tenant_id", token.TenantID)
+		c.Set("api_scopes", token.Scopes)
+		c.Set("api_token_name", token.Name)
+		c.Next()
+	}
+}
+
+// RequireScope 要求请求方持有指定 scope（v0.4.0）
+// 必须在 APITokenAuth 之后使用；支持多 scope（任一命中即通过，OR 语义）
+// 用法：r.GET("/api/v1/openapi/cards", middleware.APITokenAuth(mgr), middleware.RequireScope("card.read"), handler)
+func RequireScope(scopes ...string) gin.HandlerFunc {
+	required := make([]string, 0, len(scopes))
+	for _, s := range scopes {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			required = append(required, s)
+		}
+	}
+	return func(c *gin.Context) {
+		if len(required) == 0 {
+			c.Next()
+			return
+		}
+		tokenScopesRaw, exists := c.Get("api_scopes")
+		if !exists {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": 1003, "message": "未通过 API Token 鉴权"})
+			return
+		}
+		tokenScopes, _ := tokenScopesRaw.(string)
+		// OR 语义：任一 required scope 命中即通过
+		for _, req := range required {
+			if openapi.HasScope(tokenScopes, req) {
+				c.Next()
+				return
+			}
+		}
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": 1003, "message": "API Token 缺少所需权限: " + strings.Join(required, ",")})
+	}
 }

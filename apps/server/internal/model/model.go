@@ -742,3 +742,63 @@ type EndUserToken struct {
 }
 
 func (EndUserToken) TableName() string { return "end_user_token" }
+
+// ============== v0.4.0 API 开放平台 ==============
+
+// DeveloperAPIToken 开发者 API Token（v0.4.0，SHA-512 哈希存储 + scopes 权限）
+type DeveloperAPIToken struct {
+	ID          uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	TenantID    uint64     `gorm:"index;not null" json:"tenant_id"`
+	Name        string     `gorm:"size:64;not null" json:"name"`
+	TokenHash   string     `gorm:"uniqueIndex;size:128;not null" json:"-"` // SHA-512 哈希（不存明文）
+	Prefix      string     `gorm:"size:16;not null" json:"prefix"`        // 前 8 位明文（用于展示识别）
+	Scopes      string     `gorm:"size:512;not null;default:''" json:"scopes"`
+	ExpiresAt   *time.Time `gorm:"index" json:"expires_at"`
+	LastUsedAt  *time.Time `json:"last_used_at"`
+	LastUsedIP  string     `gorm:"size:64;not null;default:''" json:"last_used_ip"`
+	Status      string     `gorm:"index;size:16;not null;default:active" json:"status"` // active / revoked
+	RevokedAt   *time.Time `json:"revoked_at"`
+	CreatedAt   time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+	UpdatedAt   time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP;ON UPDATE:CURRENT_TIMESTAMP" json:"updated_at"`
+}
+
+func (DeveloperAPIToken) TableName() string { return "developer_api_token" }
+
+// WebhookEndpoint Webhook 推送端点（v0.4.0）
+type WebhookEndpoint struct {
+	ID               uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	TenantID         uint64     `gorm:"index;not null" json:"tenant_id"`
+	Name             string     `gorm:"size:64;not null" json:"name"`
+	URL              string     `gorm:"size:512;not null" json:"url"`
+	SecretEnc        string     `gorm:"size:512;not null;default:''" json:"-"` // AES-256-GCM 加密存储
+	Events           string     `gorm:"size:512;not null;default:''" json:"events"`
+	Status           string     `gorm:"index;size:16;not null;default:active" json:"status"` // active / disabled
+	FailureCount     int        `gorm:"not null;default:0" json:"failure_count"`
+	LastResponseCode int        `gorm:"not null;default:0" json:"last_response_code"`
+	LastResponseAt   *time.Time `json:"last_response_at"`
+	LastError        string     `gorm:"size:512;not null;default:''" json:"last_error"`
+	CreatedAt        time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+	UpdatedAt        time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP;ON UPDATE:CURRENT_TIMESTAMP" json:"updated_at"`
+}
+
+func (WebhookEndpoint) TableName() string { return "webhook_endpoint" }
+
+// WebhookDelivery Webhook 推送日志（v0.4.0）
+type WebhookDelivery struct {
+	ID           uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	TenantID     uint64     `gorm:"index;not null" json:"tenant_id"`
+	EndpointID   uint64     `gorm:"index;not null" json:"endpoint_id"`
+	EventType    string     `gorm:"index;size:64;not null" json:"event_type"`
+	EventID      string     `gorm:"size:64;not null" json:"event_id"` // UUID，防重放
+	Payload      string     `gorm:"type:text;not null" json:"payload"`
+	Status       string     `gorm:"index;size:16;not null;default:pending" json:"status"` // pending / success / failed
+	ResponseCode int        `gorm:"not null;default:0" json:"response_code"`
+	ResponseBody string     `gorm:"size:1024;not null;default:''" json:"response_body"`
+	AttemptCount int        `gorm:"not null;default:0" json:"attempt_count"`
+	MaxRetry     int        `gorm:"not null;default:3" json:"max_retry"`
+	NextRetryAt  *time.Time `gorm:"index" json:"next_retry_at"`
+	DeliveredAt  *time.Time `json:"delivered_at"`
+	CreatedAt    time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+}
+
+func (WebhookDelivery) TableName() string { return "webhook_delivery" }

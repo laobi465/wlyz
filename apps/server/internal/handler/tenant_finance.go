@@ -13,6 +13,7 @@ import (
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
+	"github.com/your-org/keyauth-saas/apps/server/internal/openapi"
 )
 
 // ============== 公共 DTO ==============
@@ -166,6 +167,15 @@ func TenantApproveRecharge(deps *Deps) gin.HandlerFunc {
 			middleware.Fail(c, http.StatusInternalServerError, 5003, "审核通过失败: "+txErr.Error())
 			return
 		}
+
+		// v0.4.0 Webhook：异步分发 agent.recharge.approved 事件
+		DispatchWebhookEvent(deps, tenantID, openapi.EventAgentRechargeApproved, gin.H{
+			"recharge_id":   id,
+			"agent_id":      log.AgentID,
+			"amount":        actualAmount,
+			"balance_after": newBalance,
+			"approved_at":   time.Now().Unix(),
+		})
 
 		middleware.Success(c, gin.H{
 			"id":            id,
@@ -369,6 +379,15 @@ func TenantPayWithdraw(deps *Deps) gin.HandlerFunc {
 			middleware.Fail(c, http.StatusInternalServerError, 5003, "打款失败: "+txErr.Error())
 			return
 		}
+
+		// v0.4.0 Webhook：异步分发 agent.withdraw.paid 事件
+		DispatchWebhookEvent(deps, tenantID, openapi.EventAgentWithdrawPaid, gin.H{
+			"withdraw_id":  id,
+			"agent_id":     w.AgentID,
+			"amount":       w.Amount,
+			"pay_trade_no": req.PayTradeNo,
+			"paid_at":      now.Unix(),
+		})
 
 		middleware.Success(c, gin.H{
 			"id":           id,

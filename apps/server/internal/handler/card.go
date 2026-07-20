@@ -18,6 +18,7 @@ import (
 	"github.com/your-org/keyauth-saas/apps/server/internal/heartbeat"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
+	"github.com/your-org/keyauth-saas/apps/server/internal/openapi"
 	"github.com/your-org/keyauth-saas/apps/server/internal/quota"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/crypto"
 )
@@ -290,6 +291,15 @@ func TenantGenerateCards(deps *Deps) gin.HandlerFunc {
 			middleware.Fail(c, http.StatusInternalServerError, 5003, "批量生成失败: "+txErr.Error())
 			return
 		}
+
+		// v0.4.0 Webhook：异步分发 card.generated 事件（仅通知批次级元信息，不含卡密明文）
+		DispatchWebhookEvent(deps, tenantID, openapi.EventCardGenerated, gin.H{
+			"batch_no":    batchNo,
+			"app_id":      req.AppID,
+			"card_type_id": req.CardTypeID,
+			"quantity":    req.Quantity,
+			"generated_at": time.Now().Unix(),
+		})
 
 		middleware.Success(c, gin.H{
 			"batch_no":   batchNo,

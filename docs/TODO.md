@@ -360,9 +360,9 @@
 - 详见 references/11-github-auto-update.md
 
 #### API 开放平台
-- [ ] [待开始] 第三方接入授权 - v0.4.0
-- [ ] [待开始] Webhook 事件推送 - v0.4.0
-- [ ] [待开始] 开发者 API Token 管理 - v0.4.0
+- [x] [已完成 2026-07-20] 第三方接入授权 - v0.4.0（migration 016 developer_api_token + webhook_endpoint + webhook_delivery 表 + 8 项 openapi.*/webhook.* 配置；APITokenAuth 中间件：Authorization: Bearer pat_xxx → TokenManager.ValidateToken → 注入 api_tenant_id/api_scopes；RequireScope 中间件 OR 语义权限校验；失败响应统一 401 不区分错误类型防信息泄露；不走完整 OAuth2 简化为 Token + scopes）
+- [x] [已完成 2026-07-20] Webhook 事件推送 - v0.4.0（WebhookManager.CreateEndpoint/UpdateEndpoint/DeleteEndpoint/ListEndpoints/GetEndpoint + DispatchEvent 同步发送 + RetryDelivery 手动重试 + ProcessPendingRetries 后台 worker；HMAC-SHA256 签名头 + hmac.Equal 常量时间比较防时序攻击；AES-256-GCM 加密存储 secret；2/4/6 分钟退避重试 + 连续失败阈值自动 disable 端点；5 个业务事件接入：card.generated / order.paid / agent.registered / agent.recharge.approved / agent.withdraw.paid）
+- [x] [已完成 2026-07-20] 开发者 API Token 管理 - v0.4.0（TokenManager.GenerateToken/ValidateToken/RevokeToken/ListTokens/GetToken；SHA-512 哈希存储不存明文 + 前 8 位 prefix 用于展示识别 + scopes 权限范围 + TTL 过期 + 单租户数量上限；明文 Token 仅生成时返回一次；13 个 tenant 端点 + 1 个 admin 端点 + 1 个 openapi/whoami 调试端点；61 个测试全 PASS）
 
 #### 监控告警
 - [x] [已完成 2026-07-20] 系统监控（CPU/内存/磁盘）+ 阈值告警 - v0.4.0（migration 013 system_metric + system_alert 表 + 9 项 monitor.* 配置；Manager.CollectSystemMetrics gopsutil 采集 + DB 查询在线设备/验证数/错误率；EvaluateAlerts 显式 switch 阈值比较 + 静默期去重 + 自动恢复 + webhook 通知）
@@ -487,7 +487,7 @@
 | v0.3.4 | 2026-07-19 | ✅ 已完成（结算与对账闭环：开发者 balance/frozen_balance + tenant_balance_log + tenant_withdraw + 批量结算 + 对账报表 + 双审核页面） |
 | v0.3.5 | 2026-07-19 | ✅ 已完成（P0 修复：RSA 脚本 / 数据库迁移 / H5 公共 API / 套餐配额） |
 | v0.3.6 | 2026-07-20 | ✅ 已完成（剩余 P1 收尾 + 单元测试 + 客户端 SDK 签名对齐测试） |
-| v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移 + JWT jti 单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 + 全语言 SDK 扩展 + 多级代理体系 + 灰度发布 + 在线更新 + 数据备份恢复 + 监控告警 + 通知系统 + 终端用户体系 已完成；API 开放平台 / 管理员弹窗通知 待开始） |
+| v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移 + JWT jti 单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 + 全语言 SDK 扩展 + 多级代理体系 + 灰度发布 + 在线更新 + 数据备份恢复 + 监控告警 + 通知系统 + 终端用户体系 + API 开放平台 已完成；管理员弹窗通知 待开始） |
 
 ---
 
@@ -544,7 +544,7 @@
 - 高级安全（异地登录告警 + 风控引擎 + Cloudflare WAF）
 - ~~灰度发布 + Webhook 自动更新~~ ✓ 已完成
 - ~~数据备份恢复~~ ✓ 已完成
-- API 开放平台
+- ~~API 开放平台（开发者 API Token + Webhook 事件推送 + 第三方接入授权）~~ ✓ 已完成
 - ~~监控告警（内置：CPU/内存/磁盘/错误率 + 阈值告警 + webhook 通知）~~ ✓ 已完成；Prometheus + Grafana 集成可选后续
 - ~~通知系统（短信 / 邮件 / 站内信）~~ ✓ 已完成；阿里云 SDK 完整签名 + SMTP SSL 包装 后续优化
 - ~~终端用户体系（H5 用户登录/注册/中心/订单）~~ ✓ 已完成后端；前端 H5 页面接入后续
@@ -552,5 +552,5 @@
 ---
 
 **文档版本**：0.4.0  
-**最后更新**：2026-07-20（v0.4.0 第六/七项迁移：通知系统 + 终端用户体系 后端全栈实现 + 89 个单元测试全 PASS）  
+**最后更新**：2026-07-20（v0.4.0 第八项迁移：API 开放平台 后端全栈实现 + 61 个单元测试全 PASS）  
 **维护者**：KeyAuth SaaS Team

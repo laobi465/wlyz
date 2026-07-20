@@ -7,6 +7,7 @@ import (
 	"github.com/your-org/keyauth-saas/apps/server/internal/config"
 	"github.com/your-org/keyauth-saas/apps/server/internal/handler"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
+	"github.com/your-org/keyauth-saas/apps/server/internal/openapi"
 )
 
 // Register 注册所有路由
@@ -138,6 +139,10 @@ func Register(container *config.Container) *gin.Engine {
 		adminAuth.GET("/endusers/stats", handler.AdminEndUserStats(deps))
 		adminAuth.GET("/endusers/:id", handler.AdminGetEndUser(deps))
 		adminAuth.PUT("/endusers/:id/status", handler.AdminUpdateEndUserStatus(deps))
+
+		// API 开放平台（v0.4.0 开发者 API Token + Webhook 事件推送 + 第三方接入授权）
+		// 铁律 05：8 项 openapi.* / webhook.* 配置可通过「系统配置」实时调整
+		adminAuth.GET("/openapi/status", handler.AdminOpenAPIStatus(deps))
 
 		// 公告管理
 		adminAuth.GET("/notices", handler.AdminListNotices(deps))
@@ -271,6 +276,22 @@ func Register(container *config.Container) *gin.Engine {
 		tenantAuth.GET("/withdrawals/mine", handler.TenantListOwnWithdrawals(deps))   // 自己的提现申请
 		tenantAuth.POST("/withdraw", handler.TenantWithdraw(deps))                    // 发起提现申请
 
+		// API 开放平台（v0.4.0 开发者 API Token + Webhook 事件推送）
+		// 铁律 06：Token 明文仅生成时返回一次；Webhook secret AES-256-GCM 加密存储
+		tenantAuth.GET("/openapi/meta", handler.TenantOpenAPIMeta(deps))
+		tenantAuth.GET("/openapi/tokens", handler.TenantListAPITokens(deps))
+		tenantAuth.POST("/openapi/tokens", handler.TenantCreateAPIToken(deps))
+		tenantAuth.GET("/openapi/tokens/:id", handler.TenantGetAPIToken(deps))
+		tenantAuth.DELETE("/openapi/tokens/:id", handler.TenantRevokeAPIToken(deps))
+		tenantAuth.GET("/openapi/webhooks", handler.TenantListWebhookEndpoints(deps))
+		tenantAuth.POST("/openapi/webhooks", handler.TenantCreateWebhookEndpoint(deps))
+		tenantAuth.GET("/openapi/webhooks/:id", handler.TenantGetWebhookEndpoint(deps))
+		tenantAuth.PUT("/openapi/webhooks/:id", handler.TenantUpdateWebhookEndpoint(deps))
+		tenantAuth.DELETE("/openapi/webhooks/:id", handler.TenantDeleteWebhookEndpoint(deps))
+		tenantAuth.GET("/openapi/webhooks/deliveries", handler.TenantListWebhookDeliveries(deps))
+		tenantAuth.GET("/openapi/webhooks/deliveries/:id", handler.TenantGetWebhookDelivery(deps))
+		tenantAuth.POST("/openapi/webhooks/deliveries/:id/retry", handler.TenantRetryWebhookDelivery(deps))
+
 		// 账号设置（v0.3.0 三角色统一）
 		tenantAuth.GET("/auth/me", handler.ProfileMe(deps))
 		tenantAuth.PUT("/auth/profile", handler.UpdateProfile(deps))
@@ -376,6 +397,17 @@ func Register(container *config.Container) *gin.Engine {
 		h5Auth.POST("/cards/unbind", handler.H5EndUserUnbindCard(deps))
 		h5Auth.GET("/cards", handler.H5EndUserListMyCards(deps))
 		h5Auth.GET("/cards/:id", handler.H5EndUserGetCardDetail(deps))
+	}
+
+	// ----- 第三方开放 API（API Token 鉴权，v0.4.0 新增） -----
+	// 与三角色 JWT / 终端用户 HMAC Token 鉴权分离：第三方开发者通过 Authorization: Bearer pat_xxx 访问
+	// 铁律 06：Token SHA-512 哈希存储（明文仅生成时返回一次）；失败响应不区分"不存在/已撤销/已过期"防信息泄露
+	openapiAuth := v1.Group("/openapi")
+	tokenMgr := openapi.NewTokenManager(container.DB, container.ConfigCache())
+	openapiAuth.Use(middleware.APITokenAuth(tokenMgr))
+	{
+		// 身份查询（调试 Token 是否生效）
+		openapiAuth.GET("/whoami", handler.OpenAPIWhoami(deps))
 	}
 
 	// ----- 安装向导（无需鉴权，仅首次部署可用，v0.3.6） -----

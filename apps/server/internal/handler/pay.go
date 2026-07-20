@@ -20,6 +20,7 @@ import (
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 	"github.com/your-org/keyauth-saas/apps/server/internal/multilevel"
+	"github.com/your-org/keyauth-saas/apps/server/internal/openapi"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/crypto"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/epay"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/snowflake"
@@ -588,7 +589,25 @@ func processPaidOrder(deps *Deps, notify *epay.NotifyParams) error {
 		return nil
 	})
 
-	return txErr
+	if txErr != nil {
+		return txErr
+	}
+
+	// v0.4.0 Webhook：异步分发 order.paid 事件（通知开发者订单已支付 + 已自动发卡）
+	DispatchWebhookEvent(deps, order.TenantID, openapi.EventOrderPaid, gin.H{
+		"order_no":         order.OrderNo,
+		"order_id":         order.ID,
+		"app_id":           order.AppID,
+		"card_type_id":     order.CardTypeID,
+		"quantity":         order.Quantity,
+		"total_amount":     order.TotalAmount,
+		"commission_amount": commissionAmount,
+		"net_amount":       netAmount,
+		"pay_trade_no":     notify.TradeNo,
+		"paid_at":          now.Unix(),
+	})
+
+	return nil
 }
 
 // processAgentRegisterPaid 处理代理注册支付成功（v0.3.6 新增）
@@ -659,6 +678,7 @@ func processAgentRegisterPaid(deps *Deps, notify *epay.NotifyParams) error {
 	if levelErr != nil {
 		return levelErr
 	}
+	var agentID uint64 // v0.4.0：事务外捕获 agent.ID 供 Webhook 使用
 	txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
 		// 7.1 事务内重复 quota 校验（防 TOCTOU）
 		var agentCount int64
@@ -694,6 +714,7 @@ func processAgentRegisterPaid(deps *Deps, notify *epay.NotifyParams) error {
 		if err := tx.Create(agent).Error; err != nil {
 			return fmt.Errorf("创建代理账号失败: %w", err)
 		}
+		agentID = agent.ID
 
 		// 7.4 回填 AgentRegistrationOrder
 		if err := tx.Model(&order).Updates(map[string]interface{}{
@@ -730,6 +751,20 @@ func processAgentRegisterPaid(deps *Deps, notify *epay.NotifyParams) error {
 
 	// 9. 审计追溯：AgentRegistrationOrder 自身已记录订单号/username/tenant_id/amount/agent_id/paid_at，
 	//    邀请码 used_by_agent_id 也已写入，无需额外日志（避免回调上下文缺 OperatorID 等字段写入失败）
+
+	// 10. v0.4.0 Webhook：异步分发 agent.registered 事件（通知开发者新代理注册成功）
+	DispatchWebhookEvent(deps, order.TenantID, openapi.EventAgentRegistered, gin.H{
+		"order_no":       order.OrderNo,
+		"agent_id":       agentID,
+		"agent_username": order.Username,
+		"agent_phone":    order.Phone,
+		"invite_code":    ic.Code,
+		"level":          agentLevel,
+		"parent_id":      parentID,
+		"amount":         order.Amount,
+		"pay_trade_no":   notify.TradeNo,
+		"registered_at":  now.Unix(),
+	})
 
 	return nil
 }
