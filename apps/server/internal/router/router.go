@@ -532,6 +532,10 @@ func Register(container *config.Container) *gin.Engine {
 		payGroup.GET("/return/epay", handler.EpayReturn(deps))
 		// 开发者自有易支付回调（v0.3.0）
 		payGroup.POST("/notify/tenant/:tenant_id", handler.EpayTenantNotify(deps))
+		// v0.5.0 海外支付通道 webhook
+		payGroup.POST("/notify/usdt", handler.USDTNotify(deps))
+		payGroup.POST("/notify/paypal", handler.PayPalNotify(deps))
+		payGroup.POST("/notify/stripe", handler.StripeNotify(deps))
 	}
 
 	return r

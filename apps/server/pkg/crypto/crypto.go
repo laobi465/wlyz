@@ -11,6 +11,7 @@ import (
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/x509"
 	"encoding/base64"
@@ -167,6 +168,22 @@ func HMACSHA256(secret string, data []byte) string {
 
 // HMACEqual 常量时间比较（防时序攻击）
 func HMACEqual(a, b string) bool {
+	return hmac.Equal([]byte(a), []byte(b))
+}
+
+// HMACSHA256Hex 标准 HMAC-SHA256（v0.5.0 新增：海外支付通道专用）
+// 用于 USDT webhook 签名 / Stripe webhook 签名 / PayPal webhook 签名
+// 与 HMACSHA256（SHA-512/256 变体）区别：本函数使用标准 SHA-256，与外部 API 文档一致
+// 输出 64 位小写 hex
+func HMACSHA256Hex(secret, data string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(data))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// ConstantTimeEqualString 字符串常量时间比较（v0.5.0 新增）
+// 用于 webhook 签名校验，防时序攻击
+func ConstantTimeEqualString(a, b string) bool {
 	return hmac.Equal([]byte(a), []byte(b))
 }
 

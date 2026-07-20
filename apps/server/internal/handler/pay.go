@@ -24,6 +24,7 @@ import (
 	"github.com/your-org/keyauth-saas/apps/server/internal/openapi"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/crypto"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/epay"
+	"github.com/your-org/keyauth-saas/apps/server/pkg/payment"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/snowflake"
 )
 
@@ -36,6 +37,7 @@ type createOrderReq struct {
 	PayType     string `json:"pay_type" binding:"required,oneof=alipay wxpay qqpay"`
 	BuyerContact string `json:"buyer_contact" binding:"omitempty,max=128"`
 	AgentID     uint64 `json:"agent_id" binding:"omitempty"` // 推广代理 ID（可选）
+	PayChannel  string `json:"pay_channel" binding:"omitempty,oneof=epay usdt paypal stripe"` // v0.5.0 海外支付通道，留空默认 epay
 }
 
 // ============== 平台易支付配置加载 ==============
@@ -170,6 +172,16 @@ func CreatePayOrder(deps *Deps) gin.HandlerFunc {
 		totalAmount := ct.Price * float64(req.Quantity)
 		if totalAmount <= 0 {
 			middleware.Fail(c, http.StatusBadRequest, 4005, "订单金额必须大于 0")
+			return
+		}
+
+		// 5.1 v0.5.0 海外支付通道分流（usdt/paypal/stripe）
+		//     海外通道不走双层支付模式，统一走平台总支付（独立 webhook 回调）
+		//     国内 epay 通道仍走 6. 双层支付模式
+		if req.PayChannel == payment.ChannelUSDT ||
+			req.PayChannel == payment.ChannelPayPal ||
+			req.PayChannel == payment.ChannelStripe {
+			handleOverseasPayOrder(deps, c, &req, &app, &ct, &tenant, totalAmount)
 			return
 		}
 
@@ -313,6 +325,305 @@ func ternary(cond bool, a, b string) string {
 	return b
 }
 
+// ============== v0.5.0 海外支付通道（USDT/PayPal/Stripe） ==============
+
+// overseasChannelPrefix 海外通道对应的订单号前缀（3 位，与 dispatchPaidOrder 一致）
+// 铁律 04：前缀集中定义，避免散落
+var overseasChannelPrefix = map[string]string{
+	payment.ChannelUSDT:   "UST",
+	payment.ChannelPayPal: "PPL",
+	payment.ChannelStripe: "STP",
+}
+
+// overseasNotifyPath 海外通道 webhook 路径（从 sys_config 读取，留空使用默认）
+var overseasNotifyPath = map[string]string{
+	payment.ChannelUSDT:   "pay.usdt.notify_path",
+	payment.ChannelPayPal: "pay.paypal.notify_path",
+	payment.ChannelStripe: "pay.stripe.notify_path",
+}
+
+var overseasNotifyPathDefault = map[string]string{
+	payment.ChannelUSDT:   "/api/v1/pay/notify/usdt",
+	payment.ChannelPayPal: "/api/v1/pay/notify/paypal",
+	payment.ChannelStripe: "/api/v1/pay/notify/stripe",
+}
+
+// resolveOverseasNotifyURL 拼接海外通道异步回调 URL
+func resolveOverseasNotifyURL(deps *Deps, c *gin.Context, channel string) string {
+	ctx := context.Background()
+	notifyPath := deps.CfgCache.GetString(ctx, overseasNotifyPath[channel], overseasNotifyPathDefault[channel])
+	scheme := "https"
+	if r := c.Request; r.TLS == nil {
+		if xfp := r.Header.Get("X-Forwarded-Proto"); xfp != "" {
+			scheme = xfp
+		} else {
+			scheme = "http"
+		}
+	}
+	host := c.Request.Host
+	if host == "" {
+		return strings.TrimRight(deps.CfgCache.GetString(ctx, "pay.platform.gateway_url", ""), "/") + notifyPath
+	}
+	return scheme + "://" + host + notifyPath
+}
+
+// handleOverseasPayOrder 处理海外支付通道下单
+// 流程：
+//  1. 校验对应通道启用
+//  2. 创建订单（UST/PPL/STP 前缀）
+//  3. 调用 payment.Provider.CreateOrder
+//  4. 返回通道特定字段（QRContent / PaymentURL / ClientSecret）
+func handleOverseasPayOrder(deps *Deps, c *gin.Context, req *createOrderReq, app *model.App, ct *model.AppCardType, tenant *model.SysTenant, totalAmount float64) {
+	ctx := c.Request.Context()
+
+	// 1. 校验通道启用
+	var enabledKey string
+	switch req.PayChannel {
+	case payment.ChannelUSDT:
+		enabledKey = payment.CfgKeyUSDTEnabled
+	case payment.ChannelPayPal:
+		enabledKey = payment.CfgKeyPayPalEnabled
+	case payment.ChannelStripe:
+		enabledKey = payment.CfgKeyStripeEnabled
+	default:
+		middleware.Fail(c, http.StatusBadRequest, 1001, "未知支付通道: "+req.PayChannel)
+		return
+	}
+	if !deps.CfgCache.GetBool(ctx, enabledKey, false) {
+		middleware.Fail(c, http.StatusForbidden, 4012, "支付通道未启用: "+req.PayChannel)
+		return
+	}
+
+	// 2. 创建订单（pending）
+	prefix := overseasChannelPrefix[req.PayChannel]
+	orderNo := snowflake.OrderNo(prefix)
+	var agentID *uint64
+	if req.AgentID > 0 {
+		agentID = &req.AgentID
+	}
+	order := &model.AppOrder{
+		TenantID:     app.TenantID,
+		AppID:        app.ID,
+		CardTypeID:   ct.ID,
+		OrderNo:      orderNo,
+		BuyerContact: req.BuyerContact,
+		AgentID:      agentID,
+		Quantity:     req.Quantity,
+		UnitPrice:    ct.Price,
+		TotalAmount:  totalAmount,
+		PayChannel:   req.PayChannel,
+		PayStatus:    "pending",
+		ClientIP:     c.ClientIP(),
+	}
+	if err := deps.DB.Create(order).Error; err != nil {
+		middleware.Fail(c, http.StatusInternalServerError, 4007, "创建订单失败: "+err.Error())
+		return
+	}
+
+	// 3. 构造 provider 调用参数
+	//    - USDT：Amount 留空，provider 内部根据 AmountRaw × 汇率 + 后缀计算
+	//    - PayPal：Amount = USD 2 位小数（CNY × exchange_rate）
+	//    - Stripe：Amount = cents 整数（CNY × exchange_rate × 100）
+	var amountStr string
+	switch req.PayChannel {
+	case payment.ChannelUSDT:
+		amountStr = "" // USDT 由 provider 内部计算
+	case payment.ChannelPayPal:
+		rate := deps.CfgCache.GetFloat64(ctx, "pay.paypal.exchange_rate", 0.14)
+		usdAmount := totalAmount * rate
+		amountStr = strconv.FormatFloat(usdAmount, 'f', 2, 64)
+	case payment.ChannelStripe:
+		rate := deps.CfgCache.GetFloat64(ctx, "pay.stripe.exchange_rate", 0.14)
+		usdAmount := totalAmount * rate
+		cents := int64(usdAmount*100 + 0.5) // 四舍五入
+		amountStr = strconv.FormatInt(cents, 10)
+	}
+
+	namePrefix := deps.CfgCache.GetString(ctx, "pay.platform.order_name_prefix", "KeyAuth卡密")
+	orderParams := &payment.OrderParams{
+		OrderNo:    orderNo,
+		Amount:     amountStr,
+		AmountRaw:  totalAmount,
+		Subject:    fmt.Sprintf("%s·%s×%d", namePrefix, ct.Name, req.Quantity),
+		NotifyURL:  resolveOverseasNotifyURL(deps, c, req.PayChannel),
+		ReturnURL:  resolveReturnURL(deps, c),
+		ClientIP:   c.ClientIP(),
+		OrderID:    order.ID,
+	}
+
+	// 4. 初始化 provider 并创建订单
+	var provider payment.Provider
+	switch req.PayChannel {
+	case payment.ChannelUSDT:
+		provider = payment.NewUSDTProvider(deps.CfgCache, deps.Crypto)
+	case payment.ChannelPayPal:
+		provider = payment.NewPayPalProvider(deps.CfgCache, deps.Crypto)
+	case payment.ChannelStripe:
+		provider = payment.NewStripeProvider(deps.CfgCache, deps.Crypto)
+	}
+
+	result, err := provider.CreateOrder(ctx, orderParams)
+	if err != nil {
+		// 创建失败：回滚订单状态为 closed（避免占用订单号）
+		deps.DB.Model(order).Update("pay_status", "closed")
+		middleware.Fail(c, http.StatusInternalServerError, 4008, "创建支付订单失败: "+err.Error())
+		return
+	}
+
+	// 5. 返回通道特定字段
+	resp := gin.H{
+		"order_no":     orderNo,
+		"order_id":     order.ID,
+		"pay_channel":  req.PayChannel,
+		"pay_mode":     "platform", // 海外通道统一走平台
+		"total_amount": totalAmount,
+		"expire_at":    time.Now().Add(time.Duration(result.ExpireSeconds) * time.Second).Unix(),
+		"quantity":     req.Quantity,
+		"card_type":    ct.Name,
+	}
+	switch req.PayChannel {
+	case payment.ChannelUSDT:
+		resp["qr_content"] = result.QRContent
+		resp["address"] = result.Address
+		resp["amount"] = result.Amount
+		resp["currency"] = "USDT"
+	case payment.ChannelPayPal:
+		resp["pay_url"] = result.PaymentURL
+		resp["amount"] = result.Amount
+		resp["currency"] = "USD"
+	case payment.ChannelStripe:
+		resp["client_secret"] = result.ClientSecret
+		resp["amount"] = result.Amount
+		resp["currency"] = "USD"
+	}
+	middleware.Success(c, resp)
+}
+
+// notifyToEpayNotify 将 payment.NotifyData 转换为 epay.NotifyParams 以复用 dispatchPaidOrder
+// 金额字段直接使用订单 TotalAmount（已通过 provider 验签 + 通道金额校验保证真实性）
+func notifyToEpayNotify(data *payment.NotifyData, order *model.AppOrder) *epay.NotifyParams {
+	return &epay.NotifyParams{
+		OutTradeNo:  data.OutTradeNo,
+		TradeNo:     data.TradeNo,
+		Money:       strconv.FormatFloat(order.TotalAmount, 'f', 2, 64),
+		TradeStatus: "TRADE_SUCCESS",
+	}
+}
+
+// handleOverseasNotify 海外通道 webhook 通用处理
+// 流程：
+//  1. provider.ParseNotify 验签
+//  2. Redis 防重入
+//  3. 查订单 + 通道特定金额校验
+//  4. dispatchPaidOrder 处理
+func handleOverseasNotify(deps *Deps, c *gin.Context, provider payment.Provider) {
+	ctx := c.Request.Context()
+
+	// 1. 验签
+	data, err := provider.ParseNotify(ctx, c.Request)
+	if err != nil {
+		c.String(http.StatusOK, "fail")
+		return
+	}
+	if !data.IsPaid() {
+		// 验签失败或状态非 paid：返回 success 避免重试（PayPal/Stripe 会持续重试失败回调）
+		// 但如果是验签失败，应返回 fail 让对端排查
+		if data.VerifyError != nil {
+			c.String(http.StatusOK, "fail")
+			return
+		}
+		c.String(http.StatusOK, "success")
+		return
+	}
+
+	// 2. Redis 防重入（60s 锁）
+	lockKey := "pay:notify:lock:" + data.OutTradeNo
+	ok, err := deps.Redis.SetNX(ctx, lockKey, "1", 60*time.Second).Result()
+	if err != nil || !ok {
+		c.String(http.StatusOK, "success")
+		return
+	}
+
+	// 3. 查订单
+	var order model.AppOrder
+	if err := deps.DB.Where("order_no = ?", data.OutTradeNo).First(&order).Error; err != nil {
+		deps.Redis.Del(ctx, lockKey)
+		c.String(http.StatusOK, "fail")
+		return
+	}
+
+	// 4. 通道特定金额校验（防伪造回调金额）
+	switch provider.Name() {
+	case payment.ChannelUSDT:
+		// USDT：用 MatchOrderAmount 严格校验链上金额（baseUSDT + order_id 后缀）
+		rate := deps.CfgCache.GetFloat64(ctx, payment.CfgKeyUSDTExchangeRate, 0.14)
+		baseUSDT := order.TotalAmount * rate
+		if err := payment.MatchOrderAmount(baseUSDT, order.ID, data.Amount); err != nil {
+			deps.Redis.Del(ctx, lockKey)
+			c.String(http.StatusOK, "fail")
+			return
+		}
+	case payment.ChannelPayPal:
+		// PayPal：USD 金额校验（data.Amount 与订单预期 USD 金额一致）
+		rate := deps.CfgCache.GetFloat64(ctx, "pay.paypal.exchange_rate", 0.14)
+		expectedUSD := strconv.FormatFloat(order.TotalAmount*rate, 'f', 2, 64)
+		if data.Amount != expectedUSD {
+			deps.Redis.Del(ctx, lockKey)
+			c.String(http.StatusOK, "fail")
+			return
+		}
+	case payment.ChannelStripe:
+		// Stripe：cents 金额校验
+		rate := deps.CfgCache.GetFloat64(ctx, "pay.stripe.exchange_rate", 0.14)
+		expectedCents := int64(order.TotalAmount*rate*100 + 0.5)
+		if data.Amount != strconv.FormatInt(expectedCents, 10) {
+			deps.Redis.Del(ctx, lockKey)
+			c.String(http.StatusOK, "fail")
+			return
+		}
+	}
+
+	// 5. 构造 epay.NotifyParams 复用 dispatchPaidOrder
+	notify := notifyToEpayNotify(data, &order)
+	if err := dispatchPaidOrder(deps, notify); err != nil {
+		deps.Redis.Del(ctx, lockKey)
+		c.String(http.StatusOK, "fail")
+		return
+	}
+
+	c.String(http.StatusOK, "success")
+}
+
+// USDTNotify USDT-TRC20 异步回调
+// POST /api/v1/pay/notify/usdt
+// 由外部区块链监控服务调用，HMAC-SHA256 签名
+func USDTNotify(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		provider := payment.NewUSDTProvider(deps.CfgCache, deps.Crypto)
+		handleOverseasNotify(deps, c, provider)
+	}
+}
+
+// PayPalNotify PayPal webhook 回调
+// POST /api/v1/pay/notify/paypal
+// 事件：PAYMENT.CAPTURE.COMPLETED → 标记 paid
+func PayPalNotify(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		provider := payment.NewPayPalProvider(deps.CfgCache, deps.Crypto)
+		handleOverseasNotify(deps, c, provider)
+	}
+}
+
+// StripeNotify Stripe webhook 回调
+// POST /api/v1/pay/notify/stripe
+// 事件：payment_intent.succeeded → 标记 paid
+func StripeNotify(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		provider := payment.NewStripeProvider(deps.CfgCache, deps.Crypto)
+		handleOverseasNotify(deps, c, provider)
+	}
+}
+
 // ============== GetPayOrder 查询订单状态 ==============
 
 // GetPayOrder 终端用户查询订单
@@ -434,6 +745,9 @@ func EpayNotify(deps *Deps) gin.HandlerFunc {
 //   - TOP → 开发者自有易支付卡密购买（processTenantOwnPaidOrder，v0.3.6）
 //   - REG → 代理注册付费（processAgentRegisterPaid）
 //   - MFD → 开发者月度服务费（processMonthlyFeePaid，v0.4.x）
+//   - UST → USDT-TRC20 卡密购买（v0.5.0，复用 processPaidOrder）
+//   - PPL → PayPal 卡密购买（v0.5.0，复用 processPaidOrder）
+//   - STP → Stripe 卡密购买（v0.5.0，复用 processPaidOrder）
 func dispatchPaidOrder(deps *Deps, notify *epay.NotifyParams) error {
 	// v0.4.x Prometheus 业务埋点：按订单前缀 + 处理结果统计支付订单总数
 	// 铁律 06：status=success/fail 由 err 是否为 nil 决定
@@ -449,8 +763,12 @@ func dispatchPaidOrder(deps *Deps, notify *epay.NotifyParams) error {
 	case strings.HasPrefix(notify.OutTradeNo, "TOP"):
 		prefix = "TOP"
 		err = processTenantOwnPaidOrder(deps, notify)
-	case strings.HasPrefix(notify.OutTradeNo, "ORD"):
-		prefix = "ORD"
+	case strings.HasPrefix(notify.OutTradeNo, "ORD"),
+		strings.HasPrefix(notify.OutTradeNo, "UST"),
+		strings.HasPrefix(notify.OutTradeNo, "PPL"),
+		strings.HasPrefix(notify.OutTradeNo, "STP"):
+		// v0.5.0：USDT/PayPal/Stripe 均为平台级卡密购买，复用 processPaidOrder
+		prefix = notify.OutTradeNo[:3]
 		err = processPaidOrder(deps, notify)
 	default:
 		prefix = "UNKNOWN"

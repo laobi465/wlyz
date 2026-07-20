@@ -415,12 +415,12 @@
 - [x] [已完成 2026-07-20] SDK 多语言文档 - v0.5.0（8 个 SDK 各生成 README.en.md：python/nodejs/php/go/java/csharp/cpp/epl，统一结构：标题 + Installation + Quick Start + 9 API Reference + Signature Algorithm + Error Handling + Error Codes + Compliance + License；每个 SDK 嵌入对应签名兼容性说明如 Python OpenSSL 1.1+ 回退 / Go 无回退字节级对齐 / Java JDK 17+ 与 11-16 回退 / C# BouncyCastle 推荐 / C++ EVP_sha512_256 / 易语言 HMAC-SHA256 + crypto.go:165 回退场景；8 个中文 README 顶部加语言切换链接 **中文** | English）
 
 #### 集成扩展
-- [ ] [待开始] 独角数卡对接 - v0.5.0
-- [ ] [待开始] 蓝米发卡对接 - v0.5.0
-- [ ] [待开始] USDT/加密货币支付 - v0.5.0
+- [ ] [暂停 2026-07-20] 独角数卡对接 - v0.5.0（用户决策：先推进支付扩展，发卡对接延后）
+- [ ] [暂停 2026-07-20] 蓝米发卡对接 - v0.5.0（用户决策：先推进支付扩展，发卡对接延后）
+- [x] [已完成 2026-07-20] USDT-TRC20 加密货币支付 - v0.5.0（v0.5.0 集成扩展批次 3：pkg/payment Provider 抽象 + USDTProvider 实现 + 金额唯一后缀匹配算法（baseUSDT + (orderID%100)/100）+ TronGrid TRC20 交易轮询 + big.Float 精确除法（decimals=6）+ 外部监控 webhook HMAC-SHA256 验签 + usdt:// 二维码协议 + 9 项 pay.usdt.* sys_config + 11 个测试用例全 PASS）
 - [x] [已完成 2026-07-20] 钉钉机器人通知 - v0.5.0（v0.5.0 集成扩展批次 1：notify 包 WebhookProvider 接口 + dingtalkWebhookProvider 实现 + HMAC-SHA256 加签（timestamp+"\n"+secret）+ base64 编码 + url.QueryEscape + markdown 消息类型 + @mobiles/@all 支持 + 5 项 notify.dingtalk.* sys_config + 4 个 HTTP 测试用例 + 1 个加签算法测试 + 1 个 @mobiles 测试）
-- [ ] [待开始] PayPal 海外支付 - v0.5.0（v0.5.0 新增：PayPal Orders API v2 + Webhook 支付完成回调 + access_token 自动刷新 + 沙盒/生产环境切换）
-- [ ] [待开始] Stripe 海外支付 - v0.5.0（v0.5.0 新增：Payment Intents API + Stripe Checkout + Webhook 签名校验 + 多币种支持）
+- [x] [已完成 2026-07-20] PayPal 海外支付 - v0.5.0（v0.5.0 集成扩展批次 3：PayPalProvider 实现 + OAuth2 client_credentials + access_token 60s 提前过期缓存 + POST /v2/checkout/orders intent=CAPTURE + PayPal-Request-Id 幂等键 + approve 链接提取 + webhook verify-webhook-signature API 验签 + PAYMENT.CAPTURE.COMPLETED 标记 paid + 6 项 pay.paypal.* sys_config + 8 个测试用例全 PASS）
+- [x] [已完成 2026-07-20] Stripe 海外支付 - v0.5.0（v0.5.0 集成扩展批次 3：StripeProvider 实现 + POST /v1/payment_intents + Bearer sk_xxx + Stripe-Version 2023-10-16 + automatic_payment_methods + client_secret 返回 + webhook HMAC-SHA256 验签（t=xxx,v1=xxx 头格式）+ 5 分钟时间容差（过去+未来）+ 常量时间比较 + payment_intent.succeeded 标记 paid + 4 项 pay.stripe.* sys_config + 11 个测试用例全 PASS）
 - [x] [已完成 2026-07-20] 企业微信机器人通知 - v0.5.0（v0.5.0 集成扩展批次 1：wecomWebhookProvider 实现 + markdown 消息类型 + subject 加粗前缀作为标题 + 2 项 notify.wecom.* sys_config + 2 个 HTTP 测试用例）
 - [x] [已完成 2026-07-20] Telegram Bot 通知 - v0.5.0（v0.5.0 集成扩展批次 1：telegramWebhookProvider 实现 + MarkdownV2 渲染 + escapeTelegramMarkdown 16 字符转义（_*[]()~`>#+-=|{}.!）+ 4096 字符上限自动截断 + "（已截断）"提示 + telegramAPIBase 可测试覆盖 + 3 项 notify.telegram.* sys_config + 3 个 HTTP 测试用例含长消息截断场景）
 

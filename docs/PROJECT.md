@@ -30,13 +30,14 @@
 - 完全开源自托管，数据自主可控
 - 多应用 + 多租户架构
 - 一机一卡密强绑定（CPU+主板+MAC+磁盘多重哈希）
-- 双层支付模式（平台总支付 / 开发者自有易支付）；v0.5.0 集成扩展批次：发卡平台对接（独角数卡 / 蓝米发卡）+ 支付通道扩展（USDT 加密货币 / PayPal Orders API v2 / Stripe Payment Intents）
+- 双层支付模式（平台总支付 / 开发者自有易支付）；v0.5.0 集成扩展批次：发卡平台对接（独角数卡 / 蓝米发卡，已暂停）+ 支付通道扩展（USDT-TRC20 / PayPal Orders API v2 / Stripe Payment Intents，已完成）
 - 多级代理分销体系（v0.4.0 三级代理 + 跨级佣金自动分润）
 - 灰度发布体系（v0.4.0 三策略 + Hash 桶稳定匹配 + 平台/渠道/地区白名单）
 - 在线更新体系（v0.4.0 GitHub Webhook 自动部署 + 双重锁防并发 + 失败自动回滚 + 完整审计日志）
 - 数据备份恢复体系（v0.4.0 全库 SQL 备份 + SHA-256 校验 + AES-256-GCM 加密 + gzip 压缩 + 异步恢复 + 过期清理）
 - 监控告警体系（v0.4.0 CPU/内存/磁盘/错误率采集 + 阈值告警 + webhook 通知 + 静默期去重 + 自动恢复 + 告警确认；v0.4.x Prometheus + Grafana 集成：/metrics 端点 + HTTP/业务/系统三类指标 + 15 面板综合仪表盘 + 7 条告警规则）
 - 通知系统（v0.4.0 短信/邮件/站内信三通道 + 模板引擎 + 服务商抽象 + 失败重试 + 限流，Aliyun SMS + SMTP Email 双实现）；v0.5.0 集成扩展批次 1 已完成：钉钉机器人 + 企业微信机器人 + Telegram Bot 三 webhook 通道（WebhookProvider 接口抽象 + 3 个 provider 实现 + 钉钉 HMAC-SHA256 加签 + 企微 markdown + TG MarkdownV2 16 字符转义 + 4096 字符截断 + 10 项 notify.{dingtalk,wecom,telegram}.* sys_config + AdminNotifyStatus 9 项概览 + 22 个测试用例）
+- 海外支付通道（v0.5.0 集成扩展批次 3 已完成：pkg/payment Provider 抽象 + 3 个 provider 实现 + 30 个测试用例全 PASS；USDT-TRC20 金额唯一后缀匹配算法 + TronGrid TRC20 交易轮询 + big.Float 精确除法 + usdt:// 二维码 + 外部监控 HMAC-SHA256 验签；PayPal Orders API v2 + OAuth2 client_credentials + access_token 60s 提前过期缓存 + approve 链接 + verify-webhook-signature API 验签 + PAYMENT.CAPTURE.COMPLETED 标记 paid；Stripe Payment Intents API + client_secret 返回 + Stripe-Signature 头 HMAC-SHA256 验签（t=/v1= 格式）+ 5 分钟时间容差 + 常量时间比较 + payment_intent.succeeded 标记 paid；handler/pay.go CreatePayOrder 通道分流 + handleOverseasNotify 通用 webhook 处理 + 通道特定金额校验 + dispatchPaidOrder 复用 processPaidOrder；15 项 pay.{usdt,paypal,stripe}.* sys_config；HMACSHA256Hex + ConstantTimeEqualString 加密工具；migration 031；UST/PPL/STP 订单前缀）
 - 终端用户体系（v0.4.0 H5 注册/登录/绑卡/个人中心 + HMAC-SHA256 access token + SHA-512 哈希 refresh token + jti 单点踢出 + bcrypt cost=12）
 - API 开放平台（v0.4.0 开发者 API Token + Webhook 事件推送 + 第三方接入授权；SHA-512 哈希存储 Token + HMAC-SHA256 签名 + AES-256-GCM 加密 Webhook secret + 退避重试 + 阈值自动 disable）
 - 管理员更新弹窗通知（v0.4.0 前端 AdminLayout 挂载 UpdateNotifier 组件轻量轮询 /admin/update/poll + localStorage 持久化 last_known_commit + 自适应间隔 + 防重复弹窗 + PollIntervalMin=10 强制下限）
