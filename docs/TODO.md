@@ -580,6 +580,6 @@
 
 ---
 
-**文档版本**：0.5.0  
-**最后更新**：2026-07-20（v0.5.0 集成扩展批次 1：notify 包 WebhookProvider 接口 + 钉钉/企微/TG 3 个 webhook provider 实现 + migration 030 + 10 项 notify.{dingtalk,wecom,telegram}.* sys_config + Manager 注册 3 个 SetProvider 注入点 + dispatch 扩展 3 case + ValidateChannel 扩展 6 通道 + handler/notify.go AdminNotifyStatus 加 9 项 webhook 通道配置概览 + SysConfig.vue 加 notify 分组 + webhook_url 敏感标记 + webhook_test.go 22 个测试用例全 PASS + go build + npm run build 全通过）  
+**文档版本**：0.6.0  
+**最后更新**：2026-07-20（v0.6.0 高级分析三大模块完成：migration 032 user_behavior_profile + card_usage_profile + user_risk_score 三表 + 21 项 analysis.* sys_config；internal/analysis 包 5 文件 behavior.go/card_profile.go/risk_user.go/worker.go/analysis.go + 44 个测试全 PASS；handler/analysis.go 16 个 admin 端点 + router 注册 /admin/analysis/* 路由组 + deps.go 扩展 AnalysisMgr + main.go 启动聚合 worker；5 项任务标记为无限延期：独角数卡/蓝米发卡/多套主题模板/主题编辑器/v0.5.0 集成扩展批次 2）  
 **维护者**：KeyAuth SaaS Team

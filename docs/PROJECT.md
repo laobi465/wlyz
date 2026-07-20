@@ -578,6 +578,6 @@ pnpm dev
 
 ---
 
-**文档版本**：0.4.0
-**最后更新**：2026-07-20（v0.4.0 第十六项迁移：公告增强 + 数据统计看板 migration 019 + notice.content_format 字段 + 9 项 notice.*/stats.* sys_config + handler/notice_stats.go 三端 popup API + 验证趋势图 API + 代理业绩排行 API + admin/tenant Create/Update/List 接口支持 is_popup/show_badge/content_format + router 注册 10 条新路由 + 18 个测试全 PASS）
+**文档版本**：0.6.0
+**最后更新**：2026-07-20（v0.6.0 高级分析三大模块完成：migration 032 user_behavior_profile + card_usage_profile + user_risk_score 三表 + 21 项 analysis.* sys_config；internal/analysis 包 5 文件 + 44 个测试全 PASS；handler/analysis.go 16 个 admin 端点 + router 注册 /admin/analysis/* 路由组 + main.go 启动聚合 worker）
 **维护者**：KeyAuth SaaS Team
