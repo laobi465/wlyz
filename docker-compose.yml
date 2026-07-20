@@ -94,12 +94,12 @@ services:
       redis:
         condition: service_healthy
     environment:
-      # 数据库
-      DB_HOST: mysql
-      DB_PORT: 3306
-      DB_USER: ${MYSQL_USER:-keyauth}
-      DB_PASSWORD: ${MYSQL_PASSWORD}
-      DB_NAME: ${MYSQL_DATABASE:-keyauth}
+      # 数据库（注意：后端 config.go 读取 MYSQL_* 环境变量，不能用 DB_*）
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_USER:-keyauth}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-keyauth}
       # Redis
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -113,8 +113,7 @@ services:
       # 数据库迁移（v0.3.5：server 启动时自动执行 migrations 目录下 .up.sql）
       MIGRATION_AUTO: "true"
       MIGRATION_DIR: /app/migrations
-      # 运行
-      SERVER_PORT: 8080
+      # 运行（容器内固定 8080，对外端口由 ports 映射控制）
       GIN_MODE: release
       TZ: Asia/Shanghai
     volumes:

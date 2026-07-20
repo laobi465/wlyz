@@ -55,20 +55,25 @@ sudo bash scripts/one_click_deploy.sh
 | 6 | 生成 RSA-4096 密钥对 | 响应签名用，现场生成不进仓库 |
 | 7 | 生成 `.env` 配置 | 自动填充强随机密钥（MySQL/Redis/AES/JWT） |
 | 8 | `docker compose up -d --build` | 构建 mysql/redis/server/admin |
-| 9 | **生成部署信息 txt** | 所有信息写入 `/root/keyauth_deploy_info.txt`（chmod 600） |
+| 9 | **初始化超管账号 admin/admin123** | 检测占位 hash → 自动生成 bcrypt 写入 → 验证 |
+| 10 | **生成部署信息 txt** | 所有信息写入 `/root/keyauth_deploy_info.txt`（chmod 600） |
 
 **部署完成后自动生成的 txt 文件包含**：
 - 宝塔面板入口（地址/账号/密码/端口）
 - KeyAuth 访问地址（前端后台 + API）
+- **超管账号 admin/admin123**（首次部署自动初始化，登录后请立即改密）
 - 所有密钥（MySQL/AES/JWT）
-- 服务状态、下一步操作、运维命令、备份建议
+- 服务状态、运维命令、备份建议
+- **第七章：宝塔反代 + 免费 SSL 完整教程**（6 步 + 常见问题）
 
 **部署完成后必做**：
-1. `cat /root/keyauth_deploy_info.txt` 查看完整部署信息
-2. 执行 `bash scripts/reset_admin_password.sh` 重置超管密码
-3. 宝塔面板「安全」关闭 MySQL/Redis 公网端口
-4. 宝塔面板「网站」绑定域名 + 申请 SSL 证书
-5. 登录后台「系统配置 > 支付」配置易支付参数
+1. `cat /root/keyauth_deploy_info.txt` 查看完整部署信息（含反代教程）
+2. 用 **admin/admin123** 登录后台 → 立即修改默认密码
+3. 域名 A 记录解析到本服务器 IP
+4. 宝塔面板「网站」添加站点 → 反向代理到 `http://127.0.0.1:8081`
+5. 宝塔面板「SSL」申请 Let's Encrypt 免费证书 + 强制 HTTPS
+6. 宝塔面板「安全」关闭 8081/8080/3306/6379 公网端口
+7. 登录后台「系统配置 > 支付」配置易支付参数
 
 > 脚本严格遵守三铁律：禁硬编码（密钥现场生成）/ 配置走 sys_config / 反幻觉（脚本含详细日志和错误处理）。完整说明见 [scripts/one_click_deploy.sh](scripts/one_click_deploy.sh)。
 
