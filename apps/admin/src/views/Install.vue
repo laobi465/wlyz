@@ -214,7 +214,8 @@ onMounted(() => {
 
 .install-page {
   min-height: 100vh;
-  background: linear-gradient(135deg, $color-primary 0%, darken($color-primary, 20%) 100%);
+  // v0.5.0 多主题：darken() 无法处理 var()，改用 CSS color-mix()
+  background: linear-gradient(135deg, $color-primary 0%, color-mix(in srgb, $color-primary 80%, black) 100%);
   display: flex;
   align-items: center;
   justify-content: center;

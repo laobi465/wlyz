@@ -20,7 +20,7 @@
         <div class="stat-icon"><el-icon><User /></el-icon></div>
         <div class="stat-info">
           <div class="stat-label">开发者总数</div>
-          <div class="stat-value">{{ stats.tenant_total }}</div>
+          <div class="stat-value"><CountUp :value="stats.tenant_total" /></div>
           <div class="stat-extra">活跃 {{ stats.tenant_active }}</div>
         </div>
       </div>
@@ -28,7 +28,7 @@
         <div class="stat-icon"><el-icon><UserFilled /></el-icon></div>
         <div class="stat-info">
           <div class="stat-label">代理总数</div>
-          <div class="stat-value">{{ stats.agent_total }}</div>
+          <div class="stat-value"><CountUp :value="stats.agent_total" /></div>
           <div class="stat-extra">活跃 {{ stats.agent_active }}</div>
         </div>
       </div>
@@ -36,7 +36,7 @@
         <div class="stat-icon"><el-icon><Cellphone /></el-icon></div>
         <div class="stat-info">
           <div class="stat-label">应用总数</div>
-          <div class="stat-value">{{ stats.app_total }}</div>
+          <div class="stat-value"><CountUp :value="stats.app_total" /></div>
           <div class="stat-extra">-</div>
         </div>
       </div>
@@ -44,7 +44,7 @@
         <div class="stat-icon"><el-icon><Key /></el-icon></div>
         <div class="stat-info">
           <div class="stat-label">卡密总数</div>
-          <div class="stat-value">{{ stats.card_total }}</div>
+          <div class="stat-value"><CountUp :value="stats.card_total" /></div>
           <div class="stat-extra">活跃 {{ stats.card_active }}</div>
         </div>
       </div>
@@ -52,7 +52,7 @@
         <div class="stat-icon"><el-icon><List /></el-icon></div>
         <div class="stat-info">
           <div class="stat-label">今日订单</div>
-          <div class="stat-value">{{ stats.order_today }}</div>
+          <div class="stat-value"><CountUp :value="stats.order_today" /></div>
           <div class="stat-extra">-</div>
         </div>
       </div>
@@ -60,7 +60,7 @@
         <div class="stat-icon"><el-icon><Money /></el-icon></div>
         <div class="stat-info">
           <div class="stat-label">今日收入</div>
-          <div class="stat-value">¥{{ stats.revenue_today.toFixed(2) }}</div>
+          <div class="stat-value"><CountUp :value="stats.revenue_today" :decimals="2" prefix="¥" /></div>
           <div class="stat-extra">本月 ¥{{ stats.revenue_month.toFixed(2) }}</div>
         </div>
       </div>
@@ -68,7 +68,7 @@
         <div class="stat-icon"><el-icon><Wallet /></el-icon></div>
         <div class="stat-info">
           <div class="stat-label">待结算</div>
-          <div class="stat-value">{{ stats.settlement_pending }}</div>
+          <div class="stat-value"><CountUp :value="stats.settlement_pending" /></div>
           <div class="stat-extra">¥{{ stats.settlement_amount.toFixed(2) }}</div>
         </div>
       </div>
@@ -445,7 +445,9 @@ onMounted(loadDashboard)
 
   .trend-bar {
     flex: 1;
-    background: linear-gradient(to top, $color-primary, lighten($color-primary, 20%));
+    // v0.5.0 多主题：$color-primary 现为 var()，无法在 SCSS lighten() 中使用
+    // 改用 CSS color-mix() 实现"主色 + 20% 白色"渐变（现代浏览器原生支持）
+    background: linear-gradient(to top, $color-primary, color-mix(in srgb, $color-primary 80%, white));
     border-radius: $radius-sm $radius-sm 0 0;
     display: flex;
     flex-direction: column;

@@ -226,7 +226,8 @@ onMounted(() => {
 }
 
 .user-card {
-  background: linear-gradient(135deg, $color-primary 0%, lighten($color-primary, 8%) 100%);
+  // v0.5.0 多主题：lighten() 无法处理 var()，改用 CSS color-mix()
+  background: linear-gradient(135deg, $color-primary 0%, color-mix(in srgb, $color-primary 92%, white) 100%);
   border-radius: $radius-md;
   padding: $spacing-lg $spacing-md;
   margin-bottom: $spacing-md;

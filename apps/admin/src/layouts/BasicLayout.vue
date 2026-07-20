@@ -3,7 +3,7 @@
   - 桌面端：固定侧边栏 + 顶部 + 内容区
   - 平板：可折叠侧边栏
   - 移动端：抽屉式侧边栏 + 简化顶栏
-  - 严格遵守铁律 03：明亮配色，禁暗黑/毛玻璃/夸张渐变
+  - v0.5.0 多主题支持：顶栏内嵌 ThemeSwitcher，6 主题可切换（light/dark/blue/purple/green/auto）
 -->
 <template>
   <div class="basic-layout">
@@ -87,6 +87,9 @@
           <div class="header-right">
             <!-- 头部右侧插槽（套餐标签、余额等） -->
             <slot name="header-extra" />
+
+            <!-- v0.5.0 多主题切换器 -->
+            <ThemeSwitcher />
 
             <el-dropdown @command="handleCommand">
               <span class="user-info">

@@ -8,6 +8,7 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     AgentNotifyBanner: typeof import('./components/AgentNotifyBanner.vue')['default']
+    CountUp: typeof import('./components/CountUp.vue')['default']
     DeveloperNoticeBanner: typeof import('./components/DeveloperNoticeBanner.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']
     ElAvatar: typeof import('element-plus/es')['ElAvatar']
@@ -57,6 +58,7 @@ declare module 'vue' {
     ResponsiveTable: typeof import('./components/ResponsiveTable.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    ThemeSwitcher: typeof import('./components/ThemeSwitcher.vue')['default']
     UpdateNotifier: typeof import('./components/UpdateNotifier.vue')['default']
   }
   export interface ComponentCustomProperties {

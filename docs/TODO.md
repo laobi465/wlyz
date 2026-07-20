@@ -405,10 +405,10 @@
 - [x] [已完成 2026-07-20] Redis 集群模式 - v0.5.0（RedisConfig 加 Mode/Addrs/MasterName/Username 字段；initRedis 支持 single/sentinel/cluster 三模式；sentinel 用 NewFailoverClient；cluster 模式配置不完整降级 single；环境变量 REDIS_MODE/REDIS_ADDRS/REDIS_MASTER_NAME/REDIS_USERNAME 支持；splitCommaList 工具函数解析地址列表）
 
 #### 用户体验
-- [ ] [待开始] 后台多主题切换 - v0.5.0
-- [ ] [待开始] 暗黑模式（可选主题） - v0.5.0
-- [ ] [待开始] 移动端响应式优化 - v0.5.0
-- [ ] [待开始] 数据看板数字滚动动效 - v0.5.0
+- [x] [已完成 2026-07-20] 后台多主题切换 - v0.5.0（variables.scss 所有颜色 SCSS 变量改为 var(--xxx) 引用 + 新建 themes.scss 定义 5 主题 light/dark/blue/purple/green + auto 跟随系统 + stores/theme.ts 6 主题 mode/setMode/toggle/init/isDark getter 同步 html.dark class + ThemeSwitcher.vue 下拉切换器接入 BasicLayout 顶栏 + pinia-plugin-persistedstate 持久化 localStorage + main.ts 引入 element-plus/theme-chalk/dark/css-vars.css 作为 EP 暗黑样式兜底 + index.scss 引入 themes.scss）
+- [x] [已完成 2026-07-20] 暗黑模式（可选主题） - v0.5.0（以多主题架构落地，作为内置主题之一；themes.scss dark 主题定义全套 --color-*/--el-* 变量；theme store isDark getter + applyToDocument() 同步 html.dark class 触发 EP dark css-vars；auto 模式通过 prefers-color-scheme 媒体查询 + matchMedia 监听动态切换；原铁律 03「禁暗黑」已被多主题架构取代，variables.scss 注释已更新）
+- [x] [已完成 2026-07-20] 移动端响应式优化 - v0.5.0（variables.scss 新增 $bp-mobile-sm=480px + mobile-sm mixin；3 处硬编码 @media 断点统一：WithdrawalReview.vue/RechargeReview.vue 改用 @include mobile（同时 style 块加 lang="scss"）；QrCode.vue 改用 @include mobile-sm；4 处 SCSS lighten()/darken() 与 CSS 变量不兼容报错改用 CSS color-mix()）
+- [x] [已完成 2026-07-20] 数据看板数字滚动动效 - v0.5.0（新建 CountUp.vue 组件：requestAnimationFrame + easeOutCubic 缓动 + 零依赖（不引入 gsap）+ 支持 prefix/suffix/decimals/separator/duration/autoplay 6 props + onBeforeUnmount 自动取消 raf + font-variant-numeric: tabular-nums 防抖动；接入 admin/tenant/agent 3 个 Dashboard 共 20 处数字滚动（含 ¥ 金额 decimals=2））
 
 #### 国际化
 - [ ] [待开始] 后台 i18n（中/英） - v0.5.0
@@ -496,6 +496,8 @@
 | v0.3.5 | 2026-07-19 | ✅ 已完成（P0 修复：RSA 脚本 / 数据库迁移 / H5 公共 API / 套餐配额） |
 | v0.3.6 | 2026-07-20 | ✅ 已完成（剩余 P1 收尾 + 单元测试 + 客户端 SDK 签名对齐测试） |
 | v0.4.0 | 进行中 | ⏳ 进行中（UA 解析迁移 + JWT jti 单点踢出 + 2FA backup_codes DB 持久化 + 登录失败日志结构化 + 全语言 SDK 扩展 + 多级代理体系 + 灰度发布 + 在线更新 + 数据备份恢复 + 监控告警 + 通知系统 + 终端用户体系 + API 开放平台 + 管理员弹窗通知 已完成；14 项迁移全绿） |
+| v0.4.x | 2026-07-20 | ✅ 已完成（v0.4.0 收尾 + Prometheus/Grafana 集成 + 12 项 P0/P1 残留项：S-04/D-15/U-11~14 全部闭环 + 阿里云 SMS 完整签名 + SMTP SSL 包装 + 套餐审核 + 租户安全 + H5 终端用户 4 页 + 帮助中心 + 联系客服） |
+| v0.5.0 | 进行中 | ⏳ 进行中（性能优化批次 4 项已完成：MySQL 读写分离 + Redis 三模式 + snowflake Redis 协调 + 卡密批量生成 577k/s；UX 批次 4 项已完成：多主题切换 + 暗黑模式 + 移动端响应式优化 + 数字滚动动效；待开始：国际化 2 项 + 集成扩展 4 项） |
 
 ---
 

@@ -288,7 +288,7 @@ const confirmReject = async () => {
 onMounted(loadList)
 </script>
 
-<style scoped>
+<style scoped lang="scss">
 .recharge-review-page {
   padding: 0;
 }
@@ -318,7 +318,8 @@ onMounted(loadList)
   margin-top: 4px;
 }
 
-@media (max-width: 768px) {
+// v0.5.0 响应式：统一走 mobile mixin（$bp-mobile=768px，max-width: 767px）
+@include mobile {
   .app-card {
     padding: 8px;
   }

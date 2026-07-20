@@ -306,7 +306,8 @@ onMounted(() => {
   }
 }
 
-@media (max-width: 480px) {
+// v0.5.0 响应式：统一走 mobile-sm mixin（$bp-mobile-sm=480px，max-width: 479px）
+@include mobile-sm {
   .qr-actions {
     flex-direction: column;
 

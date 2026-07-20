@@ -18,22 +18,22 @@
     <div class="stat-grid">
       <div class="stat-card balance">
         <div class="stat-label">账户余额</div>
-        <div class="stat-value">¥{{ stats.balance.toFixed(2) }}</div>
+        <div class="stat-value"><CountUp :value="stats.balance" :decimals="2" prefix="¥" /></div>
         <div class="stat-extra">冻结 ¥{{ stats.frozen_balance.toFixed(2) }}</div>
       </div>
       <div class="stat-card commission">
         <div class="stat-label">累计佣金</div>
-        <div class="stat-value">¥{{ stats.total_commission.toFixed(2) }}</div>
+        <div class="stat-value"><CountUp :value="stats.total_commission" :decimals="2" prefix="¥" /></div>
         <div class="stat-extra">已提现 ¥{{ stats.total_withdraw.toFixed(2) }}</div>
       </div>
       <div class="stat-card purchased">
         <div class="stat-label">累计购卡</div>
-        <div class="stat-value">{{ stats.total_purchased }}</div>
+        <div class="stat-value"><CountUp :value="stats.total_purchased" /></div>
         <div class="stat-extra">今日 {{ stats.today_purchased }} 张</div>
       </div>
       <div class="stat-card spent">
         <div class="stat-label">累计消费</div>
-        <div class="stat-value">¥{{ stats.total_spent.toFixed(2) }}</div>
+        <div class="stat-value"><CountUp :value="stats.total_spent" :decimals="2" prefix="¥" /></div>
         <div class="stat-extra">今日 ¥{{ stats.today_spent.toFixed(2) }}</div>
       </div>
     </div>

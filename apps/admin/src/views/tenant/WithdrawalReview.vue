@@ -292,7 +292,7 @@ const confirmReject = async () => {
 onMounted(loadList)
 </script>
 
-<style scoped>
+<style scoped lang="scss">
 .withdrawal-review-page {
   padding: 0;
 }
@@ -317,7 +317,8 @@ onMounted(loadList)
   font-weight: 600;
 }
 
-@media (max-width: 768px) {
+// v0.5.0 响应式：统一走 mobile mixin（$bp-mobile=768px，max-width: 767px）
+@include mobile {
   .app-card {
     padding: 8px;
   }

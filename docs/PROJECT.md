@@ -40,6 +40,9 @@
 - 终端用户体系（v0.4.0 H5 注册/登录/绑卡/个人中心 + HMAC-SHA256 access token + SHA-512 哈希 refresh token + jti 单点踢出 + bcrypt cost=12）
 - API 开放平台（v0.4.0 开发者 API Token + Webhook 事件推送 + 第三方接入授权；SHA-512 哈希存储 Token + HMAC-SHA256 签名 + AES-256-GCM 加密 Webhook secret + 退避重试 + 阈值自动 disable）
 - 管理员更新弹窗通知（v0.4.0 前端 AdminLayout 挂载 UpdateNotifier 组件轻量轮询 /admin/update/poll + localStorage 持久化 last_known_commit + 自适应间隔 + 防重复弹窗 + PollIntervalMin=10 强制下限）
+- 多主题架构（v0.5.0 CSS 变量层 + 5 主题 light/dark/blue/purple/green + auto 跟随系统 + ThemeSwitcher 顶栏切换器 + theme store 持久化到 localStorage + EP dark css-vars 兜底）
+- 数字滚动动效（v0.5.0 CountUp 组件，requestAnimationFrame + easeOutCubic 缓动，零依赖，接入三角色 Dashboard 共 20 处数字）
+- 响应式断点统一（v0.5.0 mobile/mobile-sm/tablet/desktop 四档 mixin，全站零硬编码 @media）
 - 心跳保活 + 离线宽限期
 - 云变量远程下发
 - 多语言 SDK（Python / Node.js / Java / C# / Go / PHP / C++ / 易语言）
@@ -80,7 +83,7 @@
 
 | 层级 | 选型 |
 |---|---|
-| 前端 | Vue3 + TypeScript + Element Plus + Vite + Pinia |
+| 前端 | Vue3 + TypeScript + Element Plus + Vite + Pinia；v0.5.0 多主题架构（CSS 变量层 + 5 主题 light/dark/blue/purple/green + auto 跟随系统）+ 数字滚动动效（CountUp 组件，rAF + easeOutCubic，零依赖）+ 响应式 mixin（mobile/mobile-sm/tablet/desktop 四档断点统一） |
 | 后端 | Go 1.22 + Gin + GORM |
 | 数据库 | MySQL 8.0（v0.5.0 支持主从读写分离）+ Redis 7（v0.5.0 支持 single/sentinel/cluster 三模式） |
 | 部署 | Docker Compose + 宝塔面板 Docker；v0.5.0 支持多实例水平扩展（snowflake workerID Redis 协调分配） |

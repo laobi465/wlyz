@@ -1,0 +1,281 @@
+// v0.5.0 多主题 CSS 变量定义
+//
+// 主题列表：
+//   light  - 默认明亮主题（与 v0.3.x 视觉一致）
+//   dark   - 暗黑模式（v0.5.0 解禁铁律 03 后新增）
+//   blue   - 深蓝海洋主题
+//   purple - 紫罗兰主题
+//   green  - 森林绿主题
+//
+// 切换方式：document.documentElement.setAttribute('data-theme', 'xxx')
+// 持久化：通过 theme store 写入 localStorage
+//
+// 铁律 04：所有颜色值集中在此文件，业务代码使用 var(--xxx)
+// 铁律 05：用户偏好通过 theme store 持久化（localStorage），不进 sys_config
+
+// ============== 默认主题：light（与 v0.3.x 一致） ==============
+:root,
+:root[data-theme="light"] {
+  --color-primary: #1677ff;
+  --color-primary-light: #e6f0ff;
+  --color-success: #52c41a;
+  --color-warning: #faad14;
+  --color-danger: #ff4d4f;
+  --color-info: #909399;
+
+  --color-text-primary: #303133;
+  --color-text-regular: #606266;
+  --color-text-secondary: #909399;
+  --color-text-placeholder: #c0c4cc;
+
+  --color-bg-page: #f5f7fa;
+  --color-bg-card: #ffffff;
+  --color-bg-hover: #f5f7fa;
+  --color-bg-sidebar: #ffffff;
+  --color-bg-sidebar-active: #e6f0ff;
+  --color-bg-header: #ffffff;
+
+  --color-border: #dcdfe6;
+  --color-border-light: #e4e7ed;
+  --color-border-lighter: #ebeef5;
+
+  --color-notice-banner-bg: #fff7e6;
+  --color-notice-banner-text: #d46b08;
+
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.12);
+
+  // Element Plus 主色覆盖（保持与业务主色一致）
+  --el-color-primary: #1677ff;
+  --el-color-primary-light-3: #4096ff;
+  --el-color-primary-light-5: #69b1ff;
+  --el-color-primary-light-7: #91caff;
+  --el-color-primary-light-8: #bae0ff;
+  --el-color-primary-light-9: #e6f0ff;
+  --el-color-primary-dark-2: #0958d9;
+}
+
+// ============== 暗黑主题：dark ==============
+:root[data-theme="dark"] {
+  --color-primary: #4096ff;
+  --color-primary-light: #1f2937;
+  --color-success: #73d13d;
+  --color-warning: #ffc53d;
+  --color-danger: #ff7875;
+  --color-info: #8c8c8c;
+
+  --color-text-primary: #f0f0f0;
+  --color-text-regular: #d9d9d9;
+  --color-text-secondary: #a6a6a6;
+  --color-text-placeholder: #595959;
+
+  --color-bg-page: #141414;
+  --color-bg-card: #1f1f1f;
+  --color-bg-hover: #262626;
+  --color-bg-sidebar: #1f1f1f;
+  --color-bg-sidebar-active: #1f2937;
+  --color-bg-header: #1f1f1f;
+
+  --color-border: #434343;
+  --color-border-light: #303030;
+  --color-border-lighter: #262626;
+
+  --color-notice-banner-bg: #3d2e0a;
+  --color-notice-banner-text: #ffc53d;
+
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.5);
+
+  // Element Plus 暗黑主题色（需配合 element-plus/theme-chalk/dark/css-vars.css）
+  --el-color-primary: #4096ff;
+  --el-color-primary-light-3: #4096ff;
+  --el-color-primary-light-5: #4096ff;
+  --el-color-primary-light-7: #4096ff;
+  --el-color-primary-light-8: #1f2937;
+  --el-color-primary-light-9: #1f2937;
+  --el-color-primary-dark-2: #69b1ff;
+
+  // 暗黑模式下覆盖 EP 的背景色变量（避免依赖 dark/css-vars.css 的全部覆盖）
+  --el-bg-color: #1f1f1f;
+  --el-bg-color-page: #141414;
+  --el-bg-color-overlay: #1f1f1f;
+  --el-text-color-primary: #f0f0f0;
+  --el-text-color-regular: #d9d9d9;
+  --el-text-color-secondary: #a6a6a6;
+  --el-text-color-placeholder: #595959;
+  --el-border-color: #434343;
+  --el-border-color-light: #303030;
+  --el-border-color-lighter: #262626;
+  --el-fill-color: #262626;
+  --el-fill-color-light: #303030;
+  --el-fill-color-lighter: #1f1f1f;
+}
+
+// ============== 深蓝海洋主题：blue ==============
+:root[data-theme="blue"] {
+  --color-primary: #0052d9;
+  --color-primary-light: #d6e4ff;
+  --color-success: #2ba471;
+  --color-warning: #e37318;
+  --color-danger: #d54941;
+  --color-info: #909399;
+
+  --color-text-primary: #1d2129;
+  --color-text-regular: #4e5969;
+  --color-text-secondary: #86909c;
+  --color-text-placeholder: #c9cdd4;
+
+  --color-bg-page: #f2f3f5;
+  --color-bg-card: #ffffff;
+  --color-bg-hover: #f2f3f5;
+  --color-bg-sidebar: #ffffff;
+  --color-bg-sidebar-active: #d6e4ff;
+  --color-bg-header: #ffffff;
+
+  --color-border: #c9cdd4;
+  --color-border-light: #e5e6eb;
+  --color-border-lighter: #f2f3f5;
+
+  --color-notice-banner-bg: #fff3e8;
+  --color-notice-banner-text: #e37318;
+
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.12);
+
+  --el-color-primary: #0052d9;
+  --el-color-primary-light-3: #366ef4;
+  --el-color-primary-light-5: #5e8ef7;
+  --el-color-primary-light-7: #92b2fa;
+  --el-color-primary-light-8: #c0d4ff;
+  --el-color-primary-light-9: #d6e4ff;
+  --el-color-primary-dark-2: #003cab;
+}
+
+// ============== 紫罗兰主题：purple ==============
+:root[data-theme="purple"] {
+  --color-primary: #722ed1;
+  --color-primary-light: #f5e8ff;
+  --color-success: #52c41a;
+  --color-warning: #faad14;
+  --color-danger: #ff4d4f;
+  --color-info: #909399;
+
+  --color-text-primary: #303133;
+  --color-text-regular: #606266;
+  --color-text-secondary: #909399;
+  --color-text-placeholder: #c0c4cc;
+
+  --color-bg-page: #f9f5ff;
+  --color-bg-card: #ffffff;
+  --color-bg-hover: #f9f5ff;
+  --color-bg-sidebar: #ffffff;
+  --color-bg-sidebar-active: #f5e8ff;
+  --color-bg-header: #ffffff;
+
+  --color-border: #dcdfe6;
+  --color-border-light: #e4e7ed;
+  --color-border-lighter: #ebeef5;
+
+  --color-notice-banner-bg: #fff7e6;
+  --color-notice-banner-text: #d46b08;
+
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.12);
+
+  --el-color-primary: #722ed1;
+  --el-color-primary-light-3: #9254de;
+  --el-color-primary-light-5: #b37feb;
+  --el-color-primary-light-7: #d3adf7;
+  --el-color-primary-light-8: #efdbff;
+  --el-color-primary-light-9: #f5e8ff;
+  --el-color-primary-dark-2: #531dab;
+}
+
+// ============== 森林绿主题：green ==============
+:root[data-theme="green"] {
+  --color-primary: #00a870;
+  --color-primary-light: #e8f8f0;
+  --color-success: #52c41a;
+  --color-warning: #faad14;
+  --color-danger: #ff4d4f;
+  --color-info: #909399;
+
+  --color-text-primary: #1d2129;
+  --color-text-regular: #4e5969;
+  --color-text-secondary: #86909c;
+  --color-text-placeholder: #c9cdd4;
+
+  --color-bg-page: #f5f7f5;
+  --color-bg-card: #ffffff;
+  --color-bg-hover: #f5f7f5;
+  --color-bg-sidebar: #ffffff;
+  --color-bg-sidebar-active: #e8f8f0;
+  --color-bg-header: #ffffff;
+
+  --color-border: #dcdfe6;
+  --color-border-light: #e4e7ed;
+  --color-border-lighter: #ebeef5;
+
+  --color-notice-banner-bg: #fff7e6;
+  --color-notice-banner-text: #d46b08;
+
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.12);
+
+  --el-color-primary: #00a870;
+  --el-color-primary-light-3: #37c98c;
+  --el-color-primary-light-5: #6cd9a9;
+  --el-color-primary-light-7: #a3e8c7;
+  --el-color-primary-light-8: #d2f4e3;
+  --el-color-primary-light-9: #e8f8f0;
+  --el-color-primary-dark-2: #008f5e;
+}
+
+// ============== 自动跟随系统主题（仅 light/dark 切换） ==============
+// 当 data-theme="auto" 时，通过 prefers-color-scheme 自动切换
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="auto"] {
+    --color-primary: #4096ff;
+    --color-primary-light: #1f2937;
+    --color-success: #73d13d;
+    --color-warning: #ffc53d;
+    --color-danger: #ff7875;
+    --color-info: #8c8c8c;
+
+    --color-text-primary: #f0f0f0;
+    --color-text-regular: #d9d9d9;
+    --color-text-secondary: #a6a6a6;
+    --color-text-placeholder: #595959;
+
+    --color-bg-page: #141414;
+    --color-bg-card: #1f1f1f;
+    --color-bg-hover: #262626;
+    --color-bg-sidebar: #1f1f1f;
+    --color-bg-sidebar-active: #1f2937;
+    --color-bg-header: #1f1f1f;
+
+    --color-border: #434343;
+    --color-border-light: #303030;
+    --color-border-lighter: #262626;
+
+    --color-notice-banner-bg: #3d2e0a;
+    --color-notice-banner-text: #ffc53d;
+
+    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4);
+    --shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.5);
+
+    --el-bg-color: #1f1f1f;
+    --el-bg-color-page: #141414;
+    --el-bg-color-overlay: #1f1f1f;
+    --el-text-color-primary: #f0f0f0;
+    --el-text-color-regular: #d9d9d9;
+    --el-text-color-secondary: #a6a6a6;
+    --el-text-color-placeholder: #595959;
+    --el-border-color: #434343;
+    --el-border-color-light: #303030;
+    --el-border-color-lighter: #262626;
+    --el-fill-color: #262626;
+    --el-fill-color-light: #303030;
+    --el-fill-color-lighter: #1f1f1f;
+  }
+}

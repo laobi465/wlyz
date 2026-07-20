@@ -1,36 +1,15 @@
 // 全局 SCSS 变量
-// 颜色规范：现代简约风格，禁止暗黑/毛玻璃/夸张渐变（铁律 03）
+// v0.5.0 颜色规范：现代简约风格 + 多主题支持（light/dark/blue/purple/green）
+//
+// 改造历史：
+//   v0.3.x 单一明亮主题（铁律 03 禁暗黑）
+//   v0.5.0 多主题架构（CSS 变量层 + SCSS 变量映射）：
+//     - 所有颜色 / 背景抽到 CSS 变量，html[data-theme="xxx"] 切换
+//     - 暗黑模式作为内置主题之一，与其他主题并列
+//     - 保留 SCSS 变量做编译时常量（间距/圆角/布局尺寸等）
+//     - 颜色类 SCSS 变量改为 var(--xxx) 引用 CSS 变量
 
-// 主色调：科技蓝（低饱和度专业色）
-$color-primary: #1677ff;
-$color-primary-light: #e6f0ff;
-$color-success: #52c41a;
-$color-warning: #faad14;
-$color-danger: #ff4d4f;
-$color-info: #909399;
-
-// 文字色（深灰为主，不使用纯黑）
-$color-text-primary: #303133;
-$color-text-regular: #606266;
-$color-text-secondary: #909399;
-$color-text-placeholder: #c0c4cc;
-
-// 背景色（明亮，禁暗黑）
-$color-bg-page: #f5f7fa;
-$color-bg-card: #ffffff;
-$color-bg-hover: #f5f7fa;
-$color-bg-sidebar: #ffffff;        // 侧边栏统一明亮背景（铁律 03：禁暗黑）
-$color-bg-sidebar-active: #e6f0ff; // 侧边栏选中项背景
-$color-bg-header: #ffffff;
-
-// 边框色（极浅灰）
-$color-border: #dcdfe6;
-$color-border-light: #e4e7ed;
-$color-border-lighter: #ebeef5;
-
-// 平台公告横幅色（铁律 05：颜色从 sys_config 读取，此处仅为 fallback）
-$color-notice-banner-bg: #fff7e6;
-$color-notice-banner-text: #d46b08;
+// ============== SCSS 编译时常量（与主题无关） ==============
 
 // 间距
 $spacing-xs: 4px;
@@ -44,10 +23,6 @@ $radius-sm: 4px;
 $radius-md: 8px;
 $radius-lg: 12px;
 
-// 阴影（轻微，禁夸张）
-$shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08);
-$shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.12);
-
 // 布局尺寸
 $layout-header-height: 56px;
 $layout-sidebar-width: 220px;
@@ -55,6 +30,7 @@ $layout-sidebar-collapsed-width: 64px;
 
 // 响应式断点
 $bp-mobile: 768px;   // 手机
+$bp-mobile-sm: 480px; // 小屏手机（仅极窄场景使用，如按钮堆叠）
 $bp-tablet: 1024px;  // 平板
 $bp-desktop: 1280px; // 桌面
 
@@ -62,9 +38,56 @@ $bp-desktop: 1280px; // 桌面
 @mixin mobile {
   @media (max-width: #{$bp-mobile - 1px}) { @content; }
 }
+@mixin mobile-sm {
+  @media (max-width: #{$bp-mobile-sm - 1px}) { @content; }
+}
 @mixin tablet {
   @media (max-width: #{$bp-tablet - 1px}) { @content; }
 }
 @mixin desktop {
-  @media (min-width: #{$bp-desktop}) { @content; }
+  @media (min-width: $bp-desktop) { @content; }
+}
+
+// ============== SCSS 变量映射到 CSS 变量（v0.5.0 多主题） ==============
+// 业务代码继续使用 $color-primary 等 SCSS 变量，但底层已映射到 var(--xxx)
+// 这样既保持向后兼容，又支持运行时主题切换
+
+$color-primary: var(--color-primary);
+$color-primary-light: var(--color-primary-light);
+$color-success: var(--color-success);
+$color-warning: var(--color-warning);
+$color-danger: var(--color-danger);
+$color-info: var(--color-info);
+
+$color-text-primary: var(--color-text-primary);
+$color-text-regular: var(--color-text-regular);
+$color-text-secondary: var(--color-text-secondary);
+$color-text-placeholder: var(--color-text-placeholder);
+
+$color-bg-page: var(--color-bg-page);
+$color-bg-card: var(--color-bg-card);
+$color-bg-hover: var(--color-bg-hover);
+$color-bg-sidebar: var(--color-bg-sidebar);
+$color-bg-sidebar-active: var(--color-bg-sidebar-active);
+$color-bg-header: var(--color-bg-header);
+
+$color-border: var(--color-border);
+$color-border-light: var(--color-border-light);
+$color-border-lighter: var(--color-border-lighter);
+
+$color-notice-banner-bg: var(--color-notice-banner-bg);
+$color-notice-banner-text: var(--color-notice-banner-text);
+
+$shadow-card: var(--shadow-card);
+$shadow-hover: var(--shadow-hover);
+
+// ============== SCSS 编译时常量阴影（向后兼容） ==============
+// 这些保留为字面量，避免影响未接入主题的旧代码
+
+// ============== 主题色阶辅助函数 ==============
+// 用于在某些场景需要稍微变暗/变亮主色（如 hover 状态）
+@function darken-primary($percent) {
+  @return var(--color-primary);
+  // 铁律 06：CSS 变量无法在 SCSS darken() 中使用，这里返回原色
+  // 需要 hover 效果应直接在 CSS 中用 color-mix() 或 :hover 选择器
 }
