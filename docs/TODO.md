@@ -479,6 +479,7 @@
 
 - **总任务数**：约 110 项
 - **已完成**：约 100 项（v0.2.0 ~ v0.3.6 全部已发布版本累积）
+- **测试覆盖**：6 个测试包（crypto/snowflake/epay/quota/heartbeat/middleware）+ 跨语言签名对齐，全 PASS
 - **进行中**：0 项
 - **待开始**：约 10 项（v0.4.x 商业化）
 
@@ -513,6 +514,7 @@
 - [x] [已完成 2026-07-20] 套餐 allow_custom_pay 字段生效（CreatePayOrder 内读取生效）
 - [x] [已完成 2026-07-20] 客户端 SDK（Python / Node.js / PHP 三语言）
 - [x] [已完成 2026-07-20] 单元测试 + 客户端 SDK 签名对齐测试（pkg/crypto + pkg/snowflake + pkg/epay + internal/quota + internal/heartbeat + 跨语言签名对齐）
+- [x] [已完成 2026-07-20] 中间件层单元测试（internal/middleware：JWT/Tenant/Signature/RateLimit/IPBlacklist/RecordCardFailure/Response，21 个测试全 PASS）
 - [x] [已完成 2026-07-20] v0.3.6 文档同步
 
 **v0.4.x 三期商业化（约 10 项）**：

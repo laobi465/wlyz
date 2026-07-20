@@ -1066,7 +1066,7 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 | 内存 Redis | `github.com/alicebob/miniredis/v2` | v2.38.0 |
 | SQLite 内存库 | `gorm.io/driver/sqlite` + `github.com/mattn/go-sqlite3` | v1.6.0 + v1.14.22 |
 
-#### 测试覆盖（5 个包，0 失败）
+#### 测试覆盖（6 个包，0 失败）
 
 | 包 | 测试文件 | 覆盖范围 |
 |---|---|---|
@@ -1076,14 +1076,18 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 | `pkg/epay` | `epay_test.go` | `BuildSubmitURL` / `ParseNotify` / `VerifyNotify` / 端到端闭环 |
 | `internal/quota` | `quota_test.go` | `CheckMaxApps/Cards/Agents/Devices` 全场景 + `ExceededError` 类型匹配 |
 | `internal/heartbeat` | `heartbeat_test.go` | `Record/IsOnline/Remove/CountOnline/ListOnline/GetLastHeartbeatAt` 全场景 + 端到端闭环 |
+| `internal/middleware` | `middleware_test.go` | JWT 鉴权 / TenantScope 租户隔离 / SignatureAuth HMAC 签名闭环 / RateLimitByIP 滑动窗口 / IPBlacklist / RecordCardFailure 自动封禁 / Response 格式（21 个测试） |
 
 #### 测试原则
 
-1. **不依赖外部服务**：MySQL → SQLite 内存库；Redis → miniredis；HTTP → 直接函数调用
+1. **不依赖外部服务**：MySQL → SQLite 内存库；Redis → miniredis；HTTP → `httptest.NewRecorder` + `gin.TestMode` 不启真实端口
 2. **铁律 06（防幻觉）合规**：所有断言基于已知固定输入，无随机/不确定性；Node.js 沙箱环境不支持 `sha512/256` 时 `t.Skipf` 标注「环境限制」，不掩盖
 3. **跨语言签名对齐测试**：脚本位于 `sdks/tests/sign.{py,js,php}`，CLI 接收 `<secret> <msg>` 输出 hex；Go 测试通过 `exec.Command` 调用对比；运行时缺失或环境限制自动跳过
 4. **gorm default 值陷阱**：测试 `MaxApps=0` / `MaxCards=0`（不限）场景时，必须 Create 后用 `Updates(map[string]interface{})` 强制覆盖 gorm `default:` 标签
 5. **miniredis FastForward 限制**：`mr.FastForward` 不影响 Go `time.Now()`，需用 `rdb.ZAdd` 直接覆写 score 模拟心跳超时
+6. **miniredis Close 后 Addr() panic**：测试 Redis 故障 fail-open 场景时，不能用 `mr.Close()` 后调用 `mr.Addr()`，需直接构造指向不可达地址（如 `127.0.0.1:1`）的 `redis.Client`
+7. **ConfigReader mock**：中间件测试用 `mockConfigReader`（内存 map）实现 `ConfigReader` 接口，避免依赖 sys_config 表
+8. **CryptoManager 注入**：`SetCryptoManager` 在测试 setup 时注入测试 AES 密钥（32 字节），`t.Cleanup` 恢复 nil
 
 #### 运行命令
 

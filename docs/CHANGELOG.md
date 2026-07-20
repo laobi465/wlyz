@@ -11,6 +11,67 @@
 
 ## [0.3.6] - 2026-07-20
 
+### [新增] 中间件层单元测试（HTTP 安全闭环）
+
+#### 测试覆盖（`internal/middleware/middleware_test.go`，21 个测试全 PASS）
+
+##### JWTAuth（7 个）
+- 有效 Token 通过 + 注入 user_id/role/tenant_id 上下文
+- 缺失 Authorization 头 → 401「未提供 Token」
+- 非 Bearer 前缀 → 401「Token 格式错误」
+- 错误 secret 签名 → 401「Token 无效或已过期」
+- 角色不匹配（admin token 访问 tenant 路由）→ 403「无权限访问」
+- 多角色逗号分隔（admin,tenant,agent 全通过）
+- `GenerateToken` 输出三段式 JWT 结构
+
+##### TenantScope（3 个）
+- 未注入 tenant_id → 403「无法识别租户身份」
+- 注入 tenant_id 后正确设置 `db` / `gorm_scope` 上下文
+- `CheckResourceOwnership` 跨租户访问拦截（tenant 1001 不能访问 tenant 2002 的资源）
+
+##### SignatureAuth（7 个，端到端 HMAC 闭环）
+- 有效签名通过（AES 加密 sign_secret 入库 → 解密 → HMAC-SHA512/256 重算 → 常量时间比较）
+- 缺失签名头 → 401「签名参数缺失」
+- 不存在的 app_key → 401「应用不存在」
+- 时间戳超出 ±300s 容差 → 401「时间戳超出允许范围」
+- 时间戳格式错误（非数字）→ 401「时间戳格式错误」
+- Nonce 重放攻击拦截（Redis SetNX 防重放，第二次相同 nonce → 401「请求已过期或重复」）
+- 错误签名 → 401「签名校验失败」
+
+##### RateLimitByIP（4 个，miniredis 滑动窗口）
+- 低于阈值全通过（每分钟 3 次，发 3 个请求）
+- 超出阈值第 N+1 次返回 429「请求过于频繁」
+- 不同 IP 独立计数（IP A 超限不影响 IP B）
+- Redis 故障 fail-open（不可达 Redis 时放行而非阻断，避免服务不可用）
+
+##### IPBlacklist（2 个）
+- 黑名单中 IP → 403「IP 已被加入黑名单」
+- 干净 IP → 200 通过
+
+##### RecordCardFailure + ClearCardFailure（3 个）
+- 未达阈值不封禁（2 次 < 阈值 3）
+- 达到阈值自动封禁（3 次 = 阈值 3，写入 `ip:blacklist:{ip}` key）
+- `ClearCardFailure` 清除失败计数（验证成功时调用）
+
+##### Response（2 个）
+- `Success` 响应格式：code/message/data/request_id/timestamp 完整
+- `Fail` 响应格式：失败响应不含 data 字段
+
+##### GenerateToken + JWTAuth 端到端（1 个）
+- RoundTrip：GenerateToken 生成 → JWTAuth 验证 → 上下文注入 user_id/username/tenant_id
+
+#### 关键测试技术
+- `httptest.NewRecorder` + `gin.TestMode` 不启真实 HTTP 端口
+- `mockConfigReader` 实现 `ConfigReader` 接口，避免依赖 sys_config 表
+- `SetCryptoManager` 注入测试 AES 密钥（32 字节），AES-256-GCM 加密 sign_secret 入库
+- miniredis 模拟 Redis（Nonce 防重放 / 限流 / 黑名单 / 失败计数）
+- SQLite 内存库模拟 App 表（签名校验查应用）
+
+#### 铁律遵守
+- 铁律 04：测试用固定 secret（`real-sign-secret-from-app` / `test-jwt-secret`），不硬编码业务密钥
+- 铁律 05：所有配置通过 `mockConfigReader` 注入，不依赖 sys_config 表
+- 铁律 06：Redis 故障 fail-open 行为已通过测试验证（不可达 Redis 实际放行），非编造
+
 ### [新增] 单元测试 + 客户端 SDK 签名对齐测试
 
 #### 测试栈

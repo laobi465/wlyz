@@ -10,7 +10,7 @@
 
 **核心定位**：开发者注册账号 → 创建应用 → 生成卡密 → 客户端 SDK 接入验证。代理通过开发者邀请码注册并分销卡密。平台提供总支付（默认）与开发者自定义易支付（按套餐）双轨支付。
 
-**v0.3.6 已发布**：5 个测试包（crypto/snowflake/epay/quota/heartbeat）+ 跨语言签名对齐测试全部通过。运行 `cd apps/server && go test ./...` 验证。
+**v0.3.6 已发布**：6 个测试包（crypto/snowflake/epay/quota/heartbeat/middleware）+ 跨语言签名对齐测试全部通过。运行 `cd apps/server && go test ./...` 验证。
 
 ## 二、必读文档（按顺序）
 
@@ -68,6 +68,7 @@ docs/                       # 四份核心文档
 - ✅ 修复 `002_seed_data.up.sql` 配置键名 bug：`pay.platform.notify_path` 与 router 不一致 → `/api/v1/pay/notify/epay`，新增 `pay.tenant.notify_path` / `pay.platform.order_name_prefix` / `pay.platform.return_front_url` 三个配置项
 - ✅ 客户端 SDK 三语言（`sdks/python/` keyauth-py + `sdks/nodejs/` keyauth-node + `sdks/php/` keyauth-php，各封装 9 个验证 API + HMAC-SHA512/256 签名算法 + KeyAuthError 异常体系 + 完整 README 文档）
 - ✅ 单元测试 + 客户端 SDK 签名对齐测试（5 个测试包：`pkg/crypto` + `pkg/snowflake` + `pkg/epay` + `internal/quota` + `internal/heartbeat`，全部 PASS；跨语言签名对齐测试 `pkg/crypto/sign_alignment_test.go` + `sdks/tests/sign.{py,js,php}`，Python + PHP 全 PASS，Node.js 沙箱 OpenSSL 限制 t.Skipf；`go vet ./...` + `go build ./...` 通过）
+- ✅ 中间件层单元测试（`internal/middleware/middleware_test.go` 21 个测试全 PASS：JWTAuth 7 + TenantScope 3 + SignatureAuth 7（含 Nonce 防重放/时间戳容差/AES 解密 sign_secret 端到端闭环）+ RateLimitByIP 4（含 Redis 故障 fail-open）+ IPBlacklist 2 + RecordCardFailure 3 + Response 2 + GenerateToken RoundTrip 1；用 `httptest.NewRecorder` + `gin.TestMode` + `mockConfigReader` + miniredis + SQLite 内存库）
 - ✅ 文档全量同步对齐 v0.3.6 实际状态（README/PROMPT/PROJECT/SPEC/TODO/CHANGELOG 六份联动更新）
 
 v0.3.5 已完成（基线）：
