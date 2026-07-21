@@ -7,6 +7,32 @@
 
 ---
 
+## v0.6.7 管理员登录死机 P0 修复 ✅ 已完成 2026-07-21
+
+### [P0] 管理员登录后浏览器死机 ✅ 已完成 v0.6.7
+- [x] [已完成 2026-07-21] **背景**：管理员登录成功后页面卡住，CPU 飙升，浏览器最终死机。开发者/代理登录正常
+- [x] [已完成 2026-07-21] **根因定位**：`apps/admin/src/stores/auth.ts` 的 `scheduleRefresh` 在 `delay<=0` 时不 await 调 `doRefresh`，`doRefresh` 成功后又调 `scheduleRefresh`，若新 `expires_at` 仍让 `delay<=0`（如 `jwt.access_ttl_seconds≤300` 或后端异常返回）形成无限异步递归，每秒数十个 HTTP 请求导致死机
+- [x] [已完成 2026-07-21] **修复 1：`_refreshing` 并发锁**：state 新增 `_refreshing: boolean`，`scheduleRefresh` 的 `delay<=0` 路径检查 `_refreshing` 防递归，`doRefresh` 入口检查防并发，`try/finally` 保证释放
+- [x] [已完成 2026-07-21] **修复 2：`expires_at` 合法性校验**：`doRefresh` 接收后端响应后校验新 `expires_at > now+60s`，异常值直接跳过更新与重排
+- [x] [已完成 2026-07-21] **修复 3：最小延迟保护**：`scheduleRefresh` 的 `delay` 强制 `Math.max(delay, 30_000)` 兜底 30s
+- [x] [已完成 2026-07-21] **修复 4：`http.ts` 401 拦截器加固**：`await auth.doRefresh()` 后若 `accessToken` 为空则登出，避免无效重试
+- [x] [已完成 2026-07-21] **修复 5：后端 sys_config 最小值校验**：`AdminUpdateConfig` 新增 `validateSysConfigValue`，`jwt.access_ttl_seconds≥600` / `jwt.refresh_ttl_seconds≥3600`，源头防止配错
+- [x] [已完成 2026-07-21] **修复 6：`logout` 重置 `_refreshing`**：避免下次登录复用 stale 锁状态
+
+### v0.6.7 验证
+- [x] [已完成 2026-07-21] `cd apps/admin && npm run build` 通过（含 `vue-tsc --noEmit` 类型检查，16.82s）
+- [x] [已完成 2026-07-21] `gofmt -l internal/handler/admin.go` 无输出
+- [x] [已完成 2026-07-21] 死循环场景逻辑验证：异常 expires_at → 校验失败跳过 → finally 释放锁 → 不调 scheduleRefresh → 循环终止
+- [x] [已完成 2026-07-21] 正常场景验证：`delay > 0` → setTimeout → 到期 doRefresh → 校验通过 → 更新 + 调 scheduleRefresh
+- [x] [已完成 2026-07-21] 并发场景验证：http 拦截器 `isRefreshing` 锁 + auth `_refreshing` 锁双重保护
+
+### v0.6.7 待真实环境验证
+- [ ] [待开始] 真实浏览器环境登录流程验证（建议先清除 localStorage 后管理员登录测试）
+- [ ] [待开始] 故意把 `jwt.access_ttl_seconds` 配为 600 验证 scheduleRefresh 行为
+- [ ] [待开始] 后端 `AdminUpdateConfig` 输入非法值（如 60、abc、-1）返回 400 + 1002 验证
+
+---
+
 ## v0.6.6 并发安全加固 ✅ 已完成 2026-07-21
 
 ### [P0] 充值/提现/支付回调并发安全加固 ✅ 已完成 v0.6.6

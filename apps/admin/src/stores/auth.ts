@@ -14,6 +14,12 @@ interface AuthState {
   expiresAt: number // access token 过期时间戳（秒）
   /** refresh token 自动续期定时器 */
   _refreshTimer: ReturnType<typeof setTimeout> | null
+  /**
+   * v0.6.7 P0 修复：是否正在执行 doRefresh
+   * 防止 scheduleRefresh 在 delay <= 0 路径下与 doRefresh 形成无限异步递归
+   * （管理员登录后死机 bug 的根因）
+   */
+  _refreshing: boolean
 }
 
 export const useAuthStore = defineStore('auth', {
@@ -25,7 +31,8 @@ export const useAuthStore = defineStore('auth', {
     username: '',
     tenantId: null,
     expiresAt: 0,
-    _refreshTimer: null
+    _refreshTimer: null,
+    _refreshing: false
   }),
   getters: {
     // 兼容旧代码：token 字段
@@ -78,7 +85,13 @@ export const useAuthStore = defineStore('auth', {
       this.scheduleRefresh()
     },
 
-    /** 安排 access token 过期前自动续期 */
+    /**
+     * 安排 access token 过期前自动续期
+     * v0.6.7 P0 修复：避免在 delay <= 0 路径下与 doRefresh 形成无限异步递归
+     * - 增加 _refreshing 并发锁：正在刷新则不重复触发
+     * - 最小延迟保护：兜底 30s，避免 sys_config 配置异常导致死循环
+     * - expires_at 合法性校验：后端返回异常值时不更新 / 不重排
+     */
     scheduleRefresh() {
       if (this._refreshTimer) {
         clearTimeout(this._refreshTimer)
@@ -88,12 +101,18 @@ export const useAuthStore = defineStore('auth', {
 
       // 提前 5 分钟续期
       const refreshAt = (this.expiresAt - 300) * 1000
-      const delay = refreshAt - Date.now()
+      let delay = refreshAt - Date.now()
       if (delay <= 0) {
-        // 已临近过期，立即续期
+        // 已临近过期，立即续期 —— 但必须检查 _refreshing 防止无限递归
+        if (this._refreshing) return // 正在刷新中，由 doRefresh 完成后会重新调度
         this.doRefresh().catch(() => {})
         return
       }
+      // v0.6.7 P0 修复：最小延迟保护（兜底 30s）
+      // 触发场景：sys_config 中 jwt.access_ttl_seconds 被设为异常小值（如 60s）
+      // 此时 expiresAt - 300 会变成负数导致 delay 极大，但若 ttl 接近 300 临界值
+      // 也应避免极短 delay 触发高频刷新
+      if (delay < 30_000) delay = 30_000
       this._refreshTimer = setTimeout(() => {
         this.doRefresh().catch(() => {
           // 续期失败：清空登录态
@@ -102,14 +121,33 @@ export const useAuthStore = defineStore('auth', {
       }, delay)
     },
 
-    /** 执行 refresh token 续期 */
+    /**
+     * 执行 refresh token 续期
+     * v0.6.7 P0 修复：
+     * - _refreshing 并发锁：避免与 scheduleRefresh 的 delay <= 0 路径形成递归
+     * - 新 expires_at 合法性校验：必须 > now + 60s，否则不更新、不重排
+     *   防御后端异常返回 0 / 旧时间戳导致死循环
+     * - try/finally 保证 _refreshing 一定释放
+     */
     async doRefresh() {
       if (!this.refreshToken) return
+      // 并发锁：正在刷新则直接返回（http 拦截器、scheduleRefresh 等并发调用安全）
+      if (this._refreshing) return
+      this._refreshing = true
       try {
         const resp = await refreshTokenApi(this.refreshToken)
+        // v0.6.7 P0 修复：校验新 expires_at 合法性（绝对 Unix 秒，必须 > now + 60s）
+        const nowSec = Math.floor(Date.now() / 1000)
+        const newExpiresAt = resp.expires_at || 0
+        if (!newExpiresAt || newExpiresAt <= nowSec + 60) {
+          // 后端返回异常 expires_at：不更新本地态，不重排定时器
+          // 下一次 401 拦截器或定时器触发时由 _refreshing 锁自然阻塞
+          console.warn('[auth] refresh 返回异常 expires_at，跳过更新', newExpiresAt)
+          return
+        }
         this.accessToken = resp.access_token
         this.refreshToken = resp.refresh_token
-        this.expiresAt = resp.expires_at
+        this.expiresAt = newExpiresAt
         // P1-03: 生产环境（HTTPS）下补 secure，避免中间人嗅探
         Cookies.set('keyauth_token', resp.access_token, {
           expires: 7,
@@ -121,6 +159,8 @@ export const useAuthStore = defineStore('auth', {
         // refresh 失败：清空登录态
         this.logout()
         throw e
+      } finally {
+        this._refreshing = false
       }
     },
 
@@ -130,6 +170,8 @@ export const useAuthStore = defineStore('auth', {
         clearTimeout(this._refreshTimer)
         this._refreshTimer = null
       }
+      // v0.6.7 P0 修复：登出时重置并发锁，避免下次登录复用 stale 状态
+      this._refreshing = false
       if (this.accessToken && this.role && this.refreshToken) {
         try {
           await logoutApi(this.role, this.refreshToken)

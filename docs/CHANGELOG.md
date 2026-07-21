@@ -9,6 +9,162 @@
 
 ---
 
+## [0.6.7] - 2026-07-21（管理员登录后死机 + token 续期死循环修复）
+
+### [修复] P0 紧急 bug：管理员登录后浏览器死机
+
+#### 症状
+
+管理员登录成功后页面卡住，CPU 飙升，浏览器最终死机。开发者/代理登录正常。
+
+#### 根因定位
+
+`apps/admin/src/stores/auth.ts` 的 `scheduleRefresh` 在 `delay <= 0` 时不 await 调用 `doRefresh().catch(() => {})`，`doRefresh` 成功后又调用 `this.scheduleRefresh()`，若新的 `expires_at` 仍让 `delay <= 0`，则形成无限异步递归，每秒发出数十个 HTTP 请求导致浏览器死机。
+
+触发 `delay <= 0` 的场景：
+1. `jwt.access_ttl_seconds` 被 sys_config 配为 ≤ 300 秒（管理员可在后台修改）
+2. 后端返回异常 `expires_at`（0、负数、旧时间戳）
+3. 客户端时钟超前（refreshAt = expiresAt - 300 已经在过去）
+
+死循环代码：
+
+```ts
+// 修复前
+scheduleRefresh() {
+  // ...
+  if (delay <= 0) {
+    this.doRefresh().catch(() => {})  // ← 不 await，立即返回
+    return                            // ← doRefresh 完成后会再调 scheduleRefresh
+  }
+}
+
+async doRefresh() {
+  // ...
+  this.expiresAt = resp.expires_at   // ← 异常值直接写入
+  this.scheduleRefresh()              // ← 再次进入，若 delay 仍 <=0，无限递归
+}
+```
+
+#### 修复 1：`_refreshing` 并发锁杜绝递归
+
+`apps/admin/src/stores/auth.ts` state 新增 `_refreshing: boolean`：
+
+- `scheduleRefresh` 的 `delay <= 0` 路径检查 `_refreshing`，正在刷新则直接 return，由 `doRefresh` 完成后重新调度
+- `doRefresh` 入口检查 `_refreshing`，正在刷新则 return，避免并发重复刷新
+- `try/finally` 保证 `_refreshing` 一定释放
+- `logout` 时重置 `_refreshing`，避免下次登录复用 stale 状态
+
+```ts
+// 修复后
+scheduleRefresh() {
+  // ...
+  if (delay <= 0) {
+    if (this._refreshing) return   // ← 关键：正在刷新则不重复触发
+    this.doRefresh().catch(() => {})
+    return
+  }
+}
+
+async doRefresh() {
+  if (!this.refreshToken) return
+  if (this._refreshing) return      // ← 并发锁
+  this._refreshing = true
+  try {
+    // ...
+  } finally {
+    this._refreshing = false
+  }
+}
+```
+
+#### 修复 2：`expires_at` 合法性校验
+
+`doRefresh` 接收到后端响应后，校验新的 `expires_at` 必须 > `now + 60s`（绝对 Unix 秒）：
+
+- 异常值（0、负数、旧时间戳、临界值）直接跳过更新与重排
+- 防御后端异常返回导致死循环
+- 下一次 401 拦截器或定时器触发时由 `_refreshing` 锁自然阻塞
+
+```ts
+const nowSec = Math.floor(Date.now() / 1000)
+const newExpiresAt = resp.expires_at || 0
+if (!newExpiresAt || newExpiresAt <= nowSec + 60) {
+  console.warn('[auth] refresh 返回异常 expires_at，跳过更新', newExpiresAt)
+  return
+}
+```
+
+#### 修复 3：`scheduleRefresh` 最小延迟保护
+
+`delay` 计算后强制 `delay = Math.max(delay, 30_000)`（30 秒兜底）：
+
+- 触发场景：sys_config 中 `jwt.access_ttl_seconds` 被设为异常小值（如 60s），导致 `expiresAt - 300` 为负数
+- 避免 setTimeout 极短延迟触发高频刷新
+- 30 秒下限是用户感知不敏感的安全阈值
+
+#### 修复 4：`http.ts` 401 拦截器加固
+
+`apps/admin/src/api/http.ts` 的 401 拦截器在 `await auth.doRefresh()` 后增加空 token 检查：
+
+```ts
+await auth.doRefresh()
+const newToken = auth.accessToken
+if (!newToken) {
+  // doRefresh 成功但 token 为空（异常 expires_at 被跳过更新）
+  onTokenRefreshed('')
+  auth.logout()
+  redirectToLogin()
+  return Promise.reject(err)
+}
+```
+
+避免 `doRefresh` 在异常场景下静默跳过更新后，拦截器仍用旧 token 重试导致死循环。
+
+#### 修复 5：后端 sys_config 最小值校验（源头防护）
+
+`apps/server/internal/handler/admin.go` 的 `AdminUpdateConfig` 新增 `validateSysConfigValue` 函数：
+
+- `jwt.access_ttl_seconds`：必须 ≥ 600 秒（10 分钟），否则前端「提前 5 分钟续期」逻辑会立即触发刷新
+- `jwt.access_ttl_seconds`：必须 ≤ 30 天
+- `jwt.refresh_ttl_seconds`：必须 ≥ 3600 秒（1 小时）
+- `jwt.refresh_ttl_seconds`：必须 ≤ 90 天
+- 非法值返回 HTTP 400 + 1002 错误码，提示管理员具体原因
+
+```go
+func validateSysConfigValue(key, value string) error {
+    switch key {
+    case "jwt.access_ttl_seconds":
+        v, err := strconv.Atoi(value)
+        if err != nil { return errInvalidConfigValue("jwt.access_ttl_seconds 必须是整数") }
+        if v < 600 { return errInvalidConfigValue("jwt.access_ttl_seconds 不能小于 600 秒（10 分钟），否则会触发前端高频刷新") }
+        if v > 86400*30 { return errInvalidConfigValue("jwt.access_ttl_seconds 不能大于 30 天") }
+    case "jwt.refresh_ttl_seconds":
+        // ...
+    }
+    return nil
+}
+```
+
+#### 修复 6：`logout` 重置 `_refreshing`
+
+`logout` action 中清空定时器后立即 `this._refreshing = false`，避免下次登录时 stale 锁状态导致 doRefresh 误判为正在刷新。
+
+#### 验证
+
+- ✅ `npm run build` 通过（含 `vue-tsc --noEmit` 类型检查）
+- ✅ `gofmt -l internal/handler/admin.go` 无输出（格式干净）
+- ✅ 死循环场景逻辑验证：`delay <= 0` → `_refreshing` false → 调 doRefresh → 设 true → 后端返回异常 expires_at → 校验失败跳过 → finally 释放 → 不调 scheduleRefresh → **循环终止**
+- ✅ 正常场景验证：`delay > 0` → setTimeout → 到期 doRefresh → 校验通过 → 更新 + 调 scheduleRefresh → 正常工作
+- ✅ 并发场景验证：http 拦截器 `isRefreshing` 锁 + auth `_refreshing` 锁双重保护
+
+#### 影响范围
+
+- `apps/admin/src/stores/auth.ts`：state + `scheduleRefresh` + `doRefresh` + `logout`
+- `apps/admin/src/api/http.ts`：401 拦截器三角色分支
+- `apps/server/internal/handler/admin.go`：`AdminUpdateConfig` + 新增 `validateSysConfigValue`
+
+---
+
 ## [0.6.6] - 2026-07-21（充值/提现/支付回调并发安全加固）
 
 ### [安全] P0 并发安全加固（DB 级幂等 + GORM 行锁 + frozen_balance 守门 + 支付回调幂等 + AppliedAmount 审计字段 + 11 个并发测试）

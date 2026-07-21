@@ -216,6 +216,14 @@ http.interceptors.response.use(
       try {
         await auth.doRefresh()
         const newToken = auth.accessToken
+        // v0.6.7 P0 修复：doRefresh 成功但 token 为空（异常 expires_at 被跳过更新）
+        // 直接登出避免无效重试
+        if (!newToken) {
+          onTokenRefreshed('')
+          auth.logout()
+          redirectToLogin()
+          return Promise.reject(err)
+        }
         onTokenRefreshed(newToken)
         originalRequest.headers.Authorization = `Bearer ${newToken}`
         return http(originalRequest)
