@@ -100,6 +100,10 @@ const isMobile = ref(false)
 const currentPage = ref(props.page)
 const pageSizeRef = ref(props.pageSize)
 
+// v0.7.0 修复 P1-H：EP 翻页/改 size 时会先发 size-change 再发 current-change（page 重置为 1），
+// 父组件同时监听两个事件会导致 loadList 双触发。用 _sizeChanging 标志位抑制 size-change 后的 page-change。
+let _sizeChanging = false
+
 watch(() => props.page, (v) => { currentPage.value = v })
 watch(() => props.pageSize, (v) => { pageSizeRef.value = v })
 
@@ -111,13 +115,24 @@ onMounted(() => {
 onBeforeUnmount(() => window.removeEventListener('resize', checkMobile))
 
 const onPageChange = (p: number) => {
-  currentPage.value = p
+  // v0.7.0 修复 P1-H：size-change 触发的 current-change（page 重置为 1）应被抑制，避免双触发
+  // 父组件的 size-change 处理器应自行重置 filter.page = 1 + loadList
+  if (_sizeChanging) {
+    _sizeChanging = false
+    return
+  }
+  // v0.7.0 修复：删除冗余 currentPage.value = p（v-model:current-page 已绑定）
   emit('update:page', p)
   emit('page-change', p)
 }
 const onSizeChange = (s: number) => {
-  pageSizeRef.value = s
+  // v0.7.0 修复：删除冗余 pageSizeRef.value = s（v-model:page-size 已绑定）
+  // 标记 size 变化中，抑制紧接着的 EP current-change 事件（避免父组件 loadList 双触发）
+  _sizeChanging = true
+  // 同步重置 currentPage = 1（EP 内部已重置，这里显式同步让 v-model 双向生效）
+  currentPage.value = 1
   emit('update:pageSize', s)
+  emit('update:page', 1)
   emit('size-change', s)
 }
 const onSelectionChange = (rows: any[]) => emit('selection-change', rows)

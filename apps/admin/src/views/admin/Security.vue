@@ -99,7 +99,7 @@
     </el-row>
 
     <!-- 新增 IP 黑名单对话框 -->
-    <el-dialog v-model="addDialogVisible" title="新增 IP 黑名单" width="500px">
+    <el-dialog v-model="addDialogVisible" title="新增 IP 黑名单" :width="isMobile ? '92%' : '500px'">
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top">
         <el-form-item label="IP 地址" prop="ip">
           <el-input v-model="form.ip" placeholder="如 1.2.3.4 或 CIDR 10.0.0.0/24" />
@@ -121,7 +121,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
@@ -141,6 +141,10 @@ const blacklist = ref<IpBlacklistItem[]>([])
 const total = ref(0)
 const loading = ref(false)
 
+// v0.7.0 修复：dialog 响应式宽度
+const isMobile = ref(false)
+const checkMobile = () => { isMobile.value = window.innerWidth < 768 }
+
 const filter = reactive({
   page: 1,
   page_size: 20
@@ -154,7 +158,10 @@ const mobileFields = [
 
 const formatDate = (s: string | null | undefined) => {
   if (!s) return '-'
-  return new Date(s).toLocaleString('zh-CN')
+  const d = new Date(s)
+  // v0.7.0 修复：Invalid Date 兜底
+  if (isNaN(d.getTime())) return '-'
+  return d.toLocaleString('zh-CN')
 }
 
 const loadStats = async () => {
@@ -198,38 +205,46 @@ const rules = {
   ip: [{ required: true, message: '请输入 IP 地址', trigger: 'blur' }]
 }
 
-const openAdd = () => {
+const openAdd = async () => {
   form.ip = ''
   form.reason = ''
   form.expire_hours = 24
   addDialogVisible.value = true
+  // v0.7.0 修复：清除上一次表单验证的残留状态
+  await nextTick()
+  formRef.value?.clearValidate()
 }
 
 const confirmAdd = async () => {
   if (!formRef.value) return
-  await formRef.value.validate(async (valid) => {
-    if (!valid) return
-    if (!form.ip) {
-      ElMessage.warning('请输入 IP 地址')
-      return
-    }
-    addLoading.value = true
-    try {
-      await addIpBlacklistApi({
-        ip: form.ip,
-        reason: form.reason,
-        expire_hours: form.expire_hours
-      })
-      ElMessage.success('已加入黑名单')
-      addDialogVisible.value = false
-      loadBlacklist()
-      loadStats()
-    } catch {
-      // 错误已由 http 拦截器处理
-    } finally {
-      addLoading.value = false
-    }
-  })
+  // v0.7.0 修复：防抖守卫，避免重复点击产生重复请求
+  if (addLoading.value) return
+  // v0.7.0 修复：validate callback+async 混用改为 await 模式
+  try {
+    await formRef.value.validate()
+  } catch {
+    return
+  }
+  if (!form.ip) {
+    ElMessage.warning('请输入 IP 地址')
+    return
+  }
+  addLoading.value = true
+  try {
+    await addIpBlacklistApi({
+      ip: form.ip,
+      reason: form.reason,
+      expire_hours: form.expire_hours
+    })
+    ElMessage.success('已加入黑名单')
+    addDialogVisible.value = false
+    loadBlacklist()
+    loadStats()
+  } catch {
+    // 错误已由 http 拦截器处理
+  } finally {
+    addLoading.value = false
+  }
 }
 
 const removeIp = (row: any) => {
@@ -256,6 +271,14 @@ const removeIp = (row: any) => {
 onMounted(() => {
   loadStats()
   loadBlacklist()
+  // v0.7.0 修复：dialog 响应式宽度
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
+})
+
+// v0.7.0 修复：dialog 响应式宽度
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', checkMobile)
 })
 </script>
 

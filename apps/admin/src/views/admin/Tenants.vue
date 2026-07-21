@@ -14,8 +14,8 @@
 
     <div class="app-card">
       <div class="search-bar">
-        <el-input v-model="filter.keyword" placeholder="用户名/邮箱/公司" clearable style="width: 220px" @change="loadList" />
-        <el-select v-model="filter.status" placeholder="状态" clearable style="width: 140px" @change="loadList">
+        <el-input v-model="filter.keyword" placeholder="用户名/邮箱/公司" clearable style="width: 220px" @change="onFilterChange" />
+        <el-select v-model="filter.status" placeholder="状态" clearable style="width: 140px" @change="onFilterChange">
           <el-option label="正常" value="active" />
           <el-option label="已禁用" value="disabled" />
           <el-option label="待审核" value="pending" />
@@ -77,7 +77,7 @@
     </div>
 
     <!-- 新建/编辑对话框 -->
-    <el-dialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新建开发者' : '编辑开发者'" width="500px">
+    <el-dialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新建开发者' : '编辑开发者'" :width="isMobile ? '92%' : '500px'">
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top">
         <el-form-item v-if="dialogMode === 'create'" label="用户名" prop="username">
           <el-input v-model="form.username" placeholder="登录用户名" maxlength="32" />
@@ -126,7 +126,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage, type FormInstance } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
@@ -140,6 +140,10 @@ const list = ref<AdminTenant[]>([])
 const total = ref(0)
 const loading = ref(false)
 const packages = ref<AdminPackage[]>([])
+
+// v0.7.0 修复：dialog 响应式宽度
+const isMobile = ref(false)
+const checkMobile = () => { isMobile.value = window.innerWidth < 768 }
 
 const filter = reactive({
   keyword: '',
@@ -199,7 +203,10 @@ const statusText = (s: string) => {
 
 const formatDate = (s: string | null) => {
   if (!s) return '-'
-  return new Date(s).toLocaleString('zh-CN')
+  const d = new Date(s)
+  // v0.7.0 修复：Invalid Date 兜底
+  if (isNaN(d.getTime())) return '-'
+  return d.toLocaleString('zh-CN')
 }
 
 const loadPackages = async () => {
@@ -209,6 +216,12 @@ const loadPackages = async () => {
   } catch {
     // 错误已由 http 拦截器处理
   }
+}
+
+// v0.7.0 修复：筛选变更重置分页
+const onFilterChange = () => {
+  filter.page = 1
+  loadList()
 }
 
 const loadList = async () => {
@@ -236,14 +249,17 @@ const resetForm = () => {
   })
 }
 
-const openCreate = () => {
+const openCreate = async () => {
   dialogMode.value = 'create'
   editingId.value = null
   resetForm()
   dialogVisible.value = true
+  // v0.7.0 修复：清除上一次表单验证的残留状态
+  await nextTick()
+  formRef.value?.clearValidate()
 }
 
-const openEdit = (row: any) => {
+const openEdit = async (row: any) => {
   dialogMode.value = 'edit'
   editingId.value = row.id
   Object.assign(form, {
@@ -258,12 +274,17 @@ const openEdit = (row: any) => {
     remark: row.remark || ''
   })
   dialogVisible.value = true
+  // v0.7.0 修复：清除上一次表单验证的残留状态
+  await nextTick()
+  formRef.value?.clearValidate()
 }
 
 const confirmSubmit = async () => {
   if (!formRef.value) return
   await formRef.value.validate(async (valid) => {
     if (!valid) return
+    // v0.7.0 修复：防抖守卫，避免重复点击产生重复请求
+    if (submitLoading.value) return
     submitLoading.value = true
     try {
       if (dialogMode.value === 'create') {
@@ -310,8 +331,16 @@ const toggleStatus = async (row: any, status: 'active' | 'disabled') => {
 }
 
 onMounted(() => {
+  // v0.7.0 修复：dialog 响应式宽度
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
   loadPackages()
   loadList()
+})
+
+// v0.7.0 修复：dialog 响应式宽度
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', checkMobile)
 })
 </script>
 

@@ -5,7 +5,7 @@
   - 切换时立即生效，并通过 theme store 持久化到 localStorage
 -->
 <template>
-  <el-dropdown trigger="click" @command="onCommand">
+  <el-dropdown trigger="click" placement="bottom-end" @command="onCommand">
     <span class="theme-switcher" :title="'切换主题（当前：' + currentLabel + '）'">
       <el-icon><component :is="currentIcon" /></el-icon>
       <span class="label hidden-mobile">{{ currentLabel }}</span>
@@ -63,6 +63,9 @@ onMounted(() => {
   cursor: pointer;
   color: $color-text-regular;
   transition: background 0.2s, color 0.2s;
+  // v0.7.0 修复 P1-G：flex-shrink:0 防止被父容器挤压
+  flex-shrink: 0;
+  white-space: nowrap;
 
   &:hover {
     background: $color-bg-hover;
@@ -84,7 +87,7 @@ onMounted(() => {
 }
 
 .check-icon {
-  margin-left: auto;
+  // v0.7.0 修复：删除 margin-left: auto 死声明（被下一行覆盖）
   margin-left: $spacing-md;
   color: $color-primary;
 }

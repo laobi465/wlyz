@@ -10,13 +10,13 @@
 
     <div class="app-card">
       <div class="search-bar">
-        <el-input v-model="filter.keyword" placeholder="用户名/真实姓名/手机" clearable style="width: 220px" @change="loadList" />
-        <el-select v-model="filter.status" placeholder="状态" clearable style="width: 140px" @change="loadList">
+        <el-input v-model="filter.keyword" placeholder="用户名/真实姓名/手机" clearable style="width: 220px" @change="onFilterChange" />
+        <el-select v-model="filter.status" placeholder="状态" clearable style="width: 140px" @change="onFilterChange">
           <el-option label="正常" value="active" />
           <el-option label="已禁用" value="disabled" />
           <el-option label="待审核" value="pending" />
         </el-select>
-        <el-select v-model="filter.tenant_id" placeholder="所属开发者" clearable filterable style="width: 200px" @change="loadList">
+        <el-select v-model="filter.tenant_id" placeholder="所属开发者" clearable filterable style="width: 200px" @change="onFilterChange">
           <el-option v-for="t in tenants" :key="t.id" :label="t.username" :value="t.id" />
         </el-select>
         <el-button @click="loadList">刷新</el-button>
@@ -82,7 +82,7 @@
     </div>
 
     <!-- 编辑对话框 -->
-    <el-dialog v-model="dialogVisible" title="编辑代理" width="500px">
+    <el-dialog v-model="dialogVisible" title="编辑代理" :width="isMobile ? '92%' : '500px'">
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top">
         <el-form-item label="状态" prop="status">
           <el-select v-model="form.status" style="width: 100%">
@@ -114,7 +114,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage, type FormInstance } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
@@ -128,6 +128,10 @@ const list = ref<AdminAgent[]>([])
 const total = ref(0)
 const loading = ref(false)
 const tenants = ref<Array<Pick<AdminTenant, 'id' | 'username'>>>([])
+
+// v0.7.0 修复：dialog 响应式宽度
+const isMobile = ref(false)
+const checkMobile = () => { isMobile.value = window.innerWidth < 768 }
 
 const filter = reactive({
   keyword: '',
@@ -191,7 +195,10 @@ const commissionModeText = (m: string) => {
 
 const formatDate = (s: string | null) => {
   if (!s) return '-'
-  return new Date(s).toLocaleString('zh-CN')
+  const d = new Date(s)
+  // v0.7.0 修复：Invalid Date 兜底
+  if (isNaN(d.getTime())) return '-'
+  return d.toLocaleString('zh-CN')
 }
 
 const loadTenants = async () => {
@@ -201,6 +208,12 @@ const loadTenants = async () => {
   } catch {
     // 错误已由 http 拦截器处理
   }
+}
+
+// v0.7.0 修复：筛选变更重置分页
+const onFilterChange = () => {
+  filter.page = 1
+  loadList()
 }
 
 const loadList = async () => {
@@ -222,7 +235,7 @@ const loadList = async () => {
   }
 }
 
-const openEdit = (row: any) => {
+const openEdit = async (row: any) => {
   editingId.value = row.id
   Object.assign(form, {
     status: row.status || 'active',
@@ -231,6 +244,9 @@ const openEdit = (row: any) => {
     balance: row.balance ?? 0
   })
   dialogVisible.value = true
+  // v0.7.0 修复：清除上一次表单验证的残留状态
+  await nextTick()
+  formRef.value?.clearValidate()
 }
 
 const confirmSubmit = async () => {
@@ -239,6 +255,8 @@ const confirmSubmit = async () => {
   if (!id) return
   await formRef.value.validate(async (valid) => {
     if (!valid) return
+    // v0.7.0 修复：防抖守卫，避免重复点击产生重复请求
+    if (submitLoading.value) return
     submitLoading.value = true
     try {
       await updateAdminAgentApi(id, {
@@ -259,8 +277,16 @@ const confirmSubmit = async () => {
 }
 
 onMounted(() => {
+  // v0.7.0 修复：dialog 响应式宽度
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
   loadTenants()
   loadList()
+})
+
+// v0.7.0 修复：dialog 响应式宽度
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', checkMobile)
 })
 </script>
 

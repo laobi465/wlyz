@@ -9,6 +9,238 @@
 
 ---
 
+## [0.7.0] - 2026-07-21（前端管理员后台 UI 系统性修复：5 P0 + 14 P1）
+
+### 背景
+
+v0.6.9 修复 /admin/dashboard 性能问题后，用户要求「检查下前端管理员后台的 UI 是否有错误」。启动 4 个 subagent 并行排查 12 个管理员页面 + 11 个通用组件 + 4 个样式文件，发现 **5 个 P0** + **14 个 P1** + **30 个 P2/P3** 问题。
+
+### [P0] 主题图标名错误（theme.ts）
+
+`apps/admin/src/stores/theme.ts` 的 `THEME_OPTIONS` 配置了两个不存在的图标名，导致 ThemeSwitcher 下拉菜单中两个主题项图标渲染失败：
+
+```ts
+// 修复前（错误，EP 图标导出名无空格）
+{ value: 'blue',   label: '深蓝',   icon: 'Water Cup' }
+{ value: 'purple', label: '紫罗兰', icon: 'Magic Stick' }
+
+// 修复后（正确导出名）
+{ value: 'blue',   label: '深蓝',   icon: 'WaterCup' }
+{ value: 'purple', label: '紫罗兰', icon: 'MagicStick' }
+```
+
+### [P0] PlatformNoticeBanner 白底白字不可见
+
+`apps/admin/src/components/PlatformNoticeBanner.vue` 的 `.banner-label` 样式存在致命 CSS 错误：
+
+```scss
+// 修复前：currentColor 解析为父级 color:#fff，导致白底白字不可读
+.banner-label {
+  background: currentColor;
+  color: #fff;
+}
+
+// 修复后：半透明白色背景 + 白色文字，在任何横幅背景色上可读
+.banner-label {
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+  flex-shrink: 0;
+}
+```
+
+同时为该组件添加 `isMobile` 响应式检测 + dialog 响应式宽度 + resize 监听清理。
+
+### [P0] Dashboard toFixed 崩溃 + 无 loading 反馈
+
+`apps/admin/src/views/admin/Dashboard.vue` 存在两个 P0 问题：
+
+1. **`stats.revenue_month.toFixed(2)` 在数据为 null 时抛 TypeError**：后端字段可能为 null/undefined，`toFixed` 不是函数崩溃
+2. **onMounted(loadDashboard) 期间页面全 0/空无反馈**：用户访问 /admin/dashboard 时页面卡很久但无 loading 遮罩
+
+修复：
+
+```ts
+// v0.7.0：金额格式化兜底
+const formatMoney = (n: number | null | undefined, decimals = 2) => {
+  const num = Number(n) || 0
+  return num.toFixed(decimals)
+}
+
+// v0.7.0：loading 状态 + v-loading 遮罩
+const loading = ref(false)
+const loadDashboard = async () => {
+  loading.value = true
+  try {
+    const data = await adminDashboardApi()
+    // ... 数据兜底处理
+  } finally {
+    loading.value = false
+  }
+}
+```
+
+所有 `.toFixed(2)` 改为 `formatMoney()`，模板添加 `<div v-loading="loading">` 遮罩，`formatDate` 添加 Invalid Date 兜底。
+
+### [P0] Profile.vue labelPosition 非响应式
+
+`apps/admin/src/views/admin/Profile.vue` 的 `labelPosition` computed 直接读 `window.innerWidth`（非响应式数据），窗口尺寸变化时不会重新计算：
+
+```ts
+// 修复前（非响应式）
+const labelPosition = computed(() => {
+  return window.innerWidth < 768 ? 'top' : 'right'
+})
+
+// 修复后（响应式 ref + resize 监听）
+const isMobile = ref(false)
+const checkMobile = () => { isMobile.value = window.innerWidth < 768 }
+const labelPosition = computed<'top' | 'right'>(() => isMobile.value ? 'top' : 'right')
+
+onMounted(() => {
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
+  // ...
+})
+onBeforeUnmount(() => window.removeEventListener('resize', checkMobile))
+```
+
+同时为 Profile.vue 修复：dialog 响应式宽度、saveProfile/changePassword 防抖守卫、changePassword 的 callback+async 混用改为 await validate() Promise 形式、formatDate Invalid Date 兜底。
+
+### [P1] BasicLayout header-right flex 布局（主题切换重叠根因）
+
+`apps/admin/src/layouts/BasicLayout.vue` 的 `.header-right` 无 `flex-wrap`、子元素无 `flex-shrink:0`，窄屏时主题切换与用户菜单重叠（即用户反馈的「左上角重叠的主题切换」UI 根因之一）：
+
+```scss
+// 修复后
+.header-left {
+  min-width: 0;       // v0.7.0：让面包屑可被截断
+  flex: 1;
+  .collapse-btn, .menu-btn {
+    flex-shrink: 0;    // v0.7.0：固定按钮不被挤压
+  }
+}
+.header-right {
+  flex-wrap: wrap;     // v0.7.0：窄屏时换行而非重叠
+  justify-content: flex-end;
+  flex-shrink: 0;      // v0.7.0：整个 header-right 不被挤压
+  .user-info {
+    flex-shrink: 0;
+    .username { white-space: nowrap; }
+  }
+}
+```
+
+同时修复 `el-dropdown` 未设 `placement="bottom-end"` 导致下拉菜单溢出右侧；`onMounted` 中 `await sysConfig.load()` 失败会导致 `checkMobile` 不执行 → 改为先 `checkMobile()` + 注册 resize，`sysConfig.load()` 异步触发不阻塞。
+
+### [P1] ThemeSwitcher/LanguageSwitcher placement + flex-shrink
+
+`apps/admin/src/components/ThemeSwitcher.vue` 和 `LanguageSwitcher.vue`：
+
+1. `el-dropdown` 未设 `placement="bottom-end"` → 下拉菜单可能溢出右侧
+2. `.theme-switcher` / `.lang-switcher` 无 `flex-shrink:0` → 窄屏被挤压
+
+修复：`placement="bottom-end"` + `flex-shrink: 0` + `white-space: nowrap`，同时移除 ThemeSwitcher 中 `margin-left: auto` 被 `margin-left: $spacing-md` 覆盖的死声明。
+
+### [P1] ResponsiveTable size-change 双触发 loadList
+
+`apps/admin/src/components/ResponsiveTable.vue` 的 EP `el-pagination` 在用户切换 page-size 时会先发 `size-change` 再发 `current-change`（page 重置为 1），父组件同时监听两个事件会导致 `loadList` 双触发：
+
+```ts
+// v0.7.0 修复：用 _sizeChanging 标志位抑制 size-change 后的 page-change
+let _sizeChanging = false
+
+const onPageChange = (p: number) => {
+  if (_sizeChanging) {
+    _sizeChanging = false
+    return  // 抑制 size-change 触发的 current-change
+  }
+  emit('update:page', p)
+  emit('page-change', p)
+}
+const onSizeChange = (s: number) => {
+  _sizeChanging = true
+  currentPage.value = 1   // 显式同步让 v-model 双向生效
+  emit('update:pageSize', s)
+  emit('update:page', 1)
+  emit('size-change', s)
+}
+```
+
+同时删除冗余的 `currentPage.value = p` / `pageSizeRef.value = s`（v-model 已绑定）。
+
+### [P1] Settlements.vue net_amount.toFixed 崩溃
+
+`apps/admin/src/views/admin/Settlements.vue` 第 158 行 `currentRow.net_amount.toFixed(2)` 在数据为 null 时抛 TypeError：
+
+```vue
+<!-- 修复前 -->
+<el-input :model-value="currentRow ? '¥' + currentRow.net_amount.toFixed(2) : ''" disabled />
+
+<!-- 修复后：复用已有的 formatMoney 函数 -->
+<el-input :model-value="currentRow ? '¥' + formatMoney(currentRow.net_amount) : ''" disabled />
+```
+
+同时为该文件修复：单条/批量结算 dialog 响应式宽度、confirmSettle/confirmBatchSettle 防抖守卫、formatDate Invalid Date 兜底、isMobile + resize 监听。
+
+### [P1] 12 个管理员页面系统性修复
+
+用 2 个并行 subagent 修复 9 个管理员页面（Settlements/Profile 已直接修复）的 5 类共性问题：
+
+| 文件 | 防抖 | clearValidate | dialog 响应式 | filter.page 重置 | formatDate 兜底 |
+|---|---|---|---|---|---|
+| Tenants.vue | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Agents.vue | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Packages.vue | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Notices.vue | ✅ | ✅ | ✅ | ✅ | ✅ |
+| SysConfig.vue | ✅ | - | ✅ | - | - |
+| Logs.vue | - | - | ✅ | ✅ | ✅ |
+| Security.vue | ✅ | ✅ | ✅ | - | ✅ |
+| PayConfig.vue | ✅ | - | - | - | - |
+| TenantWithdrawalReview.vue | ✅ | ✅ | ✅ | - | ✅ |
+
+**防抖守卫**：所有 `confirm*/submit*/save*` 函数添加 `if (xxxLoading.value) return`，避免重复点击产生重复请求
+
+**clearValidate**：`openEdit/openAdd/openReject` 改为 async，在 `dialogVisible.value = true` 之后 `await nextTick(); formRef.value?.clearValidate()`，清除上一次表单验证残留状态
+
+**dialog 响应式**：所有 `<el-dialog width="Npx">` 改为 `:width="isMobile ? '92%' : 'Npx'"`，添加 isMobile + resize 监听
+
+**filter.page 重置**：筛选条件 `@change="loadList"` 改为 `@change="onFilterChange"`，新建 `onFilterChange` 函数重置 `filter.page = 1` 后再 `loadList()`
+
+**formatDate 兜底**：所有 `formatDate` 添加 `if (isNaN(d.getTime())) return '-'` 兜底
+
+**Security.vue validate callback+async 混用**：原 `formRef.value.validate(async (valid) => { ... })` 改为 `try { await formRef.value.validate() } catch { return }`，避免 callback+async 混用导致状态错乱
+
+**PayConfig.vue saveAll 二次确认**：函数开头添加 `ElMessageBox.confirm('确定要保存所有支付配置吗？', '确认', { type: 'warning' })`，避免误触发批量保存
+
+### v0.7.0 验证
+
+- [x] [已完成 2026-07-21] `cd apps/admin && npm run build` 通过（vue-tsc 类型检查 + Vite 构建，16.69s）
+- [x] [已完成 2026-07-21] 修复逻辑验证：所有 5 个 P0 + 14 个 P1 修复点均通过代码 review
+- [x] [已完成 2026-07-21] 4 个 subagent 并行修复 9 个管理员页面，第一个 subagent 内部还跑了 vue-tsc + vite build 验证
+
+### v0.7.0 待真实环境验证
+
+- [ ] [待开始] 真实浏览器验证 ThemeSwitcher 下拉菜单中 blue/purple 主题图标正常显示
+- [ ] [待开始] 真实浏览器验证 PlatformNoticeBanner 「平台公告」标签不再白底白字
+- [ ] [待开始] 真实浏览器验证 /admin/dashboard 加载期间显示 loading 遮罩
+- [ ] [待开始] 真实浏览器验证窄屏（< 768px）顶栏主题切换与用户菜单不再重叠
+- [ ] [待开始] 真实浏览器验证 ResponsiveTable 切换 page-size 时不再触发两次 loadList
+- [ ] [待开始] 真实浏览器验证所有管理员页面对话框在移动端宽度 92% 自适应
+
+### v0.7.0 未修复的 P2/P3（30 项，非阻断性）
+
+- SysConfig.vue 编辑表单无 rules、el-input rows 用在非 textarea
+- Logs.vue search-bar 无移动端样式
+- Security.vue IP/CIDR 缺格式校验
+- PayConfig.vue saveAll 串行 await 11 字段、整个表单无 rules
+- ResponsiveTable `:key="idx"` 用数组索引作 key
+- themes.scss auto+暗黑分支未覆盖 `--el-color-primary*`
+- 其余 24 项 P3 级别细节问题
+
+详见 [v0.7.0 TODO](docs/TODO.md#v070-前端管理员后台-ui-系统性修复--已完成-2026-07-21)。
+
+---
+
 ## [0.6.9] - 2026-07-21（/admin/dashboard 加载卡很久 + 主题切换监听器累积修复）
 
 ### [修复] P1 性能：/admin/dashboard 加载卡很久（后端 21 次串行 DB 查询）

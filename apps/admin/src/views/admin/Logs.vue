@@ -24,15 +24,15 @@
 
       <!-- 操作日志筛选 -->
       <div v-if="activeTab === 'operation'" class="search-bar">
-        <el-select v-model="opFilter.operator_type" placeholder="操作者类型" clearable style="width: 140px" @change="loadList">
+        <el-select v-model="opFilter.operator_type" placeholder="操作者类型" clearable style="width: 140px" @change="onFilterChange">
           <el-option label="超管" value="admin" />
           <el-option label="开发者" value="tenant" />
           <el-option label="代理" value="agent" />
         </el-select>
-        <el-input v-model="opFilter.operator_id_input" placeholder="操作者 ID" clearable style="width: 130px" @change="loadList" />
-        <el-input v-model="opFilter.module" placeholder="模块（如 agent/card）" clearable style="width: 180px" @change="loadList" />
-        <el-input v-model="opFilter.action" placeholder="动作（如 create/delete）" clearable style="width: 180px" @change="loadList" />
-        <el-select v-model="opFilter.status" placeholder="状态" clearable style="width: 110px" @change="loadList">
+        <el-input v-model="opFilter.operator_id_input" placeholder="操作者 ID" clearable style="width: 130px" @change="onFilterChange" />
+        <el-input v-model="opFilter.module" placeholder="模块（如 agent/card）" clearable style="width: 180px" @change="onFilterChange" />
+        <el-input v-model="opFilter.action" placeholder="动作（如 create/delete）" clearable style="width: 180px" @change="onFilterChange" />
+        <el-select v-model="opFilter.status" placeholder="状态" clearable style="width: 110px" @change="onFilterChange">
           <el-option label="成功" value="success" />
           <el-option label="失败" value="fail" />
         </el-select>
@@ -46,15 +46,15 @@
           style="width: 280px"
           @change="(v: any) => onDateChange(v, 'operation')"
         />
-        <el-input v-model="opFilter.keyword" placeholder="关键词（action/module/username/ip）" clearable style="width: 240px" @change="loadList" />
+        <el-input v-model="opFilter.keyword" placeholder="关键词（action/module/username/ip）" clearable style="width: 240px" @change="onFilterChange" />
         <el-button @click="loadList">刷新</el-button>
       </div>
 
       <!-- 验证日志筛选 -->
       <div v-else-if="activeTab === 'verify'" class="search-bar">
-        <el-input v-model="vFilter.tenant_id_input" placeholder="租户 ID" clearable style="width: 120px" @change="loadList" />
-        <el-input v-model="vFilter.app_id_input" placeholder="应用 ID" clearable style="width: 120px" @change="loadList" />
-        <el-select v-model="vFilter.action" placeholder="动作" clearable style="width: 130px" @change="loadList">
+        <el-input v-model="vFilter.tenant_id_input" placeholder="租户 ID" clearable style="width: 120px" @change="onFilterChange" />
+        <el-input v-model="vFilter.app_id_input" placeholder="应用 ID" clearable style="width: 120px" @change="onFilterChange" />
+        <el-select v-model="vFilter.action" placeholder="动作" clearable style="width: 130px" @change="onFilterChange">
           <el-option label="登录" value="login" />
           <el-option label="验证" value="verify" />
           <el-option label="心跳" value="heartbeat" />
@@ -62,7 +62,7 @@
           <el-option label="解绑" value="unbind" />
           <el-option label="取变量" value="getvar" />
         </el-select>
-        <el-select v-model="vFilter.result" placeholder="结果" clearable style="width: 130px" @change="loadList">
+        <el-select v-model="vFilter.result" placeholder="结果" clearable style="width: 130px" @change="onFilterChange">
           <el-option label="成功" value="success" />
           <el-option label="失败" value="fail" />
           <el-option label="已封禁" value="banned" />
@@ -80,20 +80,20 @@
           style="width: 280px"
           @change="(v: any) => onDateChange(v, 'verify')"
         />
-        <el-input v-model="vFilter.keyword" placeholder="关键词（IP/extra）" clearable style="width: 200px" @change="loadList" />
+        <el-input v-model="vFilter.keyword" placeholder="关键词（IP/extra）" clearable style="width: 200px" @change="onFilterChange" />
         <el-button @click="loadList">刷新</el-button>
       </div>
 
       <!-- 登录失败日志筛选 -->
       <div v-else class="search-bar">
-        <el-select v-model="lfFilter.user_type" placeholder="用户类型" clearable style="width: 140px" @change="loadList">
+        <el-select v-model="lfFilter.user_type" placeholder="用户类型" clearable style="width: 140px" @change="onFilterChange">
           <el-option label="超管" value="admin" />
           <el-option label="开发者" value="tenant" />
           <el-option label="代理" value="agent" />
         </el-select>
-        <el-input v-model="lfFilter.username" placeholder="用户名" clearable style="width: 160px" @change="loadList" />
-        <el-input v-model="lfFilter.ip" placeholder="IP 地址" clearable style="width: 160px" @change="loadList" />
-        <el-select v-model="lfFilter.reason" placeholder="失败原因" clearable style="width: 160px" @change="loadList">
+        <el-input v-model="lfFilter.username" placeholder="用户名" clearable style="width: 160px" @change="onFilterChange" />
+        <el-input v-model="lfFilter.ip" placeholder="IP 地址" clearable style="width: 160px" @change="onFilterChange" />
+        <el-select v-model="lfFilter.reason" placeholder="失败原因" clearable style="width: 160px" @change="onFilterChange">
           <el-option label="密码错误" value="wrong_password" />
           <el-option label="账号禁用" value="disabled" />
           <el-option label="账号锁定" value="locked" />
@@ -230,7 +230,7 @@
     </div>
 
     <!-- 详情对话框 -->
-    <el-dialog v-model="detailVisible" :title="detailTitle" width="560px">
+    <el-dialog v-model="detailVisible" :title="detailTitle" :width="isMobile ? '92%' : '560px'">
       <div v-if="detailRow" class="detail-box">
         <div class="detail-row"><span class="label">ID：</span><span>{{ detailRow.id }}</span></div>
 
@@ -282,7 +282,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
@@ -300,6 +300,10 @@ import {
 const activeTab = ref<AdminLogTab>('operation')
 const loading = ref(false)
 const exporting = ref(false)
+
+// v0.7.0 修复：dialog 响应式宽度
+const isMobile = ref(false)
+const checkMobile = () => { isMobile.value = window.innerWidth < 768 }
 
 const tabLabel = computed(() => {
   return activeTab.value === 'operation' ? '操作日志'
@@ -407,12 +411,24 @@ const onDateChange = (val: [string, string] | null, kind: AdminLogTab) => {
       lfFilter.end_date = ''
     }
   }
+  // v0.7.0 修复：筛选变更重置分页
+  if (kind === 'operation') opFilter.page = 1
+  else if (kind === 'verify') vFilter.page = 1
+  else lfFilter.page = 1
   loadList()
 }
 
 // ============== Tab 切换 ==============
 const onTabChange = (tab: string | number) => {
   activeTab.value = tab as AdminLogTab
+  loadList()
+}
+
+// v0.7.0 修复：筛选变更重置分页
+const onFilterChange = () => {
+  if (activeTab.value === 'operation') opFilter.page = 1
+  else if (activeTab.value === 'verify') vFilter.page = 1
+  else lfFilter.page = 1
   loadList()
 }
 
@@ -585,7 +601,10 @@ const reasonTag = (r: string): any => {
 
 const formatDate = (s: string | null | undefined) => {
   if (!s) return '-'
-  return new Date(s).toLocaleString('zh-CN')
+  const d = new Date(s)
+  // v0.7.0 修复：Invalid Date 兜底
+  if (isNaN(d.getTime())) return '-'
+  return d.toLocaleString('zh-CN')
 }
 
 const formatJson = (s: string | null | undefined) => {
@@ -599,6 +618,14 @@ const formatJson = (s: string | null | undefined) => {
 
 onMounted(() => {
   loadList()
+  // v0.7.0 修复：dialog 响应式宽度
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
+})
+
+// v0.7.0 修复：dialog 响应式宽度
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', checkMobile)
 })
 </script>
 

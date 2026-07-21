@@ -94,7 +94,8 @@
             <!-- v0.5.0 语言切换器 -->
             <LanguageSwitcher />
 
-            <el-dropdown @command="handleCommand">
+            <!-- v0.7.0 修复：placement="bottom-end" 避免下拉菜单溢出右侧 -->
+            <el-dropdown placement="bottom-end" @command="handleCommand">
               <span class="user-info">
                 <el-avatar :size="28" icon="UserFilled" />
                 <span class="username hidden-mobile">{{ auth.username || t('layout.user') }}</span>
@@ -230,10 +231,12 @@ watch([currentRouteTitle, () => route.meta.title], () => {
   document.title = `${title} - KeyAuth SaaS`
 }, { immediate: true })
 
-onMounted(async () => {
-  await sysConfig.load()
+onMounted(() => {
+  // v0.7.0 修复：原 async onMounted 中 await sysConfig.load() 失败会导致 checkMobile 不执行
+  // 改为先注册 resize + checkMobile（保证响应式），sysConfig.load 异步触发不阻塞
   checkMobile()
   window.addEventListener('resize', checkMobile)
+  sysConfig.load().catch(() => { /* 错误已由 http 拦截器处理 */ })
 })
 
 onBeforeUnmount(() => {
@@ -359,10 +362,14 @@ watch(() => route.path, () => {
     display: flex;
     align-items: center;
     gap: $spacing-md;
+    // v0.7.0 修复 P1-F：min-width:0 + flex:1 让面包屑可被截断而不是挤压 header-right
+    min-width: 0;
+    flex: 1;
     .collapse-btn, .menu-btn {
       font-size: 20px;
       cursor: pointer;
       color: $color-text-regular;
+      flex-shrink: 0;
       &:hover { color: $color-primary; }
     }
     .page-title-mobile {
@@ -376,14 +383,20 @@ watch(() => route.path, () => {
     display: flex;
     align-items: center;
     gap: $spacing-sm;
+    // v0.7.0 修复 P1-F：原无 flex-wrap/子元素无 flex-shrink，导致窄屏时主题切换与用户菜单重叠
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    flex-shrink: 0;
     .user-info {
       display: flex;
       align-items: center;
       gap: $spacing-sm;
       cursor: pointer;
+      flex-shrink: 0;
       .username {
         font-size: 14px;
         color: $color-text-primary;
+        white-space: nowrap;
       }
     }
   }

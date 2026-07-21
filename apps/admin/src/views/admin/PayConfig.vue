@@ -118,7 +118,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import { listSysConfig, updateSysConfig } from '@/api/sysConfig'
 import { testPayConfigApi } from '@/api/pay'
@@ -224,6 +224,14 @@ const loadList = async () => {
 }
 
 const saveAll = async () => {
+  // v0.7.0 修复：防抖守卫，避免重复点击产生重复请求
+  if (saveLoading.value) return
+  // v0.7.0 修复：保存支付配置二次确认
+  try {
+    await ElMessageBox.confirm('确定要保存所有支付配置吗？', '确认', { type: 'warning' })
+  } catch {
+    return
+  }
   saveLoading.value = true
   let okCount = 0
   let failCount = 0

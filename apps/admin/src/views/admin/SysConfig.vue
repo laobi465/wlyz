@@ -57,7 +57,7 @@
     </div>
 
     <!-- 编辑对话框 -->
-    <el-dialog v-model="editDialogVisible" title="编辑配置" width="500px">
+    <el-dialog v-model="editDialogVisible" title="编辑配置" :width="isMobile ? '92%' : '500px'">
       <el-form label-position="top">
         <el-form-item label="配置 Key">
           <el-input :model-value="currentRow?.config_key" disabled />
@@ -94,7 +94,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
@@ -114,6 +114,10 @@ const list = ref<SysConfigItem[]>([])
 const loading = ref(false)
 const activeGroup = ref('')
 const keyword = ref('')
+
+// v0.7.0 修复：dialog 响应式宽度
+const isMobile = ref(false)
+const checkMobile = () => { isMobile.value = window.innerWidth < 768 }
 
 const groups = ['system', 'security', 'jwt', 'totp', 'app', 'card', 'verify', 'pay', 'admin', 'tenant', 'agent', 'notify']
 
@@ -194,6 +198,8 @@ const openEdit = (row: any) => {
 
 const saveConfig = async () => {
   if (!currentRow.value) return
+  // v0.7.0 修复：防抖守卫，避免重复点击产生重复请求
+  if (editLoading.value) return
   editLoading.value = true
   try {
     await request.put(`/admin/config/${currentRow.value.config_key}`, {
@@ -213,6 +219,14 @@ const saveConfig = async () => {
 
 onMounted(() => {
   loadList()
+  // v0.7.0 修复：dialog 响应式宽度
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
+})
+
+// v0.7.0 修复：dialog 响应式宽度
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', checkMobile)
 })
 </script>
 

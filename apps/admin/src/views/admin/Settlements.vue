@@ -149,13 +149,13 @@
     </div>
 
     <!-- 单条结算对话框 -->
-    <el-dialog v-model="settleDialogVisible" title="手动结算（单条）" width="500px">
+    <el-dialog v-model="settleDialogVisible" title="手动结算（单条）" :width="isMobile ? '92%' : '500px'">
       <el-form label-position="top">
         <el-form-item label="订单号">
           <el-input :model-value="currentRow?.order_no" disabled />
         </el-form-item>
         <el-form-item label="开发者应得">
-          <el-input :model-value="currentRow ? '¥' + currentRow.net_amount.toFixed(2) : ''" disabled />
+          <el-input :model-value="currentRow ? '¥' + formatMoney(currentRow.net_amount) : ''" disabled />
         </el-form-item>
         <el-form-item label="结算方式">
           <el-select v-model="settleForm.method" placeholder="选择结算方式" style="width: 100%">
@@ -176,7 +176,7 @@
     </el-dialog>
 
     <!-- 批量结算对话框 -->
-    <el-dialog v-model="batchDialogVisible" title="批量结算" width="560px">
+    <el-dialog v-model="batchDialogVisible" title="批量结算" :width="isMobile ? '92%' : '560px'">
       <el-alert type="info" :closable="false" show-icon style="margin-bottom: 16px;">
         系统将按开发者分组累计应结金额，单次最多 100 条；结算后金额自动入账开发者可提现余额。
       </el-alert>
@@ -211,7 +211,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
@@ -223,8 +223,15 @@ const formatMoney = (n: number) => (Number(n) || 0).toFixed(2)
 
 const formatDate = (s: string | null | undefined) => {
   if (!s) return '-'
-  return new Date(s).toLocaleString('zh-CN')
+  const d = new Date(s)
+  // v0.7.0 修复：Invalid Date 兜底
+  if (isNaN(d.getTime())) return '-'
+  return d.toLocaleString('zh-CN')
 }
+
+// v0.7.0 修复：dialog 响应式宽度
+const isMobile = ref(false)
+const checkMobile = () => { isMobile.value = window.innerWidth < 768 }
 
 // ============== Tab 切换 ==============
 const activeTab = ref<'settlements' | 'reconciliation'>('settlements')
@@ -350,6 +357,8 @@ const openSettle = (row: any) => {
 
 const confirmSettle = async () => {
   if (!currentRow.value) return
+  // v0.7.0 修复：防抖守卫
+  if (settleLoading.value) return
   settleLoading.value = true
   try {
     await settleOrderApi(currentRow.value.id, {
@@ -390,6 +399,8 @@ const openBatchSettle = () => {
 
 const confirmBatchSettle = async () => {
   if (selectedRows.value.length === 0) return
+  // v0.7.0 修复：防抖守卫
+  if (batchLoading.value) return
   batchLoading.value = true
   try {
     const ids = selectedRows.value.map(r => r.id)
@@ -456,8 +467,15 @@ const loadReconciliation = async () => {
 }
 
 onMounted(() => {
+  // v0.7.0 修复：注册 resize 监听，让 dialog 宽度响应窗口尺寸
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
   loadTenants()
   loadList()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', checkMobile)
 })
 </script>
 

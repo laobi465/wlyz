@@ -15,8 +15,8 @@ export type ThemeMode = 'light' | 'dark' | 'blue' | 'purple' | 'green' | 'auto'
 export const THEME_OPTIONS: { value: ThemeMode; label: string; icon: string }[] = [
   { value: 'light', label: '明亮', icon: 'Sunny' },
   { value: 'dark', label: '暗黑', icon: 'Moon' },
-  { value: 'blue', label: '深蓝', icon: 'Water Cup' },
-  { value: 'purple', label: '紫罗兰', icon: 'Magic Stick' },
+  { value: 'blue', label: '深蓝', icon: 'WaterCup' },
+  { value: 'purple', label: '紫罗兰', icon: 'MagicStick' },
   { value: 'green', label: '森林绿', icon: 'Aim' },
   { value: 'auto', label: '跟随系统', icon: 'Monitor' }
 ]

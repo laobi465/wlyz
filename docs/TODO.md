@@ -7,6 +7,98 @@
 
 ---
 
+## v0.7.0 前端管理员后台 UI 系统性修复 ✅ 已完成 2026-07-21
+
+### [P0] 主题图标名错误 ✅ 已完成 v0.7.0
+- [x] [已完成 2026-07-21] **背景**：用户要求「检查下前端管理员后台的 UI 是否有错误」，启动 4 个 subagent 并行排查 12 个管理员页面 + 11 个通用组件 + 4 个样式文件
+- [x] [已完成 2026-07-21] **根因**：`apps/admin/src/stores/theme.ts` 的 `THEME_OPTIONS` 中 `'Water Cup'` 和 `'Magic Stick'` 不是 EP 图标的有效导出名（EP 图标导出名无空格）
+- [x] [已完成 2026-07-21] **修复**：`'Water Cup'` → `'WaterCup'`，`'Magic Stick'` → `'MagicStick'`
+
+### [P0] PlatformNoticeBanner 白底白字不可见 ✅ 已完成 v0.7.0
+- [x] [已完成 2026-07-21] **根因**：`apps/admin/src/components/PlatformNoticeBanner.vue` 的 `.banner-label` 用 `background: currentColor`，`currentColor` 解析为父级 `color:#fff`，导致白底白字不可读
+- [x] [已完成 2026-07-21] **修复**：改用 `background: rgba(255, 255, 255, 0.25)` + `color: #fff`，并补 `flex-shrink: 0`
+- [x] [已完成 2026-07-21] **附加修复**：添加 `isMobile` 响应式检测 + dialog 响应式宽度 + resize 监听清理
+
+### [P0] Dashboard toFixed 崩溃 + 无 loading 反馈 ✅ 已完成 v0.7.0
+- [x] [已完成 2026-07-21] **根因 1**：`apps/admin/src/views/admin/Dashboard.vue` 的 `stats.revenue_month.toFixed(2)` 在数据为 null 时抛 TypeError
+- [x] [已完成 2026-07-21] **根因 2**：`onMounted(loadDashboard)` 期间页面全 0/空无反馈
+- [x] [已完成 2026-07-21] **修复 1**：新增 `formatMoney(n, decimals)` 函数，`Number(n) || 0` 兜底，所有 `.toFixed(2)` 改为 `formatMoney()`
+- [x] [已完成 2026-07-21] **修复 2**：新增 `loading` ref + `<div v-loading="loading">` 遮罩 + try/finally
+- [x] [已完成 2026-07-21] **附加修复**：`formatDate` 添加 Invalid Date 兜底，loadDashboard 数据兜底处理
+
+### [P0] Profile.vue labelPosition 非响应式 ✅ 已完成 v0.7.0
+- [x] [已完成 2026-07-21] **根因**：`apps/admin/src/views/admin/Profile.vue` 的 `labelPosition` computed 读 `window.innerWidth` 非响应式数据，resize 不重算
+- [x] [已完成 2026-07-21] **修复**：改用 `isMobile` ref + `checkMobile` 函数 + resize 监听，`labelPosition` 依赖 `isMobile` ref
+- [x] [已完成 2026-07-21] **附加修复**：dialog 响应式宽度、saveProfile/changePassword 防抖守卫、changePassword callback+async 混用改为 await validate() Promise 形式、formatDate Invalid Date 兜底
+
+### [P1] BasicLayout header-right flex 布局（主题切换重叠根因）✅ 已完成 v0.7.0
+- [x] [已完成 2026-07-21] **根因**：`apps/admin/src/layouts/BasicLayout.vue` 的 `.header-right` 无 `flex-wrap`、子元素无 `flex-shrink:0`，窄屏时主题切换与用户菜单重叠
+- [x] [已完成 2026-07-21] **修复**：`.header-left` 加 `min-width:0` + `flex:1`，`.header-right` 加 `flex-wrap:wrap` + `justify-content:flex-end` + `flex-shrink:0`，子元素加 `flex-shrink:0` + `white-space:nowrap`
+- [x] [已完成 2026-07-21] **附加修复**：`el-dropdown` 加 `placement="bottom-end"` 避免下拉菜单溢出右侧；`onMounted` 中 `await sysConfig.load()` 失败会导致 `checkMobile` 不执行 → 改为先 `checkMobile()` + 注册 resize，`sysConfig.load()` 异步触发不阻塞
+
+### [P1] ThemeSwitcher/LanguageSwitcher placement + flex-shrink ✅ 已完成 v0.7.0
+- [x] [已完成 2026-07-21] **根因**：两个组件的 `el-dropdown` 未设 `placement="bottom-end"`，`.theme-switcher` / `.lang-switcher` 无 `flex-shrink:0`
+- [x] [已完成 2026-07-21] **修复**：`placement="bottom-end"` + `flex-shrink: 0` + `white-space: nowrap`，移除 ThemeSwitcher 中 `margin-left: auto` 死声明
+
+### [P1] ResponsiveTable size-change 双触发 loadList ✅ 已完成 v0.7.0
+- [x] [已完成 2026-07-21] **根因**：EP `el-pagination` 切换 page-size 时会先发 `size-change` 再发 `current-change`（page 重置为 1），父组件同时监听两个事件会导致 `loadList` 双触发
+- [x] [已完成 2026-07-21] **修复**：用 `_sizeChanging` 标志位抑制 size-change 后的 page-change；删除冗余 `currentPage.value = p` / `pageSizeRef.value = s`（v-model 已绑定）
+
+### [P1] Settlements.vue net_amount.toFixed 崩溃 ✅ 已完成 v0.7.0
+- [x] [已完成 2026-07-21] **根因**：`apps/admin/src/views/admin/Settlements.vue` 第 158 行 `currentRow.net_amount.toFixed(2)` 在数据为 null 时抛 TypeError
+- [x] [已完成 2026-07-21] **修复**：复用已有的 `formatMoney` 函数
+- [x] [已完成 2026-07-21] **附加修复**：单条/批量结算 dialog 响应式宽度、confirmSettle/confirmBatchSettle 防抖守卫、formatDate Invalid Date 兜底、isMobile + resize 监听
+
+### [P1] 12 个管理员页面系统性修复 ✅ 已完成 v0.7.0
+- [x] [已完成 2026-07-21] **修复策略**：用 2 个并行 subagent 修复 9 个管理员页面（Settlements/Profile 已直接修复）的 5 类共性问题
+- [x] [已完成 2026-07-21] **修复点 1（防抖守卫）**：所有 `confirm*/submit*/save*` 函数添加 `if (xxxLoading.value) return`
+- [x] [已完成 2026-07-21] **修复点 2（clearValidate）**：`openEdit/openAdd/openReject` 改为 async + `await nextTick(); formRef.value?.clearValidate()`
+- [x] [已完成 2026-07-21] **修复点 3（dialog 响应式）**：所有 `<el-dialog width="Npx">` 改为 `:width="isMobile ? '92%' : 'Npx'"` + isMobile + resize 监听
+- [x] [已完成 2026-07-21] **修复点 4（filter.page 重置）**：筛选条件 `@change="loadList"` 改为 `@change="onFilterChange"`，新建 `onFilterChange` 重置 `filter.page = 1` 后再 `loadList()`
+- [x] [已完成 2026-07-21] **修复点 5（formatDate 兜底）**：所有 `formatDate` 添加 `if (isNaN(d.getTime())) return '-'` 兜底
+- [x] [已完成 2026-07-21] **Security.vue validate callback+async 混用**：改为 `try { await formRef.value.validate() } catch { return }`
+- [x] [已完成 2026-07-21] **PayConfig.vue saveAll 二次确认**：函数开头添加 `ElMessageBox.confirm('确定要保存所有支付配置吗？', '确认', { type: 'warning' })`
+
+#### 修复矩阵
+| 文件 | 防抖 | clearValidate | dialog 响应式 | filter.page 重置 | formatDate 兜底 |
+|---|---|---|---|---|---|
+| Tenants.vue | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Agents.vue | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Packages.vue | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Notices.vue | ✅ | ✅ | ✅ | ✅ | ✅ |
+| SysConfig.vue | ✅ | - | ✅ | - | - |
+| Logs.vue | - | - | ✅ | ✅ | ✅ |
+| Security.vue | ✅ | ✅ | ✅ | - | ✅ |
+| PayConfig.vue | ✅ | - | - | - | - |
+| TenantWithdrawalReview.vue | ✅ | ✅ | ✅ | - | ✅ |
+
+### v0.7.0 验证
+- [x] [已完成 2026-07-21] `cd apps/admin && npm run build` 通过（vue-tsc 类型检查 + Vite 构建，16.69s）
+- [x] [已完成 2026-07-21] 修复逻辑验证：所有 5 个 P0 + 14 个 P1 修复点均通过代码 review
+- [x] [已完成 2026-07-21] 4 个 subagent 并行修复 9 个管理员页面，第一个 subagent 内部还跑了 vue-tsc + vite build 验证
+
+### v0.7.0 待真实环境验证
+- [ ] [待开始] 真实浏览器验证 ThemeSwitcher 下拉菜单中 blue/purple 主题图标正常显示
+- [ ] [待开始] 真实浏览器验证 PlatformNoticeBanner「平台公告」标签不再白底白字
+- [ ] [待开始] 真实浏览器验证 /admin/dashboard 加载期间显示 loading 遮罩
+- [ ] [待开始] 真实浏览器验证窄屏（< 768px）顶栏主题切换与用户菜单不再重叠
+- [ ] [待开始] 真实浏览器验证 ResponsiveTable 切换 page-size 时不再触发两次 loadList
+- [ ] [待开始] 真实浏览器验证所有管理员页面对话框在移动端宽度 92% 自适应
+
+### v0.7.0 未修复的 P2/P3（30 项，非阻断性）
+- [ ] [待开始 P2] SysConfig.vue 编辑表单无 rules、el-input rows 用在非 textarea
+- [ ] [待开始 P2] Logs.vue search-bar 无移动端样式
+- [ ] [待开始 P2] Security.vue IP/CIDR 缺格式校验
+- [ ] [待开始 P2] PayConfig.vue saveAll 串行 await 11 字段、整个表单无 rules
+- [ ] [待开始 P3] ResponsiveTable `:key="idx"` 用数组索引作 key
+- [ ] [待开始 P3] themes.scss auto+暗黑分支未覆盖 `--el-color-primary*`
+- [ ] [待开始 P3] themes.scss dark 主题 `--el-color-primary-light-3/5/7` 全等于主色，压平色阶
+- [ ] [待开始 P3] BasicLayout header-left `.el-breadcrumb` 无 `min-width:0`
+- [ ] [待开始 P3] ThemeSwitcher `.check-icon` 在窄屏下拉菜单中溢出
+- [ ] [待开始 P3] 其余 21 项 P3 级别细节问题
+
+---
+
 ## v0.6.9 Dashboard 查询性能优化 + theme 监听器幂等 ✅ 已完成 2026-07-21
 
 ### [P1] /admin/dashboard 加载卡很久（后端 21 次串行 DB 查询）✅ 已完成 v0.6.9

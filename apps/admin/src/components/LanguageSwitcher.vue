@@ -5,7 +5,7 @@
   - 与 ThemeSwitcher 并排在 BasicLayout 顶栏显示
 -->
 <template>
-  <el-dropdown trigger="click" @command="onCommand">
+  <el-dropdown trigger="click" placement="bottom-end" @command="onCommand">
     <span class="lang-switcher" :title="t('language.title')">
       <el-icon><component :is="currentIcon" /></el-icon>
       <span class="label hidden-mobile">{{ currentLabel }}</span>
@@ -59,6 +59,9 @@ const onCommand = (cmd: AppLocale) => {
   cursor: pointer;
   color: $color-text-regular;
   transition: background 0.2s, color 0.2s;
+  // v0.7.0 修复 P1-G：flex-shrink:0 防止被父容器挤压
+  flex-shrink: 0;
+  white-space: nowrap;
 
   &:hover {
     background: $color-bg-hover;

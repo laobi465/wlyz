@@ -147,7 +147,7 @@
     </div>
 
     <!-- 关闭 2FA 对话框 -->
-    <el-dialog v-model="disableDialogVisible" title="关闭两步验证" width="440px">
+    <el-dialog v-model="disableDialogVisible" title="关闭两步验证" :width="isMobile ? '92%' : '440px'">
       <el-form label-position="top">
         <el-form-item label="当前密码">
           <el-input v-model="disableForm.password" type="password" show-password placeholder="验证身份" />
@@ -165,7 +165,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -256,13 +256,19 @@ const deviceMobileFields = [
   { prop: 'last_active_at', label: '最后活跃', formatter: (v: string) => formatDate(v) }
 ]
 
-const labelPosition = computed(() => {
-  return window.innerWidth < 768 ? 'top' : 'right'
-})
+// v0.7.0 修复 P0-5：原 computed 读 window.innerWidth 非响应式数据，resize 不重算
+// 改为响应式 ref + resize 监听器，确保窗口尺寸变化时 labelPosition 自动更新
+const isMobile = ref(false)
+const checkMobile = () => { isMobile.value = window.innerWidth < 768 }
+
+const labelPosition = computed<'top' | 'right'>(() => isMobile.value ? 'top' : 'right')
 
 const formatDate = (s: string | null) => {
   if (!s) return '-'
-  return new Date(s).toLocaleString('zh-CN')
+  const d = new Date(s)
+  // v0.7.0 修复：Invalid Date 兜底
+  if (isNaN(d.getTime())) return '-'
+  return d.toLocaleString('zh-CN')
 }
 
 const loadProfile = async () => {
@@ -283,6 +289,8 @@ const loadProfile = async () => {
 }
 
 const saveProfile = async () => {
+  // v0.7.0 修复：防抖守卫，避免重复点击产生重复请求
+  if (profileSaving.value) return
   profileSaving.value = true
   try {
     await updateProfileApi(role, {
@@ -300,26 +308,32 @@ const saveProfile = async () => {
 
 const changePassword = async () => {
   if (!pwdFormRef.value) return
-  await pwdFormRef.value.validate(async (valid) => {
-    if (!valid) return
-    pwdSaving.value = true
-    try {
-      await changePasswordApi(role, { ...pwdForm })
-      ElMessage.success('密码修改成功，请重新登录')
-      pwdForm.old_password = ''
-      pwdForm.new_password = ''
-      pwdForm.confirm_password = ''
-      // 密码修改后建议重新登录
-      setTimeout(() => {
-        auth.logout()
-        location.href = '/login'
-      }, 1500)
-    } catch {
-      // 铁律 06 待核实：POST /admin/auth/change_password 待 v0.3.0 实现
-    } finally {
-      pwdSaving.value = false
-    }
-  })
+  // v0.7.0 修复：防抖守卫
+  if (pwdSaving.value) return
+  // v0.7.0 修复：原 validate callback + async 混用易导致 pwdSaving 状态错乱
+  // 改为 await validate 的 Promise 形式
+  try {
+    await pwdFormRef.value.validate()
+  } catch {
+    return
+  }
+  pwdSaving.value = true
+  try {
+    await changePasswordApi(role, { ...pwdForm })
+    ElMessage.success('密码修改成功，请重新登录')
+    pwdForm.old_password = ''
+    pwdForm.new_password = ''
+    pwdForm.confirm_password = ''
+    // 密码修改后建议重新登录
+    setTimeout(() => {
+      auth.logout()
+      location.href = '/login'
+    }, 1500)
+  } catch {
+    // 铁律 06 待核实：POST /admin/auth/change_password 待 v0.3.0 实现
+  } finally {
+    pwdSaving.value = false
+  }
 }
 
 const startSetup2FA = async () => {
@@ -407,8 +421,16 @@ const kickDevice = async (row: any) => {
 }
 
 onMounted(() => {
+  // v0.7.0 修复 P0-5：注册 resize 监听，让 labelPosition 响应窗口尺寸变化
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
   loadProfile()
   loadDevices()
+})
+
+onBeforeUnmount(() => {
+  // v0.7.0 修复 P0-5：清理 resize 监听，避免内存泄漏
+  window.removeEventListener('resize', checkMobile)
 })
 </script>
 

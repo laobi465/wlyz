@@ -14,18 +14,18 @@
 
     <div class="app-card">
       <div class="search-bar">
-        <el-select v-model="filter.type" placeholder="类型" clearable style="width: 140px" @change="loadList">
+        <el-select v-model="filter.type" placeholder="类型" clearable style="width: 140px" @change="onFilterChange">
           <el-option label="平台公告" value="platform" />
           <el-option label="开发者公告" value="developer" />
           <el-option label="应用公告" value="app" />
           <el-option label="代理通知" value="agent_notify" />
         </el-select>
-        <el-select v-model="filter.status" placeholder="状态" clearable style="width: 140px" @change="loadList">
+        <el-select v-model="filter.status" placeholder="状态" clearable style="width: 140px" @change="onFilterChange">
           <el-option label="草稿" value="draft" />
           <el-option label="已发布" value="published" />
           <el-option label="已下线" value="offline" />
         </el-select>
-        <el-input v-model="filter.keyword" placeholder="标题关键词" clearable style="width: 200px" @change="loadList" />
+        <el-input v-model="filter.keyword" placeholder="标题关键词" clearable style="width: 200px" @change="onFilterChange" />
         <el-button @click="loadList">刷新</el-button>
       </div>
 
@@ -82,7 +82,7 @@
     </div>
 
     <!-- 新建/编辑对话框 -->
-    <el-dialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新建公告' : '编辑公告'" width="500px">
+    <el-dialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新建公告' : '编辑公告'" :width="isMobile ? '92%' : '500px'">
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top">
         <el-form-item label="类型" prop="type">
           <el-select v-model="form.type" style="width: 100%">
@@ -141,7 +141,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
@@ -153,6 +153,10 @@ import {
 const list = ref<AdminNotice[]>([])
 const total = ref(0)
 const loading = ref(false)
+
+// v0.7.0 修复：dialog 响应式宽度
+const isMobile = ref(false)
+const checkMobile = () => { isMobile.value = window.innerWidth < 768 }
 
 const filter = reactive({
   type: undefined as NoticeType | undefined,
@@ -233,7 +237,16 @@ const typeText = (t: string) => {
 
 const formatDate = (s: string | null) => {
   if (!s) return '-'
-  return new Date(s).toLocaleString('zh-CN')
+  const d = new Date(s)
+  // v0.7.0 修复：Invalid Date 兜底
+  if (isNaN(d.getTime())) return '-'
+  return d.toLocaleString('zh-CN')
+}
+
+// v0.7.0 修复：筛选变更重置分页
+const onFilterChange = () => {
+  filter.page = 1
+  loadList()
 }
 
 const loadList = async () => {
@@ -268,14 +281,17 @@ const resetForm = () => {
   })
 }
 
-const openCreate = () => {
+const openCreate = async () => {
   dialogMode.value = 'create'
   editingId.value = null
   resetForm()
   dialogVisible.value = true
+  // v0.7.0 修复：清除上一次表单验证的残留状态
+  await nextTick()
+  formRef.value?.clearValidate()
 }
 
-const openEdit = (row: any) => {
+const openEdit = async (row: any) => {
   dialogMode.value = 'edit'
   editingId.value = row.id
   Object.assign(form, {
@@ -289,12 +305,17 @@ const openEdit = (row: any) => {
     expire_at: row.expire_at || ''
   })
   dialogVisible.value = true
+  // v0.7.0 修复：清除上一次表单验证的残留状态
+  await nextTick()
+  formRef.value?.clearValidate()
 }
 
 const confirmSubmit = async () => {
   if (!formRef.value) return
   await formRef.value.validate(async (valid) => {
     if (!valid) return
+    // v0.7.0 修复：防抖守卫，避免重复点击产生重复请求
+    if (submitLoading.value) return
     submitLoading.value = true
     try {
       const payload = {
@@ -341,7 +362,15 @@ const removeRow = (row: any) => {
 }
 
 onMounted(() => {
+  // v0.7.0 修复：dialog 响应式宽度
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
   loadList()
+})
+
+// v0.7.0 修复：dialog 响应式宽度
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', checkMobile)
 })
 </script>
 

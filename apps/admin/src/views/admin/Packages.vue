@@ -15,7 +15,7 @@
 
     <div class="app-card">
       <div class="search-bar">
-        <el-input v-model="filter.keyword" placeholder="名称/描述" clearable style="width: 220px" @change="loadList" />
+        <el-input v-model="filter.keyword" placeholder="名称/描述" clearable style="width: 220px" @change="onFilterChange" />
         <el-button @click="loadList">刷新</el-button>
       </div>
 
@@ -64,7 +64,7 @@
     </div>
 
     <!-- 新建/编辑对话框 -->
-    <el-dialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新建套餐' : '编辑套餐'" width="500px">
+    <el-dialog v-model="dialogVisible" :title="dialogMode === 'create' ? '新建套餐' : '编辑套餐'" :width="isMobile ? '92%' : '500px'">
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top">
         <el-form-item label="名称" prop="name">
           <el-input v-model="form.name" placeholder="如：标准版" maxlength="64" />
@@ -107,7 +107,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage, type FormInstance } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
@@ -120,6 +120,10 @@ import { request } from '@/api/http'
 const list = ref<AdminPackage[]>([])
 const total = ref(0)
 const loading = ref(false)
+
+// v0.7.0 修复：dialog 响应式宽度
+const isMobile = ref(false)
+const checkMobile = () => { isMobile.value = window.innerWidth < 768 }
 
 const filter = reactive({
   keyword: '',
@@ -180,7 +184,16 @@ const statusText = (s: string) => {
 
 const formatDate = (s: string | null) => {
   if (!s) return '-'
-  return new Date(s).toLocaleString('zh-CN')
+  const d = new Date(s)
+  // v0.7.0 修复：Invalid Date 兜底
+  if (isNaN(d.getTime())) return '-'
+  return d.toLocaleString('zh-CN')
+}
+
+// v0.7.0 修复：筛选变更重置分页
+const onFilterChange = () => {
+  filter.page = 1
+  loadList()
 }
 
 const loadList = async () => {
@@ -209,14 +222,17 @@ const resetForm = () => {
   })
 }
 
-const openCreate = () => {
+const openCreate = async () => {
   dialogMode.value = 'create'
   editingId.value = null
   resetForm()
   dialogVisible.value = true
+  // v0.7.0 修复：清除上一次表单验证的残留状态
+  await nextTick()
+  formRef.value?.clearValidate()
 }
 
-const openEdit = (row: any) => {
+const openEdit = async (row: any) => {
   dialogMode.value = 'edit'
   editingId.value = row.id
   Object.assign(form, {
@@ -231,12 +247,17 @@ const openEdit = (row: any) => {
     status: row.status || 'active'
   })
   dialogVisible.value = true
+  // v0.7.0 修复：清除上一次表单验证的残留状态
+  await nextTick()
+  formRef.value?.clearValidate()
 }
 
 const confirmSubmit = async () => {
   if (!formRef.value) return
   await formRef.value.validate(async (valid) => {
     if (!valid) return
+    // v0.7.0 修复：防抖守卫，避免重复点击产生重复请求
+    if (submitLoading.value) return
     submitLoading.value = true
     try {
       const payload = {
@@ -270,7 +291,15 @@ const confirmSubmit = async () => {
 }
 
 onMounted(() => {
+  // v0.7.0 修复：dialog 响应式宽度
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
   loadList()
+})
+
+// v0.7.0 修复：dialog 响应式宽度
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', checkMobile)
 })
 </script>
 

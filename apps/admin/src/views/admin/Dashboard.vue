@@ -10,10 +10,12 @@
   <div class="admin-dashboard">
     <PageHeader title="平台看板" subtitle="平台核心指标、待办事项与最近动态一览">
       <template #actions>
-        <el-button @click="loadDashboard">刷新</el-button>
+        <el-button :loading="loading" @click="loadDashboard">刷新</el-button>
       </template>
     </PageHeader>
 
+    <!-- v0.7.0 修复：添加 loading 遮罩，避免页面卡很久时无反馈 -->
+    <div v-loading="loading" class="dashboard-content">
     <!-- 核心指标卡 -->
     <div class="stat-grid">
       <div class="stat-card tenants">
@@ -61,7 +63,7 @@
         <div class="stat-info">
           <div class="stat-label">今日收入</div>
           <div class="stat-value"><CountUp :value="stats.revenue_today" :decimals="2" prefix="¥" /></div>
-          <div class="stat-extra">本月 ¥{{ stats.revenue_month.toFixed(2) }}</div>
+          <div class="stat-extra">本月 ¥{{ formatMoney(stats.revenue_month) }}</div>
         </div>
       </div>
       <div class="stat-card settlement">
@@ -69,7 +71,7 @@
         <div class="stat-info">
           <div class="stat-label">待结算</div>
           <div class="stat-value"><CountUp :value="stats.settlement_pending" /></div>
-          <div class="stat-extra">¥{{ stats.settlement_amount.toFixed(2) }}</div>
+          <div class="stat-extra">¥{{ formatMoney(stats.settlement_amount) }}</div>
         </div>
       </div>
       <div class="stat-card quick-action" @click="$router.push('/admin/sys-config')">
@@ -91,7 +93,7 @@
         <ul class="todo-list">
           <li class="todo-item" @click="$router.push('/admin/settlements')">
             <span class="todo-label">待结算订单</span>
-            <span class="todo-value danger">{{ stats.settlement_pending }} 笔 / ¥{{ stats.settlement_amount.toFixed(2) }}</span>
+            <span class="todo-value danger">{{ stats.settlement_pending }} 笔 / ¥{{ formatMoney(stats.settlement_amount) }}</span>
             <el-icon class="todo-arrow"><ArrowRight /></el-icon>
           </li>
           <li class="todo-item" @click="$router.push('/admin/tenants')">
@@ -125,7 +127,7 @@
             class="trend-bar"
             :style="{ height: barHeight(point.amount) + '%' }"
           >
-            <span class="bar-value">¥{{ point.amount.toFixed(0) }}</span>
+            <span class="bar-value">¥{{ formatMoney(point.amount, 0) }}</span>
             <span class="bar-date">{{ point.date.slice(5) }}</span>
           </div>
         </div>
@@ -186,6 +188,7 @@
         </ResponsiveTable>
       </div>
     </div>
+    </div><!-- /dashboard-content -->
   </div>
 </template>
 
@@ -196,6 +199,9 @@ import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
 import { adminDashboardApi, type AdminDashboardData } from '@/api/admin'
+
+// v0.7.0 修复：添加 loading 状态，避免页面卡很久时无反馈
+const loading = ref(false)
 
 const stats = ref<AdminDashboardData>({
   tenant_total: 0,
@@ -264,20 +270,43 @@ const orderStatusText = (s: string) => ({
 
 const formatDate = (s: string | null) => {
   if (!s) return '-'
-  return new Date(s).toLocaleString('zh-CN')
+  const d = new Date(s)
+  // v0.7.0 修复：Invalid Date 兜底
+  if (isNaN(d.getTime())) return '-'
+  return d.toLocaleString('zh-CN')
+}
+
+// v0.7.0 修复：金额格式化，null/undefined 兜底为 0，防止 toFixed 崩溃
+const formatMoney = (n: number | null | undefined, decimals = 2) => {
+  const num = Number(n) || 0
+  return num.toFixed(decimals)
 }
 
 const loadDashboard = async () => {
+  // v0.7.0 修复：添加 loading 状态，避免页面卡很久时无反馈
+  loading.value = true
   try {
     const data = await adminDashboardApi()
     if (data && typeof data === 'object') {
-      Object.assign(stats.value, data)
+      // v0.7.0 修复：对可能为 null 的金额字段做兜底，防止 toFixed 崩溃
+      const safeData = {
+        ...data,
+        revenue_today: Number(data.revenue_today) || 0,
+        revenue_month: Number(data.revenue_month) || 0,
+        settlement_amount: Number(data.settlement_amount) || 0,
+      }
+      Object.assign(stats.value, safeData)
       recentTenants.value = data.recent_tenants || []
       recentOrders.value = data.recent_orders || []
-      revenueTrend.value = data.revenue_trend || []
+      revenueTrend.value = (data.revenue_trend || []).map(p => ({
+        ...p,
+        amount: Number(p.amount) || 0
+      }))
     }
   } catch {
     // 错误已由 http 拦截器处理
+  } finally {
+    loading.value = false
   }
 }
 

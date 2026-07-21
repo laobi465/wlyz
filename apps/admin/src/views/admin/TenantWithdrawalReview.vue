@@ -97,7 +97,7 @@
     </div>
 
     <!-- 打款对话框 -->
-    <el-dialog v-model="payVisible" title="确认打款" width="480px">
+    <el-dialog v-model="payVisible" title="确认打款" :width="isMobile ? '92%' : '480px'">
       <el-form ref="payFormRef" :model="payForm" label-position="top">
         <el-form-item label="开发者">
           <el-input :model-value="currentRow?.tenant_username" disabled />
@@ -125,7 +125,7 @@
     </el-dialog>
 
     <!-- 驳回对话框 -->
-    <el-dialog v-model="rejectVisible" title="审核驳回" width="480px">
+    <el-dialog v-model="rejectVisible" title="审核驳回" :width="isMobile ? '92%' : '480px'">
       <el-form ref="rejectFormRef" :model="rejectForm" :rules="rejectRules" label-position="top">
         <el-form-item label="开发者">
           <el-input :model-value="currentRow?.tenant_username" disabled />
@@ -149,7 +149,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage, type FormInstance } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import ResponsiveTable from '@/components/ResponsiveTable.vue'
@@ -163,7 +163,8 @@ import {
 const formatDate = (s: string | null | undefined) => {
   if (!s) return '-'
   const d = new Date(s)
-  if (isNaN(d.getTime())) return s
+  // v0.7.0 修复：Invalid Date 兜底
+  if (isNaN(d.getTime())) return '-'
   const pad = (n: number) => n.toString().padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
@@ -173,6 +174,10 @@ const formatMoney = (n: number) => (Number(n) || 0).toFixed(2)
 const list = ref<AdminTenantWithdrawal[]>([])
 const total = ref(0)
 const loading = ref(false)
+
+// v0.7.0 修复：dialog 响应式宽度
+const isMobile = ref(false)
+const checkMobile = () => { isMobile.value = window.innerWidth < 768 }
 
 const filter = reactive({
   status: 'pending',
@@ -249,15 +254,20 @@ const payForm = reactive({
   remark: ''
 })
 
-const openPay = (row: AdminTenantWithdrawal) => {
+const openPay = async (row: AdminTenantWithdrawal) => {
   currentRow.value = row
   payForm.pay_trade_no = ''
   payForm.remark = ''
   payVisible.value = true
+  // v0.7.0 修复：清除上一次表单验证的残留状态
+  await nextTick()
+  payFormRef.value?.clearValidate()
 }
 
 const confirmPay = async () => {
   if (!currentRow.value) return
+  // v0.7.0 修复：防抖守卫，避免重复点击产生重复请求
+  if (payLoading.value) return
   payLoading.value = true
   try {
     await payAdminTenantWithdrawalApi(currentRow.value.id, {
@@ -283,15 +293,20 @@ const rejectRules = {
   reason: [{ required: true, message: '请填写驳回原因', trigger: 'blur' }]
 }
 
-const openReject = (row: AdminTenantWithdrawal) => {
+const openReject = async (row: AdminTenantWithdrawal) => {
   currentRow.value = row
   rejectForm.reason = ''
   rejectVisible.value = true
+  // v0.7.0 修复：清除上一次表单验证的残留状态
+  await nextTick()
+  rejectFormRef.value?.clearValidate()
 }
 
 const confirmReject = async () => {
   if (!currentRow.value) return
   if (!rejectFormRef.value) return
+  // v0.7.0 修复：防抖守卫，避免重复点击产生重复请求
+  if (rejectLoading.value) return
   try {
     await rejectFormRef.value.validate()
   } catch {
@@ -310,7 +325,17 @@ const confirmReject = async () => {
   }
 }
 
-onMounted(loadList)
+onMounted(() => {
+  loadList()
+  // v0.7.0 修复：dialog 响应式宽度
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
+})
+
+// v0.7.0 修复：dialog 响应式宽度
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', checkMobile)
+})
 </script>
 
 <style scoped lang="scss">
