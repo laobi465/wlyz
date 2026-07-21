@@ -9,6 +9,207 @@
 
 ---
 
+## [0.6.9] - 2026-07-21（/admin/dashboard 加载卡很久 + 主题切换监听器累积修复）
+
+### [修复] P1 性能：/admin/dashboard 加载卡很久（后端 21 次串行 DB 查询）
+
+#### 症状
+
+v0.6.8 修复 UpdateNotifier setInterval 累积卡死后，用户反馈「访问 `/admin/dashboard` 后会卡很久」。页面能进入但加载延迟明显。
+
+#### 根因定位
+
+后端 `apps/server/internal/handler/admin_business.go` 的 `AdminDashboard` handler 存在 **21 次串行 DB 查询**：
+
+| 类别 | 查询次数 | 说明 |
+|---|---|---|
+| 开发者统计 | 2 | tenant_total + tenant_active |
+| 代理统计 | 2 | agent_total + agent_active |
+| 应用/卡密统计 | 3 | app_total + card_total + card_active |
+| 今日订单/收入 | 3 | order_today + revenue_today + revenue_month |
+| 结算待处理 | 2 | settlement_pending + settlement_amount |
+| 最近开发者 | 1 | recent_tenants LIMIT 10 |
+| 最近订单 | 1 | recent_orders LIMIT 10 |
+| **7 日收入趋势** | **7** | **for i := 6; i >= 0; i-- { SELECT SUM WHERE paid_at >= dayStart AND paid_at < dayEnd }** |
+| **合计** | **21** | 全部串行执行 |
+
+**头号性能瓶颈**：7 日收入趋势是循环 7 次单独 SUM 查询（经典 N+1）：
+
+```go
+// 修复前（N+1）
+revenueTrend := make([]gin.H, 0, 7)
+for i := 6; i >= 0; i-- {
+    dayStart := startOfToday.AddDate(0, 0, -i)
+    dayEnd := dayStart.AddDate(0, 0, 1)
+    var dayRevenue float64
+    deps.DB.Model(&model.AppOrder{}).
+        Where("pay_status = ? AND paid_at >= ? AND paid_at < ?", "paid", dayStart, dayEnd).
+        Select("COALESCE(SUM(total_amount), 0)").Scan(&dayRevenue)
+    revenueTrend = append(revenueTrend, gin.H{
+        "date":   dayStart.Format("2006-01-02"),
+        "amount": dayRevenue,
+    })
+}
+```
+
+每次循环执行 `SELECT SUM(total_amount) FROM app_order WHERE pay_status='paid' AND paid_at >= ? AND paid_at < ?`，7 次串行 = 7 倍延迟。app_order 表数据量大时（百万级订单），每次 SUM 查询扫描 idx_paid_at 索引 + 回表，累计数秒。
+
+加上其他 14 次统计查询（tenant/agent/app/card/order/settlement 各 2-3 次），总延迟可达 5-10 秒，正好对应「卡很久」。
+
+#### 修复：7 日趋势 N+1 → 1 次 GROUP BY 查询
+
+```go
+// 修复后（1 次查询）
+sevenDaysAgo := startOfToday.AddDate(0, 0, -6)
+type dayRevenueRow struct {
+    Day     string  `gorm:"column:day"`
+    Revenue float64 `gorm:"column:revenue"`
+}
+var dayRows []dayRevenueRow
+deps.DB.Model(&model.AppOrder{}).
+    Select("DATE(paid_at) AS day, COALESCE(SUM(total_amount), 0) AS revenue").
+    Where("pay_status = ? AND paid_at >= ?", "paid", sevenDaysAgo).
+    Group("DATE(paid_at)").
+    Scan(&dayRows)
+// 构建日期到金额的 map（仅有订单的日期）
+revenueMap := make(map[string]float64, len(dayRows))
+for _, r := range dayRows {
+    revenueMap[r.Day] = r.Revenue
+}
+// 填充 7 日数据（无订单的日期补 0）
+revenueTrend := make([]gin.H, 0, 7)
+for i := 6; i >= 0; i-- {
+    dayStart := startOfToday.AddDate(0, 0, -i)
+    dateStr := dayStart.Format("2006-01-02")
+    revenueTrend = append(revenueTrend, gin.H{
+        "date":   dateStr,
+        "amount": revenueMap[dateStr], // map 取不到时返回 0，正好是"无订单"的默认值
+    })
+}
+```
+
+**优化效果**：
+- 查询次数：21 → 15（7 日趋势部分 7 次 → 1 次）
+- 7 日趋势部分延迟降低 ~85%（7 次 DB 往返 → 1 次）
+- 利用 MySQL `DATE(paid_at)` 函数 + `GROUP BY` 一次聚合所有日期
+- 无订单的日期在内存中补 0，不丢失日期轴
+
+#### 索引确认
+
+`app_order` 表已有 `idx_paid_at` 索引（migration 001），`WHERE paid_at >= ?` 可走索引范围扫描。`GROUP BY DATE(paid_at)` 在 MySQL 8.0 下可利用索引或临时表高效聚合。
+
+### [修复] P3 UI 异常：主题切换监听器累积
+
+#### 症状
+
+v0.6.8 修复前端死循环后，用户反馈「进入后左上角会显示更多重叠的主题切换」。
+
+#### 根因定位
+
+`apps/admin/src/stores/theme.ts` 的 `init()` 每次调用都 `matchMedia.addEventListener('change', handler)`，无去重：
+
+```ts
+// 修复前
+init() {
+    this.applyToDocument()
+    if (typeof window === 'undefined' || !window.matchMedia) return
+    const mql = window.matchMedia('(prefers-color-scheme: dark)')
+    const handler = () => {
+        if (this.mode === 'auto') {
+            this.applyToDocument()
+        }
+    }
+    if (mql.addEventListener) {
+        mql.addEventListener('change', handler)  // ← 每次调用都添加，无去重
+    } else if ((mql as any).addListener) {
+        (mql as any).addListener(handler)
+    }
+}
+```
+
+`ThemeSwitcher.vue` 的 `onMounted` 调用 `themeStore.init()`。每次路由切换 ThemeSwitcher 重新挂载都会调 `init()`，导致 matchMedia 监听器累积：
+
+- 第 1 次挂载：1 个监听器
+- 第 2 次挂载：2 个监听器（第 1 个未移除）
+- 第 N 次挂载：N 个监听器
+
+虽不致死循环（matchMedia change 事件不频繁），但：
+1. 内存泄漏（监听器永不释放）
+2. auto 模式下系统主题变化时，N 个 handler 同时触发 `applyToDocument()`，可能导致 UI 渲染异常
+3. 多次 applyToDocument 可能导致 DOM 状态不一致，触发 EP 重新渲染，表现为「主题切换重叠」
+
+#### 修复：theme store 新增 _mqlHandlerAdded 幂等标志
+
+```ts
+// 修复后
+interface ThemeState {
+  mode: ThemeMode
+  /** v0.6.9：matchMedia 监听器是否已添加（幂等标志） */
+  _mqlHandlerAdded: boolean
+}
+
+init() {
+    this.applyToDocument()
+    if (typeof window === 'undefined' || !window.matchMedia) return
+    // v0.6.9 幂等：已添加过监听器则跳过
+    if (this._mqlHandlerAdded) return
+    this._mqlHandlerAdded = true
+    const mql = window.matchMedia('(prefers-color-scheme: dark)')
+    const handler = () => {
+        if (this.mode === 'auto') {
+            this.applyToDocument()
+        }
+    }
+    if (mql.addEventListener) {
+        mql.addEventListener('change', handler)
+    } else if ((mql as any).addListener) {
+        (mql as any).addListener(handler)
+    }
+}
+
+// persist.paths 仍只持久化 ['mode']，_mqlHandlerAdded 不持久化
+persist: {
+    key: 'keyauth-theme',
+    storage: localStorage,
+    paths: ['mode']
+}
+```
+
+**幂等逻辑**：
+- 首次 `init()`：`_mqlHandlerAdded` 为 false → 添加监听器 → 置 true
+- 后续 `init()`（路由切换 ThemeSwitcher 重新挂载）：`_mqlHandlerAdded` 为 true → 跳过
+- 页面刷新后：pinia store 重建，`_mqlHandlerAdded` 重置为 false（因不持久化）→ 正常重新添加监听器
+
+#### 修复涉及的文件
+
+| 文件 | 修改点 |
+|---|---|
+| `apps/server/internal/handler/admin_business.go` | `AdminDashboard` 7 日收入趋势：7 次循环 SUM 查询 → 1 次 `GROUP BY DATE(paid_at)` 查询，内存补齐无订单日期为 0 |
+| `apps/admin/src/stores/theme.ts` | `ThemeState` 新增 `_mqlHandlerAdded: boolean`；`init()` 添加幂等检查，已添加过监听器则跳过 |
+
+#### 验证
+
+- 后端 `go build ./internal/handler/` 通过
+- 后端 `gofmt -w internal/handler/admin_business.go` 格式正确
+- 前端 `cd apps/admin && npm run build` 通过（含 `vue-tsc --noEmit` 类型检查，17.32s）
+- 性能优化逻辑验证：
+  - 7 日趋势：1 次 GROUP BY 查询拿到所有有订单日期 → map 查找 → 补 0 → 数据完整
+  - 无订单日期：map 取不到返回 0（float64 零值），与原逻辑 `COALESCE(SUM, 0)` 一致
+- 幂等逻辑验证：
+  - 首次 init：添加监听器 + 置标志位
+  - 路由切换重新挂载：跳过添加
+  - 页面刷新：store 重建，标志位重置，正常添加
+
+#### 与 v0.6.7/v0.6.8 的关系
+
+- v0.6.7 修复 scheduleRefresh 无限异步递归（token 续期死循环）
+- v0.6.8 修复 UpdateNotifier setInterval 累积（更新轮询并发累积卡死）
+- v0.6.9 修复 AdminDashboard N+1 查询（页面加载卡很久）+ theme 监听器累积（UI 渲染异常）
+
+三者独立但症状相似（都表现为「卡」），v0.6.9 修复后管理员 Dashboard 体验应恢复正常。如仍有「主题切换重叠」UI 异常，需提供浏览器截图进一步排查（可能是 ElDropdown teleport 定位或 transition 动画问题）。
+
+---
+
 ## [0.6.8] - 2026-07-21（UpdateNotifier setInterval 累积导致 /admin/dashboard 卡死修复）
 
 ### [修复] P0 紧急 bug：v0.6.7 修复后管理员登录依然卡死

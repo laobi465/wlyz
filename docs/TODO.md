@@ -7,6 +7,52 @@
 
 ---
 
+## v0.6.9 Dashboard 查询性能优化 + theme 监听器幂等 ✅ 已完成 2026-07-21
+
+### [P1] /admin/dashboard 加载卡很久（后端 21 次串行 DB 查询）✅ 已完成 v0.6.9
+- [x] [已完成 2026-07-21] **背景**：v0.6.8 修复 UpdateNotifier setInterval 累积卡死后，用户反馈「访问 /admin/dashboard 后会卡很久」。页面能进入但加载延迟明显
+- [x] [已完成 2026-07-21] **根因定位**：后端 `apps/server/internal/handler/admin_business.go` 的 `AdminDashboard` handler 存在 21 次串行 DB 查询，其中 7 日收入趋势是循环 7 次单独 SUM 查询（经典 N+1）：
+  - 开发者统计 2 次 + 代理统计 2 次 + 应用/卡密统计 3 次 + 今日订单/收入 3 次 + 结算待处理 2 次 + 最近开发者 1 次 + 最近订单 1 次 + 7 日收入趋势 7 次 = 21 次
+  - 7 日趋势每次循环执行 `SELECT SUM(total_amount) WHERE paid_at >= dayStart AND paid_at < dayEnd`，7 次串行 = 7 倍延迟
+  - app_order 表数据量大时累计数秒，加上其他 14 次统计查询，总延迟可达 5-10 秒
+- [x] [已完成 2026-07-21] **修复 1：7 日趋势 N+1 → 1 次 GROUP BY 查询**：
+  - `SELECT DATE(paid_at) AS day, COALESCE(SUM(total_amount), 0) AS revenue WHERE pay_status='paid' AND paid_at >= 7天前 GROUP BY DATE(paid_at)`
+  - 1 次查询拿到所有有订单的日期，内存中用 map 补齐无订单日期为 0
+  - 查询次数 21→15，7 日趋势部分 7 次→1 次（延迟降低 ~85%）
+- [x] [已完成 2026-07-21] **索引确认**：app_order 表已有 `idx_paid_at` 索引（migration 001），WHERE paid_at >= ? 可走索引范围扫描
+
+### [P3] 主题切换监听器累积导致 UI 异常 ✅ 已完成 v0.6.9
+- [x] [已完成 2026-07-21] **背景**：v0.6.8 修复前端死循环后，用户反馈「进入后左上角会显示更多重叠的主题切换」
+- [x] [已完成 2026-07-21] **根因定位**：`apps/admin/src/stores/theme.ts` 的 `init()` 每次调用都 `matchMedia.addEventListener('change', handler)`，无去重。ThemeSwitcher.vue 的 onMounted 调 init()，路由切换重新挂载会累积监听器：
+  - 第 N 次挂载 = N 个监听器
+  - auto 模式下系统主题变化时 N 个 handler 同时触发 applyToDocument()
+  - 可能导致 DOM 状态不一致 + EP 重新渲染，表现为「主题切换重叠」
+- [x] [已完成 2026-07-21] **修复 2：theme store 新增 _mqlHandlerAdded 幂等标志**：
+  - ThemeState 新增 `_mqlHandlerAdded: boolean`
+  - init() 检查标志位，已添加过则跳过
+  - 页面刷新后 store 重建，标志位重置（因 persist.paths 只持久化 ['mode']），正常重新添加
+
+### v0.6.9 验证
+- [x] [已完成 2026-07-21] 后端 `go build ./internal/handler/` 通过
+- [x] [已完成 2026-07-21] 后端 `gofmt -w internal/handler/admin_business.go` 格式正确
+- [x] [已完成 2026-07-21] 前端 `cd apps/admin && npm run build` 通过（vue-tsc 类型检查 + Vite 构建，17.32s）
+- [x] [已完成 2026-07-21] 性能优化逻辑验证：7 日趋势 1 次 GROUP BY 拿到所有有订单日期 → map 查找 → 补 0 → 数据完整，无订单日期返回 0 与原 COALESCE(SUM, 0) 一致
+- [x] [已完成 2026-07-21] 幂等逻辑验证：首次 init 添加监听器 + 置标志位；路由切换重新挂载跳过；页面刷新 store 重建正常添加
+
+### v0.6.9 待真实环境验证
+- [ ] [待开始] 真实环境访问 /admin/dashboard 验证加载速度明显改善（应从数秒降至 < 1s）
+- [ ] [待开始] 真实环境频繁切换路由验证左上角不再出现主题切换重叠
+- [ ] [待开始] auto 主题模式下切换系统暗黑/明亮验证 applyToDocument 只触发一次
+
+### v0.6.9 后续建议（非阻断性）
+- [ ] [待开始 P3] AdminDashboard 其他 14 次统计查询可用 errgroup 并行执行（进一步降低延迟，但复杂度增加）
+- [ ] [待开始 P3] app_order 表可新增 `(pay_status, paid_at)` 联合索引，让 WHERE pay_status='paid' AND paid_at >= ? 完全走索引（当前 idx_paid_at 单列索引需回表过滤 pay_status）
+- [ ] [待开始 P3] pinia persist 不恢复 scheduleRefresh（v0.6.8 遗留建议）
+- [ ] [待开始 P3] http.ts doRefresh 锁 return 后无效重试（v0.6.8 遗留建议）
+- [ ] [待开始 P3] Dashboard toFixed NaN 兜底（v0.6.8 遗留建议）
+
+---
+
 ## v0.6.8 UpdateNotifier setInterval 累积卡死 P0 修复 ✅ 已完成 2026-07-21
 
 ### [P0] v0.6.7 修复后管理员登录依然进不去 /admin/dashboard 卡死 ✅ 已完成 v0.6.8

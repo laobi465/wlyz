@@ -190,38 +190,56 @@ func AdminDashboard(deps *Deps) gin.HandlerFunc {
 		}
 
 		// 7 日收入趋势
+		// v0.6.9 性能优化：7 次循环 SUM 查询 → 1 次 GROUP BY 查询（N+1 修复）
+		// 原实现：for i := 6; i >= 0; i-- { SELECT SUM WHERE paid_at >= dayStart AND paid_at < dayEnd }
+		//   每次循环 1 次 DB 查询，7 次串行 = 7 倍延迟，app_order 表数据量大时累计数秒
+		// 修复后：SELECT DATE(paid_at) AS day, SUM(total_amount) WHERE paid_at >= 7天前 GROUP BY DATE(paid_at)
+		//   1 次查询拿到所有有订单的日期，再在内存中补齐无订单的日期为 0
+		sevenDaysAgo := startOfToday.AddDate(0, 0, -6)
+		type dayRevenueRow struct {
+			Day     string  `gorm:"column:day"`
+			Revenue float64 `gorm:"column:revenue"`
+		}
+		var dayRows []dayRevenueRow
+		deps.DB.Model(&model.AppOrder{}).
+			Select("DATE(paid_at) AS day, COALESCE(SUM(total_amount), 0) AS revenue").
+			Where("pay_status = ? AND paid_at >= ?", "paid", sevenDaysAgo).
+			Group("DATE(paid_at)").
+			Scan(&dayRows)
+		// 构建日期到金额的 map（仅有订单的日期）
+		revenueMap := make(map[string]float64, len(dayRows))
+		for _, r := range dayRows {
+			revenueMap[r.Day] = r.Revenue
+		}
+		// 填充 7 日数据（无订单的日期补 0）
 		revenueTrend := make([]gin.H, 0, 7)
 		for i := 6; i >= 0; i-- {
 			dayStart := startOfToday.AddDate(0, 0, -i)
-			dayEnd := dayStart.AddDate(0, 0, 1)
-			var dayRevenue float64
-			deps.DB.Model(&model.AppOrder{}).
-				Where("pay_status = ? AND paid_at >= ? AND paid_at < ?", "paid", dayStart, dayEnd).
-				Select("COALESCE(SUM(total_amount), 0)").Scan(&dayRevenue)
+			dateStr := dayStart.Format("2006-01-02")
 			revenueTrend = append(revenueTrend, gin.H{
-				"date":   dayStart.Format("2006-01-02"),
-				"amount": dayRevenue,
+				"date":   dateStr,
+				"amount": revenueMap[dateStr], // map 取不到时返回 0，正好是"无订单"的默认值
 			})
 		}
 
 		_ = ctx
 
 		middleware.Success(c, gin.H{
-			"tenant_total":        tenantTotal,
-			"tenant_active":       tenantActive,
-			"agent_total":         agentTotal,
-			"agent_active":        agentActive,
-			"app_total":           appTotal,
-			"card_total":          cardTotal,
-			"card_active":         cardActive,
-			"order_today":         orderToday,
-			"revenue_today":       revenueToday,
-			"revenue_month":       revenueMonth,
-			"settlement_pending":  settlementPending,
-			"settlement_amount":   settlementAmount,
-			"recent_tenants":      recentTenantList,
-			"recent_orders":       recentOrderList,
-			"revenue_trend":       revenueTrend,
+			"tenant_total":       tenantTotal,
+			"tenant_active":      tenantActive,
+			"agent_total":        agentTotal,
+			"agent_active":       agentActive,
+			"app_total":          appTotal,
+			"card_total":         cardTotal,
+			"card_active":        cardActive,
+			"order_today":        orderToday,
+			"revenue_today":      revenueToday,
+			"revenue_month":      revenueMonth,
+			"settlement_pending": settlementPending,
+			"settlement_amount":  settlementAmount,
+			"recent_tenants":     recentTenantList,
+			"recent_orders":      recentOrderList,
+			"revenue_trend":      revenueTrend,
 		})
 	}
 }
@@ -795,20 +813,20 @@ func AdminListNotices(deps *Deps) gin.HandlerFunc {
 		list := make([]gin.H, 0, len(notices))
 		for _, n := range notices {
 			list = append(list, gin.H{
-				"id":            n.ID,
-				"type":          n.Type,
-				"title":         n.Title,
-				"content":       n.Content,
+				"id":             n.ID,
+				"type":           n.Type,
+				"title":          n.Title,
+				"content":        n.Content,
 				"content_format": n.ContentFormat,
-				"status":        n.Status,
-				"pinned":        n.IsPinned,
-				"is_popup":      n.IsPopup,
-				"show_badge":    n.ShowBadge,
-				"sort":          n.Sort,
-				"publish_at":    n.StartAt,
-				"expire_at":     n.EndAt,
-				"created_at":    n.CreatedAt,
-				"updated_at":    n.UpdatedAt,
+				"status":         n.Status,
+				"pinned":         n.IsPinned,
+				"is_popup":       n.IsPopup,
+				"show_badge":     n.ShowBadge,
+				"sort":           n.Sort,
+				"publish_at":     n.StartAt,
+				"expire_at":      n.EndAt,
+				"created_at":     n.CreatedAt,
+				"updated_at":     n.UpdatedAt,
 			})
 		}
 
@@ -889,16 +907,16 @@ func AdminCreateNotice(deps *Deps) gin.HandlerFunc {
 		}
 
 		middleware.Success(c, gin.H{
-			"id":            notice.ID,
-			"type":          notice.Type,
-			"title":         notice.Title,
+			"id":             notice.ID,
+			"type":           notice.Type,
+			"title":          notice.Title,
 			"content_format": notice.ContentFormat,
-			"status":        notice.Status,
-			"pinned":        notice.IsPinned,
-			"is_popup":      notice.IsPopup,
-			"show_badge":    notice.ShowBadge,
-			"publish_at":    notice.StartAt,
-			"expire_at":     notice.EndAt,
+			"status":         notice.Status,
+			"pinned":         notice.IsPinned,
+			"is_popup":       notice.IsPopup,
+			"show_badge":     notice.ShowBadge,
+			"publish_at":     notice.StartAt,
+			"expire_at":      notice.EndAt,
 		})
 	}
 }
@@ -1123,13 +1141,13 @@ func AdminSecurityStats(deps *Deps) gin.HandlerFunc {
 		}
 
 		middleware.Success(c, gin.H{
-			"ip_blacklist_count":     ipBlacklistCount,
-			"ip_blacklist_active":    ipBlacklistActive,
-			"failed_login_today":     failedLoginToday,
-			"failed_login_blocked":   failedLoginBlocked,
-			"totp_enabled_users":     totpEnabledUsers,
-			"sensitive_ops_today":    sensitiveOpsToday,
-			"recent_blocked_ips":     recentBlockedIPs,
+			"ip_blacklist_count":   ipBlacklistCount,
+			"ip_blacklist_active":  ipBlacklistActive,
+			"failed_login_today":   failedLoginToday,
+			"failed_login_blocked": failedLoginBlocked,
+			"totp_enabled_users":   totpEnabledUsers,
+			"sensitive_ops_today":  sensitiveOpsToday,
+			"recent_blocked_ips":   recentBlockedIPs,
 		})
 	}
 }
@@ -1352,16 +1370,16 @@ var _ = gorm.ErrRecordNotFound
 
 // adminSubdomainListItem 子域名列表项（联表开发者名）
 type adminSubdomainListItem struct {
-	AgentID         uint64     `json:"agent_id"`
-	Username        string     `json:"username"`
-	RealName        string     `json:"real_name"`
-	TenantID        uint64     `json:"tenant_id"`
-	TenantName      string     `json:"tenant_name"`
-	Subdomain       string     `json:"subdomain"`
-	SubdomainStatus string     `json:"subdomain_status"`
-	AgentStatus     string     `json:"agent_status"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	AgentID         uint64    `json:"agent_id"`
+	Username        string    `json:"username"`
+	RealName        string    `json:"real_name"`
+	TenantID        uint64    `json:"tenant_id"`
+	TenantName      string    `json:"tenant_name"`
+	Subdomain       string    `json:"subdomain"`
+	SubdomainStatus string    `json:"subdomain_status"`
+	AgentStatus     string    `json:"agent_status"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // AdminListSubdomains GET /api/v1/admin/agents/subdomains
@@ -1546,7 +1564,7 @@ func AdminRejectSubdomain(deps *Deps) gin.HandlerFunc {
 			"agent_id":         agentID,
 			"subdomain":        agent.Subdomain,
 			"subdomain_status": "rejected",
-			"remark":            req.Remark,
+			"remark":           req.Remark,
 		})
 	}
 }
@@ -1617,18 +1635,18 @@ func AdminListPendingApps(deps *Deps) gin.HandlerFunc {
 		list := make([]gin.H, 0, len(apps))
 		for _, a := range apps {
 			list = append(list, gin.H{
-				"id":             a.ID,
-				"tenant_id":      a.TenantID,
+				"id":              a.ID,
+				"tenant_id":       a.TenantID,
 				"tenant_username": appTenantNameMap[a.TenantID],
-				"name":           a.Name,
-				"app_key":        a.AppKey,
-				"status":         a.Status,
-				"audit_status":   a.AuditStatus,
-				"audit_remark":   a.AuditRemark,
-				"audited_at":     a.AuditedAt,
-				"audited_by":     a.AuditedBy,
-				"auditor_name":   appAuditorNameMap[a.AuditedBy],
-				"created_at":     a.CreatedAt,
+				"name":            a.Name,
+				"app_key":         a.AppKey,
+				"status":          a.Status,
+				"audit_status":    a.AuditStatus,
+				"audit_remark":    a.AuditRemark,
+				"audited_at":      a.AuditedAt,
+				"audited_by":      a.AuditedBy,
+				"auditor_name":    appAuditorNameMap[a.AuditedBy],
+				"created_at":      a.CreatedAt,
 			})
 		}
 
@@ -1676,10 +1694,10 @@ func AdminAuditApp(deps *Deps) gin.HandlerFunc {
 		adminID := getUserID(c)
 		now := time.Now()
 		updates := map[string]interface{}{
-			"audit_status":  req.Status,
-			"audit_remark":  req.Remark,
-			"audited_at":    &now,
-			"audited_by":    adminID,
+			"audit_status": req.Status,
+			"audit_remark": req.Remark,
+			"audited_at":   &now,
+			"audited_by":   adminID,
 		}
 		if err := deps.DB.Model(&app).Updates(updates).Error; err != nil {
 			logger.Error("admin: audit app failed", "err", err, "app_id", appID)
@@ -1691,7 +1709,7 @@ func AdminAuditApp(deps *Deps) gin.HandlerFunc {
 			"tenant_id":    app.TenantID,
 			"app_name":     app.Name,
 			"audit_status": req.Status,
-			"remark":        req.Remark,
+			"remark":       req.Remark,
 		})
 
 		middleware.Success(c, gin.H{
@@ -1880,11 +1898,11 @@ func AdminAgentRegistrationStats(deps *Deps) gin.HandlerFunc {
 			Select("COALESCE(SUM(refund_amount), 0)").Scan(&refundAmount)
 
 		middleware.Success(c, gin.H{
-			"total_orders":    totalOrders,
-			"total_amount":    totalAmount,
-			"refunded_count":  refundedCount,
-			"refund_amount":   refundAmount,
-			"net_amount":      totalAmount - refundAmount,
+			"total_orders":   totalOrders,
+			"total_amount":   totalAmount,
+			"refunded_count": refundedCount,
+			"refund_amount":  refundAmount,
+			"net_amount":     totalAmount - refundAmount,
 		})
 	}
 }

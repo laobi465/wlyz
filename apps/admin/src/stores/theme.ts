@@ -24,11 +24,14 @@ export const THEME_OPTIONS: { value: ThemeMode; label: string; icon: string }[] 
 interface ThemeState {
   /** 当前主题模式 */
   mode: ThemeMode
+  /** v0.6.9：matchMedia 监听器是否已添加（幂等标志，防止 ThemeSwitcher 多次挂载导致监听器累积） */
+  _mqlHandlerAdded: boolean
 }
 
 export const useThemeStore = defineStore('theme', {
   state: (): ThemeState => ({
-    mode: 'light'
+    mode: 'light',
+    _mqlHandlerAdded: false
   }),
   getters: {
     /** 当前生效的实际主题（auto 解析为 light 或 dark） */
@@ -69,10 +72,17 @@ export const useThemeStore = defineStore('theme', {
       // EP 通过 html.dark 选择器应用暗黑样式
       document.documentElement.classList.toggle('dark', this.isDark)
     },
-    /** 初始化：从持久化恢复 + 应用到 DOM + 监听系统主题变化（auto 模式生效） */
+    /** 初始化：从持久化恢复 + 应用到 DOM + 监听系统主题变化（auto 模式生效）
+     *  v0.6.9 幂等：添加 _mqlHandlerAdded 标志，防止 ThemeSwitcher 多次挂载导致 matchMedia 监听器累积
+     *  - 页面刷新后 store 重建，_mqlHandlerAdded 重置为 false，需要重新 addEventListener（正常）
+     *  - 同一页面内路由切换 ThemeSwitcher 重新挂载，_mqlHandlerAdded 已为 true，跳过（幂等）
+     */
     init() {
       this.applyToDocument()
       if (typeof window === 'undefined' || !window.matchMedia) return
+      // v0.6.9 幂等：已添加过监听器则跳过
+      if (this._mqlHandlerAdded) return
+      this._mqlHandlerAdded = true
       const mql = window.matchMedia('(prefers-color-scheme: dark)')
       const handler = () => {
         // auto 模式下系统主题变化：重新应用 DOM（同步 html.dark class + data-theme 触发的 CSS 媒体查询）
