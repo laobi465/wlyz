@@ -32,6 +32,9 @@ export const useAuthStore = defineStore('auth', {
     token: (state) => state.accessToken,
     isLoggedIn: (state) => !!state.accessToken,
     homePath(): string {
+      // v0.6.5 修复：role 为空时兜底回登录页，避免跳转到 '//dashboard' → 404
+      // 触发场景：localStorage 持久化数据损坏 / 字段缺失 / 用户手动篡改
+      if (!this.role) return '/login'
       return `/${this.role}/dashboard`
     },
     /** access token 是否已过期 */

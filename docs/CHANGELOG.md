@@ -9,6 +9,173 @@
 
 ---
 
+## [0.6.5] - 2026-07-21（前端登录跳转 + 后台进不去修复）
+
+### [修复] Critical：管理员登录后未自动跳后台 + 后台进不去
+
+#### 背景
+
+v0.6.4 修复后端启动后，用户反馈前端两个问题：
+
+1. 管理员登录成功后没有自动跳转到后台页面
+2. 后台页面进不去（直接访问 `/admin/dashboard` 也会 404）
+
+#### 根因分析（5 个独立问题）
+
+**问题 1：`homePath` getter 在 role 为空时产生 `//dashboard`**
+
+`apps/admin/src/stores/auth.ts` 原 `homePath` getter：
+```typescript
+homePath(): string {
+  return `/${this.role}/dashboard`
+}
+```
+
+当 `this.role` 为空字符串（`UserRole | ''` 的 `''` 分支）时，`homePath` 计算为 `//dashboard`，Vue Router 规范化为 `/dashboard`，但路由表中无此路径 → 404。
+
+role 为空的触发场景：
+- localStorage 持久化数据损坏 / 旧版本字段缺失
+- 用户手动篡改 localStorage
+- 持久化 `paths` 白名单遗漏 role 字段（虽然当前 `paths` 已包含 role，但属于防御性兜底）
+
+**问题 2：路由守卫在 stale state 下未强制 logout**
+
+`apps/admin/src/router/index.ts` 原守卫：
+```typescript
+if (to.meta.requiresAuth && !auth.isLoggedIn) {
+  next({ name: 'Login', query: { redirect: to.fullPath } })
+  return
+}
+const requiredRole = to.meta.role as string | undefined
+if (requiredRole && auth.role !== requiredRole) {
+  next({ path: `/${auth.role}/dashboard` })  // ← role 为空时同样产生 '//dashboard'
+  return
+}
+```
+
+当 `accessToken` 存在（`isLoggedIn = true`）但 `role` 为空时，守卫进入角色不匹配分支，跳转 `//dashboard` → 404。属于"已登录但状态损坏"的 stale state，应当强制登出而非继续跳转。
+
+**问题 3：`login/index.vue` 的 `validate` 使用 callback 风格导致 await 是 no-op**
+
+`apps/admin/src/views/login/index.vue` 原代码：
+```typescript
+await formRef.value.validate(async (valid) => {
+  if (!valid) return
+  // ... 登录逻辑
+})
+```
+
+Element Plus 的 `validate()` 在传入 callback 时返回 `undefined`（非 Promise），`await undefined` 立即 resolve，callback 内的异步逻辑不会阻塞 `handleLogin` 的后续代码，且 callback 内的异常会变成 unhandled rejection。`finally` 块会立即执行 → `loading.value = false` 在登录请求发起前就被重置。
+
+**问题 4：前端 UI Tab 的角色与后端实际角色不一致时未以后端为准**
+
+原代码用 `activeRole.value`（UI Tab 选择）作为 `setAuth` 的 role：
+```typescript
+auth.setAuth({
+  // ...
+  role: activeRole.value,  // ← 前端状态，可能被篡改或不准
+  // ...
+})
+```
+
+防幻觉铁律：后端返回的 `resp.user.role` 是从 DB 查到的权威角色，前端 UI Tab 仅是用户选择。如果后端返回的 role 与 UI Tab 不一致（如管理员 UI 登录了一个开发者账号），应以后端为准。
+
+**问题 5：redirect 参数未做白名单校验**
+
+原代码：
+```typescript
+const redirect = (route.query.redirect as string) || auth.homePath
+await router.replace(redirect)
+```
+
+`redirect` 直接取自 query 参数，攻击者可构造 `/login?redirect=https://evil.com` 或 `/login?redirect=/anything` 让用户跳到 404 或外部 URL（open redirect / XSS 风险）。
+
+#### 修复内容（5 项）
+
+**修复 1：`homePath` getter 兜底 role 为空**
+
+`apps/admin/src/stores/auth.ts`：
+```typescript
+homePath(): string {
+  // v0.6.5 修复：role 为空时兜底回登录页，避免跳转到 '//dashboard' → 404
+  if (!this.role) return '/login'
+  return `/${this.role}/dashboard`
+}
+```
+
+**修复 2：路由守卫新增 stale state 检测**
+
+`apps/admin/src/router/index.ts`：
+```typescript
+// v0.6.5 修复：已登录但 role 为空（stale state），强制登出回登录页
+if (to.meta.requiresAuth && auth.isLoggedIn && !auth.role) {
+  auth.logout()
+  next({ name: 'Login', query: { redirect: to.fullPath } })
+  return
+}
+```
+
+**修复 3：登录页改为 Promise 风格**
+
+`apps/admin/src/views/login/index.vue`：
+```typescript
+// v0.6.5 修复：改为 Promise 风格，避免 callback 风格下 await 是 no-op
+try {
+  await formRef.value.validate()
+} catch {
+  return // 校验失败
+}
+```
+
+**修复 4：优先使用后端返回的 role**
+
+```typescript
+// v0.6.5 修复：优先使用后端返回的 role（权威来源），兜底用 UI Tab 选择的角色
+const serverRole = (resp.user?.role as UserRole) || activeRole.value
+auth.setAuth({
+  // ...
+  role: serverRole,
+  // ...
+})
+```
+
+**修复 5：redirect 白名单校验**
+
+```typescript
+// v0.6.5 修复：redirect 白名单校验，防止篡改 redirect 跳到 404 或外部 URL
+const queryRedirect = route.query.redirect as string
+const validRoles: UserRole[] = ['admin', 'tenant', 'agent']
+const isValidRedirect = (p: string) =>
+  typeof p === 'string' &&
+  validRoles.some((r) => p === `/${r}` || p.startsWith(`/${r}/`))
+
+const redirect = isValidRedirect(queryRedirect) ? queryRedirect! : auth.homePath
+await router.replace(redirect)
+```
+
+#### 铁律遵循
+
+- **铁律 04（禁硬编码）**：`validRoles` 数组从 `UserRole` 类型派生，未硬编码字符串字面量（除类型定义本身）
+- **铁律 05（配置后台化）**：role 来源于后端 `resp.user.role`，不依赖前端状态
+- **铁律 06（防幻觉）**：以后端返回的 role 为权威来源，前端 UI Tab 仅作兜底；redirect 白名单显式校验，不盲目信任 query 参数
+
+#### 操作命令
+
+用户升级后需要清除浏览器 localStorage（旧持久化数据可能 role 为空）：
+```javascript
+// 浏览器控制台执行
+localStorage.removeItem('keyauth-auth')
+```
+然后重新登录即可正常跳转后台。
+
+#### 涉及文件
+
+- `apps/admin/src/stores/auth.ts`：`homePath` getter 兜底
+- `apps/admin/src/router/index.ts`：守卫 stale state 检测
+- `apps/admin/src/views/login/index.vue`：Promise 风格 + 后端 role 优先 + redirect 白名单
+
+---
+
 ## [0.6.4] - 2026-07-21（GORM AutoMigrate 与 MySQL 8.0 datetime(3) 兼容修复）
 
 ### [修复] Critical：db.AutoMigrate(&model.SysConfig{}) 触发 Error 1067 (Invalid default value for 'created_at')

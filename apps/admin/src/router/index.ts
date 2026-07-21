@@ -210,8 +210,18 @@ router.beforeEach((to, _from, next) => {
     return
   }
 
+  // v0.6.5 修复：已登录但 role 为空（stale state），强制登出回登录页
+  // 触发场景：localStorage 持久化数据损坏 / 旧版本字段缺失 / 手动篡改
+  // 不修复会跳转到 '//dashboard' → 404，导致"后台进不去"
+  if (to.meta.requiresAuth && auth.isLoggedIn && !auth.role) {
+    auth.logout()
+    next({ name: 'Login', query: { redirect: to.fullPath } })
+    return
+  }
+
   const requiredRole = to.meta.role as string | undefined
   if (requiredRole && auth.role !== requiredRole) {
+    // role 已校验非空（上面已兜底），安全跳转
     next({ path: `/${auth.role}/dashboard` })
     return
   }

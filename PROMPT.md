@@ -8,6 +8,8 @@
 
 本项目是 **KeyAuth SaaS**：面向开发者的多租户卡密验证 SaaS 平台。
 
+**v0.6.5 已发布（2026-07-21）**：前端登录跳转 + 后台进不去修复。根因：`auth.role` 为空时（localStorage 持久化数据损坏 / 旧版本字段缺失 / 手动篡改），`homePath` 计算为 `//dashboard` → 404；路由守卫回退同样问题；登录页 callback 风格 `await` 是 no-op。修复：① `stores/auth.ts` homePath 兜底 role 为空返回 `/login`；② `router/index.ts` 守卫检测 stale state（已登录但 role 为空）强制 logout 回登录页；③ `login/index.vue` 改为 Promise 风格；④ 优先使用后端返回的 `resp.user.role`（权威来源，防幻觉）；⑤ redirect 白名单校验只允许 `/admin /tenant /agent` 开头的相对路径。详见 [CHANGELOG v0.6.5](docs/CHANGELOG.md#065---2026-07-21前端登录跳转--后台进不去修复)。
+
 **v0.6.4 已发布（2026-07-21）**：Critical Bug 修复 —— 33 个 migration 全部应用后，`db.AutoMigrate(&model.SysConfig{})` 触发 `ALTER TABLE MODIFY COLUMN created_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP` 失败，MySQL 8.0 报 `Error 1067 (Invalid default value for 'created_at')`。根因：GORM 默认把 `time.Time` 推断为 `datetime(3)`（带毫秒），但 migration 001 用 `DATETIME`（无毫秒）建表。修复：`SysConfig` struct 的 `CreatedAt`/`UpdatedAt` GORM tag 显式声明 `type:datetime`，让 GORM 不再修改列定义。详见 [CHANGELOG v0.6.4](docs/CHANGELOG.md#064---2026-07-21gorm-automigrate-与-mysql-80-datetime3-兼容修复)。
 
 **v0.6.3 已发布（2026-07-21）**：Critical Bug 修复 —— migration 030 (`030_v0.5.0_notify_webhook`) 在 `INSERT INTO sys_config` 阶段报 `Error 1136 (Column count doesn't match value count at row 1)`。根因：INSERT 声明 6 列但每行 VALUES 写了 7 个值（在 `config_value` 与 `config_type` 之间多了一个空字符串 `''`）。修复：移除多余字段，列顺序对齐 sys_config 表 schema；Python 脚本全量扫描所有 `migrations/*.up.sql` 的 `INSERT INTO sys_config` 列数一致性，031/032/033 全部匹配，仅 030 一处 bug。详见 [CHANGELOG v0.6.3](docs/CHANGELOG.md#063---2026-07-21migration-030-列数不匹配修复)。

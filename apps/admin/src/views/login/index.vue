@@ -128,44 +128,62 @@ watch(activeRole, () => {
 
 const handleLogin = async () => {
   if (!formRef.value) return
-  await formRef.value.validate(async (valid) => {
-    if (!valid) return
-    loading.value = true
-    try {
-      const resp = await loginApi(activeRole.value, {
-        username: form.username,
-        password: form.password,
-        // 单阶段 2FA：如果用户已输入 totp_code，一起提交
-        // 后端 doLogin 逻辑：已绑定 2FA 的账号必须传 totp_code，否则返回 1007
-        ...(totpCode.value ? { totp_code: totpCode.value } : {})
-      })
+  // v0.6.5 修复：改为 Promise 风格，避免 callback 风格下 await 是 no-op
+  // 原 `await formRef.value.validate(async (valid) => {...})` 中 await 立即 resolve，
+  // callback 内的异常可能变成 unhandled rejection，且 finally 立即执行
+  try {
+    await formRef.value.validate()
+  } catch {
+    return // 校验失败
+  }
+  loading.value = true
+  try {
+    const resp = await loginApi(activeRole.value, {
+      username: form.username,
+      password: form.password,
+      // 单阶段 2FA：如果用户已输入 totp_code，一起提交
+      // 后端 doLogin 逻辑：已绑定 2FA 的账号必须传 totp_code，否则返回 1007
+      ...(totpCode.value ? { totp_code: totpCode.value } : {})
+    })
 
-      // 登录成功
-      auth.setAuth({
-        access_token: resp.access_token,
-        refresh_token: resp.refresh_token,
-        role: activeRole.value,
-        userId: resp.user?.id,
-        username: resp.user?.username,
-        tenantId: resp.user?.tenant_id,
-        expires_at: resp.expires_at
-      })
-      ElMessage.success(t('login.success'))
+    // v0.6.5 修复：优先使用后端返回的 role（权威来源），兜底用 UI Tab 选择的角色
+    // 后端 resp.user.role 是从 DB 查到的真实角色，UI Tab 只是用户选择
+    // 如果后端未返回 role 或与 UI Tab 不一致，以后端为准（防幻觉：不盲目信任前端状态）
+    const serverRole = (resp.user?.role as UserRole) || activeRole.value
 
-      const redirect = (route.query.redirect as string) || auth.homePath
-      router.replace(redirect)
-    } catch (e: any) {
-      // 后端返回 1007 = 动态验证码错误或已过期（账号已绑定 2FA 但未传 totp_code）
-      // 显示 TOTP 输入框，让用户输入后重新提交（不需要 temp_token，单阶段流程）
-      if (e?.code === 1007 && !totpRequired.value) {
-        totpRequired.value = true
-        ElMessage.info(t('login.totpRequired'))
-      }
-      // 其他错误已由 http 拦截器处理
-    } finally {
-      loading.value = false
+    // 登录成功
+    auth.setAuth({
+      access_token: resp.access_token,
+      refresh_token: resp.refresh_token,
+      role: serverRole,
+      userId: resp.user?.id,
+      username: resp.user?.username,
+      tenantId: resp.user?.tenant_id,
+      expires_at: resp.expires_at
+    })
+    ElMessage.success(t('login.success'))
+
+    // v0.6.5 修复：redirect 白名单校验，防止篡改 redirect 跳到 404 或外部 URL
+    // 只允许 /admin /tenant /agent 开头的相对路径
+    const queryRedirect = route.query.redirect as string
+    const validRoles: UserRole[] = ['admin', 'tenant', 'agent']
+    const isValidRedirect = (p: string) =>
+      typeof p === 'string' &&
+      validRoles.some((r) => p === `/${r}` || p.startsWith(`/${r}/`))
+
+    const redirect = isValidRedirect(queryRedirect) ? queryRedirect! : auth.homePath
+    await router.replace(redirect)
+  } catch (e: any) {
+    // 后端返回 1007 = 动态验证码错误或已过期（账号已绑定 2FA 但未传 totp_code）
+    // 显示 TOTP 输入框，让用户输入后重新提交（不需要 temp_token，单阶段流程）
+    if (e?.code === 1007 && !totpRequired.value) {
+      totpRequired.value = true
+      ElMessage.info(t('login.totpRequired'))
     }
-  })
+    // 其他错误已由 http 拦截器处理
+  } finally {
+    loading.value = false
+  }
 }
 
 const handleTotpVerify = async () => {

@@ -7,6 +7,22 @@
 
 ---
 
+## v0.6.5 前端登录跳转修复 ✅ 已完成 2026-07-21
+
+### [P0] 管理员登录后没自动跳后台 + 后台进不去 ✅ 已完成 v0.6.5
+- [x] [已完成 2026-07-21] **根因**：`auth.role` 为空字符串时（localStorage 持久化数据损坏 / 旧版本字段缺失 / 手动篡改），`homePath` 计算为 `/${this.role}/dashboard` = `//dashboard` → Vue Router 规范化为 `/dashboard` → 不匹配任何路由 → 404；路由守卫第 215 行 `next({ path: '/${auth.role}/dashboard' })` 同样问题
+- [x] [已完成 2026-07-21] **修复 1**：`apps/admin/src/stores/auth.ts` 的 `homePath` getter 兜底，role 为空时返回 `/login`
+- [x] [已完成 2026-07-21] **修复 2**：`apps/admin/src/router/index.ts` 守卫新增 stale state 检测，已登录但 role 为空时强制 `auth.logout()` 回登录页（带 redirect 参数）
+- [x] [已完成 2026-07-21] **修复 3**：`apps/admin/src/views/login/index.vue` 改为 Promise 风格，原 `await formRef.value.validate(async (valid) => {...})` 中 await 是 no-op（Element Plus validate 传 callback 返回 undefined），改为 `try { await formRef.value.validate() } catch { return }`
+- [x] [已完成 2026-07-21] **修复 4**：登录成功后优先使用后端返回的 `resp.user.role`（权威来源），兜底用 UI Tab 选择的角色（防幻觉铁律 06：不盲目信任前端状态）
+- [x] [已完成 2026-07-21] **修复 5**：redirect 白名单校验，只允许 `/admin /tenant /agent` 开头的相对路径，防止篡改跳到 404 或外部 URL
+
+### v0.6.5 待真实环境验证
+- [ ] [待开始] 浏览器端到端验证：清除 localStorage 后登录 → 应跳 `/admin/dashboard`
+- [ ] [待开始] stale state 场景验证：手动篡改 localStorage `keyauth-auth` 的 role 为空 → 访问 `/admin/dashboard` → 应自动 logout 回登录页
+
+---
+
 ## v0.6.4 Critical Bug 修复 ✅ 已完成 2026-07-21
 
 ### [P0] GORM AutoMigrate 触发 Error 1067 (Invalid default value for 'created_at') ✅ 已完成 v0.6.4
