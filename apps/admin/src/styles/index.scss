@@ -1,5 +1,5 @@
 @use './variables.scss' as *;
-// v0.5.0 多主题：必须在 variables.scss 之后引入，因为它定义了所有 --xxx CSS 变量
+// v0.8.0：单一明亮主题，themes.scss 仅定义 :root CSS 变量
 @use './themes.scss';
 
 * {

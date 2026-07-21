@@ -9,6 +9,93 @@
 
 ---
 
+## [0.8.0] - 2026-07-21（去除多主题与暗黑模式，回归单一明亮主题）
+
+### 背景
+
+用户要求「去除多模板和暗黑」。v0.5.0 引入的多主题架构（light/dark/blue/purple/green/auto）增加了维护复杂度，且 v0.7.0 排查发现多主题相关的 P0/P1 问题集中（图标名错误、白底白字、监听器累积、主题切换重叠等）。应产品要求回归单一明亮主题，降低维护成本与 UI 出错概率。
+
+### 改动清单
+
+#### 1. theme.ts store 简化（`apps/admin/src/stores/theme.ts`）
+
+- `ThemeMode` 类型从 `'light' | 'dark' | 'blue' | 'purple' | 'green' | 'auto'` 收窄为 `'light'`
+- `THEME_OPTIONS` 从 6 项缩减为 1 项（仅 light）
+- 移除 `resolvedMode` / `isDark` getter（不再需要解析 auto）
+- 移除 `toggleLightDark()` action
+- `applyToDocument()` 改为清除 `data-theme` 属性 + 移除 `html.dark` class（兼容旧暗黑用户）
+- `init()` 移除 `matchMedia` 监听器（不再需要响应系统主题变化），新增清理旧 localStorage 数据逻辑
+- 移除 `_mqlHandlerAdded` 幂等标志（不再需要）
+
+#### 2. themes.scss 简化（`apps/admin/src/styles/themes.scss`）
+
+- 删除 `:root[data-theme="dark"]` 整块暗黑主题变量（约 55 行）
+- 删除 `:root[data-theme="blue"]` 深蓝海洋主题（约 38 行）
+- 删除 `:root[data-theme="purple"]` 紫罗兰主题（约 38 行）
+- 删除 `:root[data-theme="green"]` 森林绿主题（约 38 行）
+- 删除 `@media (prefers-color-scheme: dark) :root[data-theme="auto"]` 自动跟随系统主题（约 47 行）
+- 仅保留 `:root` 默认明亮主题（与 v0.3.x 视觉一致）
+- 文件从 280 行缩减为 52 行
+
+#### 3. 删除 ThemeSwitcher.vue 组件
+
+- 完全删除 `apps/admin/src/components/ThemeSwitcher.vue`（约 110 行）
+- 不再需要主题切换 UI
+
+#### 4. BasicLayout.vue 移除 ThemeSwitcher 引用（`apps/admin/src/layouts/BasicLayout.vue`）
+
+- 移除 `<ThemeSwitcher />` 标签
+- 更新文件头注释说明 v0.8.0 变更
+
+#### 5. main.ts 移除 dark css-vars 导入（`apps/admin/src/main.ts`）
+
+- 移除 `import 'element-plus/theme-chalk/dark/css-vars.css'`
+- EP 暗黑模式 CSS 不再加载，减少打包体积约 30KB
+
+#### 6. i18n 移除 theme 翻译
+
+- `apps/admin/src/i18n/locales/zh-CN.ts`：移除 `theme: { title, light, dark, blue, purple, green, auto }` 翻译块
+- `apps/admin/src/i18n/locales/en-US.ts`：移除对应英文翻译块
+
+#### 7. 样式注释更新
+
+- `apps/admin/src/styles/variables.scss`：更新文件头注释，说明 v0.8.0 回归单一明亮主题
+- `apps/admin/src/styles/index.scss`：更新 themes.scss 引入注释
+
+### 兼容性处理
+
+- **旧用户 localStorage 清理**：`theme.ts` 的 `init()` 会检查 `localStorage.keyauth-theme`，若值不是 `{"mode":"light"}` 则清除，防止旧暗黑用户停留在不可用的暗黑状态
+- **DOM 清理**：`applyToDocument()` 会移除 `data-theme` 属性和 `html.dark` class，确保即使有残留 DOM 状态也会被清除
+- **store 保留**：保留极简 `useThemeStore` 桩，防止其他可能引用的地方报错（实际已无引用，但保留更安全）
+
+### v0.8.0 验证
+
+- [x] [已完成 2026-07-21] `cd apps/admin && npm run build` 通过（vue-tsc 类型检查 + Vite 构建，16.53s）
+- [x] [已完成 2026-07-21] 打包体积验证：`element-vendor` 从 1.1MB 降至 1.07MB（减少 dark css-vars 约 30KB）
+- [x] [已完成 2026-07-21] 无 TypeScript 类型错误（`ThemeMode` 收窄为 `'light'` 后所有引用兼容）
+
+### v0.8.0 待真实环境验证
+
+- [ ] [待开始] 真实浏览器验证：旧暗黑用户刷新页面后自动恢复明亮主题
+- [ ] [待开始] 真实浏览器验证：顶栏不再显示主题切换器
+- [ ] [待开始] 真实浏览器验证：所有页面颜色与 v0.7.0 明亮主题一致
+
+### v0.8.0 影响范围
+
+| 文件 | 改动类型 |
+|---|---|
+| `apps/admin/src/stores/theme.ts` | 简化（保留极简桩） |
+| `apps/admin/src/styles/themes.scss` | 大幅删减（280→52 行） |
+| `apps/admin/src/components/ThemeSwitcher.vue` | 删除 |
+| `apps/admin/src/layouts/BasicLayout.vue` | 移除引用 |
+| `apps/admin/src/main.ts` | 移除 dark css-vars 导入 |
+| `apps/admin/src/i18n/locales/zh-CN.ts` | 移除 theme 翻译 |
+| `apps/admin/src/i18n/locales/en-US.ts` | 移除 theme 翻译 |
+| `apps/admin/src/styles/variables.scss` | 注释更新 |
+| `apps/admin/src/styles/index.scss` | 注释更新 |
+
+---
+
 ## [0.7.0] - 2026-07-21（前端管理员后台 UI 系统性修复：5 P0 + 14 P1）
 
 ### 背景

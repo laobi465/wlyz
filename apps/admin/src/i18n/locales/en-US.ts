@@ -72,15 +72,7 @@ export default {
     pleaseSelect: 'Please select',
   },
 
-  theme: {
-    title: 'Switch theme',
-    light: 'Light',
-    dark: 'Dark',
-    blue: 'Ocean Blue',
-    purple: 'Violet',
-    green: 'Forest',
-    auto: 'System',
-  },
+  // v0.8.0: removed theme translations (multi-theme and dark mode removed)
 
   language: {
     title: 'Switch language',

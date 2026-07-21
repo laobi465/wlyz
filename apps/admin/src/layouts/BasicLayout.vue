@@ -3,7 +3,7 @@
   - 桌面端：固定侧边栏 + 顶部 + 内容区
   - 平板：可折叠侧边栏
   - 移动端：抽屉式侧边栏 + 简化顶栏
-  - v0.5.0 多主题支持：顶栏内嵌 ThemeSwitcher，6 主题可切换（light/dark/blue/purple/green/auto）
+  - v0.8.0：去除多主题与暗黑模式，仅保留单一明亮主题，顶栏不再内嵌 ThemeSwitcher
 -->
 <template>
   <div class="basic-layout">
@@ -88,8 +88,7 @@
             <!-- 头部右侧插槽（套餐标签、余额等） -->
             <slot name="header-extra" />
 
-            <!-- v0.5.0 多主题切换器 -->
-            <ThemeSwitcher />
+            <!-- v0.8.0：移除 ThemeSwitcher（去除多主题与暗黑模式） -->
 
             <!-- v0.5.0 语言切换器 -->
             <LanguageSwitcher />

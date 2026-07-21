@@ -7,6 +7,35 @@
 
 ---
 
+## v0.8.0 去除多主题与暗黑模式 ✅ 已完成 2026-07-21
+
+### [移除] 多主题架构（light/dark/blue/purple/green/auto）✅ 已完成 v0.8.0
+- [x] [已完成 2026-07-21] **背景**：用户要求「去除多模板和暗黑」，回归单一明亮主题，降低维护成本与 UI 出错概率
+- [x] [已完成 2026-07-21] **theme.ts store 简化**：`ThemeMode` 收窄为 `'light'`，移除 `resolvedMode`/`isDark` getter、`toggleLightDark()` action、`matchMedia` 监听器、`_mqlHandlerAdded` 标志；新增清理旧 localStorage 数据逻辑
+- [x] [已完成 2026-07-21] **themes.scss 大幅删减**：删除 dark/blue/purple/green/auto 主题变量（280→52 行），仅保留 `:root` 默认明亮主题
+- [x] [已完成 2026-07-21] **删除 ThemeSwitcher.vue 组件**：完全删除主题切换 UI
+- [x] [已完成 2026-07-21] **BasicLayout.vue 移除 ThemeSwitcher 引用**：顶栏不再显示主题切换器
+- [x] [已完成 2026-07-21] **main.ts 移除 dark css-vars 导入**：不再加载 `element-plus/theme-chalk/dark/css-vars.css`，减少打包体积约 30KB
+- [x] [已完成 2026-07-21] **i18n 移除 theme 翻译**：zh-CN.ts 和 en-US.ts 移除 theme 翻译块
+- [x] [已完成 2026-07-21] **样式注释更新**：variables.scss 和 index.scss 更新文件头注释
+
+### v0.8.0 兼容性处理
+- [x] [已完成 2026-07-21] **旧用户 localStorage 清理**：`theme.ts` 的 `init()` 检查 `localStorage.keyauth-theme`，若值非 `{"mode":"light"}` 则清除
+- [x] [已完成 2026-07-21] **DOM 清理**：`applyToDocument()` 移除 `data-theme` 属性和 `html.dark` class，确保残留 DOM 状态被清除
+- [x] [已完成 2026-07-21] **store 保留**：保留极简 `useThemeStore` 桩，防止其他可能引用的地方报错
+
+### v0.8.0 验证
+- [x] [已完成 2026-07-21] `cd apps/admin && npm run build` 通过（vue-tsc 类型检查 + Vite 构建，16.53s）
+- [x] [已完成 2026-07-21] 打包体积验证：`element-vendor` 从 1.1MB 降至 1.07MB（减少 dark css-vars 约 30KB）
+- [x] [已完成 2026-07-21] 无 TypeScript 类型错误（`ThemeMode` 收窄为 `'light'` 后所有引用兼容）
+
+### v0.8.0 待真实环境验证
+- [ ] [待开始] 真实浏览器验证：旧暗黑用户刷新页面后自动恢复明亮主题
+- [ ] [待开始] 真实浏览器验证：顶栏不再显示主题切换器
+- [ ] [待开始] 真实浏览器验证：所有页面颜色与 v0.7.0 明亮主题一致
+
+---
+
 ## v0.7.0 前端管理员后台 UI 系统性修复 ✅ 已完成 2026-07-21
 
 ### [P0] 主题图标名错误 ✅ 已完成 v0.7.0

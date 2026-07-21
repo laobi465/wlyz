@@ -60,7 +60,6 @@ declare module 'vue' {
     ResponsiveTable: typeof import('./components/ResponsiveTable.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
-    ThemeSwitcher: typeof import('./components/ThemeSwitcher.vue')['default']
     UpdateNotifier: typeof import('./components/UpdateNotifier.vue')['default']
   }
   export interface ComponentCustomProperties {
