@@ -7,6 +7,24 @@
 
 ---
 
+## v0.6.2 Critical Bug 修复 ✅ 已完成 2026-07-21
+
+### [P0] Docker Compose 一键部署在 MySQL 8.0 上失败 ✅ 已完成 v0.6.2
+- [x] [已完成 2026-07-21] **根因**：migration 015 使用 MariaDB-only 语法 `ADD COLUMN/INDEX IF NOT EXISTS`，MySQL 8.0 不支持，导致 `schema_migrations.dirty=1, version=15`
+- [x] [已完成 2026-07-21] **修复 1**：重写 `015_v0.4.0_end_user_system.up.sql` 全部改用 `INFORMATION_SCHEMA + PREPARE/EXECUTE` 兼容方案 + `INSERT ON DUPLICATE KEY UPDATE` 幂等
+- [x] [已完成 2026-07-21] **修复 2**：`migrator.go` 新增 `MIGRATION_REPAIR_DIRTY=true` 显式 dirty 恢复流程 + MySQL advisory lock（`GET_LOCK`/`RELEASE_LOCK`）并发保护 + 详细错误消息
+- [x] [已完成 2026-07-21] **修复 3**：`one_click_deploy.sh` 新增 `--reset-data` 显式确认 + 移除破坏性 `DELETE FROM schema_migrations` + 自动备份 + 自动走幂等修复流程 + MySQL 健康检查 + 失败诊断
+- [x] [已完成 2026-07-21] **修复 4**：`clean_dirty_migration.sh` 完全重写为 `--show` / `--dry-run` / `--repair` / `--force-delete` 四模式
+- [x] [已完成 2026-07-21] **修复 5**：`mysql:8.0` → `mysql:8.0.36` 固定小版本，避免版本漂移
+- [x] [已完成 2026-07-21] **修复 6**：新增 13 个迁移器测试用例（6 个单元测试全 PASS + 7 个集成测试待真实 MySQL 8.0 环境）+ `verify_migration_015.sh` 静态验证脚本（10/10 通过）
+
+### v0.6.2 待办（需真实环境验证）
+- [ ] [待开始] MySQL 8.0 真实环境集成测试（13 个 `TestIntegration_*` 用例）
+- [ ] [待开始] Docker Compose 真实部署端到端测试
+- [ ] [待开始] `MIGRATION_REPAIR_DIRTY=true` 端到端流程在真实 dirty 数据库上验证
+
+---
+
 ## 安全审计（4 类优先级全覆盖 ✅ v0.6.0 + v0.6.1）
 
 ### [P0] 高危 13 个 ✅ 已完成 v0.6.0
@@ -608,6 +626,6 @@
 
 ---
 
-**文档版本**：0.6.0  
-**最后更新**：2026-07-20（v0.6.0 高级分析三大模块完成：migration 032 user_behavior_profile + card_usage_profile + user_risk_score 三表 + 21 项 analysis.* sys_config；internal/analysis 包 5 文件 behavior.go/card_profile.go/risk_user.go/worker.go/analysis.go + 44 个测试全 PASS；handler/analysis.go 16 个 admin 端点 + router 注册 /admin/analysis/* 路由组 + deps.go 扩展 AnalysisMgr + main.go 启动聚合 worker；5 项任务标记为无限延期：独角数卡/蓝米发卡/多套主题模板/主题编辑器/v0.5.0 集成扩展批次 2）  
+**文档版本**：0.6.2
+**最后更新**：2026-07-21（v0.6.2 Critical Bug 修复：Docker Compose 一键部署在 MySQL 8.0 上失败 / schema_migrations.dirty=1 version=15。根因：migration 015 使用 MariaDB-only 语法 ADD COLUMN/INDEX IF NOT EXISTS。修复：① 重写 015 改用 INFORMATION_SCHEMA + PREPARE/EXECUTE 兼容方案；② migrator.go 新增 MIGRATION_REPAIR_DIRTY=true 显式 dirty 恢复 + MySQL advisory lock 并发保护；③ one_click_deploy.sh 移除破坏性 DELETE，改为自动备份 + 幂等修复；④ clean_dirty_migration.sh 重写为四模式（show/dry-run/repair/force-delete）；⑤ mysql:8.0 → mysql:8.0.36 固定小版本；⑥ 新增 13 个迁移器测试用例 + verify_migration_015.sh 静态验证脚本。6 个 Go 单元测试全 PASS + SQL 静态验证 10/10 通过 + shellcheck -S warning 通过 + YAML 语法有效；MySQL 8.0 集成测试 13 个用例已编写待真实环境运行）
 **维护者**：KeyAuth SaaS Team

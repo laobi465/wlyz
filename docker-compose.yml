@@ -25,8 +25,10 @@ volumes:
 
 services:
   # ---------- 数据库 ----------
+  # v0.6.2：固定 MySQL 8.0.36 小版本，避免 8.0 → 8.0.40+ 的小版本漂移问题
+  # （不同 8.0 小版本的默认参数、caching_sha2_password 行为可能略有差异）
   mysql:
-    image: mysql:8.0
+    image: mysql:8.0.36
     container_name: keyauth-mysql
     restart: unless-stopped
     environment:
@@ -111,8 +113,10 @@ services:
       RSA_PRIVATE_KEY_PATH: /app/keys/rsa_private.pem
       RSA_PUBLIC_KEY_PATH: /app/keys/rsa_public.pem
       # 数据库迁移（v0.3.5：server 启动时自动执行 migrations 目录下 .up.sql）
+      # v0.6.2：MIGRATION_REPAIR_DIRTY=true 允许 dirty 状态修复（默认 false，仅显式开启）
       MIGRATION_AUTO: "true"
       MIGRATION_DIR: /app/migrations
+      MIGRATION_REPAIR_DIRTY: ${MIGRATION_REPAIR_DIRTY:-false}
       # 运行（容器内固定 8080，对外端口由 ports 映射控制）
       GIN_MODE: release
       TZ: Asia/Shanghai

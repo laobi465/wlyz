@@ -8,6 +8,10 @@
 
 本项目是 **KeyAuth SaaS**：面向开发者的多租户卡密验证 SaaS 平台。
 
+**v0.6.2 已发布（2026-07-21）**：Critical Bug 修复 —— Docker Compose 一键部署在 MySQL 8.0 上失败（schema_migrations.dirty=1, version=15）。根因：migration 015 使用 MariaDB-only 语法 `ADD COLUMN/INDEX IF NOT EXISTS`。修复内容：① 重写 015 改用 INFORMATION_SCHEMA + PREPARE/EXECUTE 兼容方案；② migrator.go 新增 `MIGRATION_REPAIR_DIRTY=true` 显式 dirty 恢复 + MySQL advisory lock 并发保护；③ one_click_deploy.sh 移除破坏性 DELETE，改为自动备份 + 幂等修复；④ clean_dirty_migration.sh 重写为四模式（show/dry-run/repair/force-delete）；⑤ mysql:8.0 → mysql:8.0.36 固定小版本；⑥ 新增 13 个迁移器测试用例 + verify_migration_015.sh 静态验证脚本。详见 [CHANGELOG v0.6.2](docs/CHANGELOG.md#062---2026-07-21dirty-迁移恢复--mysql-80-兼容修复)。
+
+**v0.6.1 已发布（2026-07-20）**：全项目安全审计 P1 + P3 修复（21 P1 普通 + 34 P3 优化，覆盖认证加固 + 业务逻辑 + 加密签名 + 前端安全 + 性能可靠性）。详见 [CHANGELOG v0.6.1](docs/CHANGELOG.md#061---2026-07-20安全审计-p1--p3-修复)。
+
 **核心定位**：开发者注册账号 → 创建应用 → 生成卡密 → 客户端 SDK 接入验证。代理通过开发者邀请码注册并分销卡密。平台提供总支付（默认）与开发者自定义易支付（按套餐）双轨支付。
 
 **v0.3.6 已发布**：6 个测试包（crypto/snowflake/epay/quota/heartbeat/middleware）+ 跨语言签名对齐测试全部通过。运行 `cd apps/server && go test ./...` 验证。

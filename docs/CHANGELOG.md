@@ -9,6 +9,220 @@
 
 ---
 
+## [0.6.2] - 2026-07-21（dirty 迁移恢复 + MySQL 8.0 兼容修复）
+
+### [修复] Critical：Docker Compose 一键部署在 MySQL 8.0 上失败（schema_migrations.dirty=1, version=15）
+
+#### 背景
+
+v0.6.0 在 Docker Compose 一键部署时出现以下致命错误：
+
+```
+[FATAL] 初始化依赖失败:
+数据库迁移失败:
+数据库迁移处于 dirty 状态，version=15
+```
+
+之前启动时迁移版本 15 执行到一半失败，迁移器留下了：
+- `schema_migrations.version = 15`
+- `schema_migrations.dirty = 1`
+
+#### 根因分析
+
+**直接根因**：`apps/server/migrations/015_v0.4.0_end_user_system.up.sql` 原版使用了 **MariaDB-only** 语法：
+
+```sql
+ALTER TABLE app_card ADD COLUMN IF NOT EXISTS end_user_id ...
+ALTER TABLE app_card ADD INDEX IF NOT EXISTS idx_end_user_id ...
+```
+
+`ADD COLUMN IF NOT EXISTS` / `ADD INDEX IF NOT EXISTS` 在 MySQL 8.0 任何小版本都不支持（仅 MariaDB 10.2+ 支持）。`docker-compose.yml` 使用 `mysql:8.0` 镜像（漂移到 8.0.40+），执行到这两条语句必然抛 SQL 语法错误。
+
+**MySQL DDL 隐式提交问题**：CREATE/ALTER TABLE 会立即 COMMIT，无法被外层事务回滚，因此失败后实际状态为半成品：
+- `end_user` / `end_user_card` / `end_user_token` 三表已创建（CREATE TABLE 成功）
+- `app_card.end_user_id` 字段未添加（第一条 ALTER 失败）
+- `idx_end_user_id` 索引未创建
+- `sys_config` 中 enduser 配置未插入（在 ALTER 之后，未执行到）
+- `schema_migrations(version=15, dirty=1)` 已写入
+
+**迁移器缺陷**：原 migrator.go 发现 dirty 状态直接报错退出，未提供安全恢复路径；错误消息不含 dirty 版本/迁移文件/数据库目标；无并发保护；`applyMigration` 中 SQL 执行失败后未显式 `Update dirty=true`（依赖事务回滚对 DDL 无效）。
+
+**部署脚本缺陷**：原 `one_click_deploy.sh` 使用 `DELETE FROM schema_migrations WHERE dirty=1` 掩盖失败；包含 `DROP TABLE system_update_log` 破坏性操作；MySQL 健康检查仅靠 `sleep` 固定时间；无 `--reset-data` 显式确认机制。
+
+**MySQL 版本漂移**：`mysql:8.0` 标签会随时间漂移到不同小版本，导致"昨天能部署今天不能"。
+
+#### 实现
+
+**1. `apps/server/migrations/015_v0.4.0_end_user_system.up.sql`（重写）**
+
+删除 MariaDB-only 语法，全部改用 `INFORMATION_SCHEMA + PREPARE/EXECUTE` 兼容方案：
+
+| 对象 | 旧写法（不兼容 MySQL 8.0） | 新写法（兼容 MySQL 8.0 / MariaDB） |
+|------|------------------------|------------------------------|
+| `end_user` / `end_user_card` / `end_user_token` 表 | `CREATE TABLE IF NOT EXISTS` | 保持不变（已幂等） |
+| `app_card.end_user_id` 字段 | `ALTER TABLE app_card ADD COLUMN IF NOT EXISTS ...` | 查询 `INFORMATION_SCHEMA.COLUMNS` → 若不存在则 `PREPARE stmt FROM 'ALTER TABLE ... ADD COLUMN ...'; EXECUTE stmt;` |
+| `idx_end_user_id` 索引 | `ALTER TABLE app_card ADD INDEX IF NOT EXISTS ...` | 查询 `INFORMATION_SCHEMA.STATISTICS` → 若不存在则动态 SQL `ADD INDEX` |
+| `sys_config` 配置项 | `INSERT ... ON DUPLICATE KEY UPDATE remark=VALUES(remark)` | `INSERT ... ON DUPLICATE KEY UPDATE` 更新全部字段（含 value、type、remark） |
+
+动态 SQL 转义处理：COMMENT 内中文文本用双单引号 `''` 转义；表名/字段名用反引号包裹；字符串字面量统一用单引号。
+
+**2. `apps/server/internal/migration/migrator.go`（重写）**
+
+新增：
+- `Config` 结构体（`Auto` / `Dir` / `RepairDirty` / `DBTarget`）
+- `RunWithConfig(db, cfg)` 入口（保留 `Run()` 向后兼容）
+- `acquireAdvisoryLock` / `releaseAdvisoryLock`（MySQL `GET_LOCK`/`RELEASE_LOCK`，并发保护，常量 `advisoryLockName = "keyauth_migration_lock"` / `advisoryLockTimeout = 30`）
+- `formatDirtyError`（输出 dirty 版本 + 迁移文件路径 + DBTarget + 备份建议 + `MIGRATION_REPAIR_DIRTY` 指引 + 禁止行为清单）
+- `repairDirtyMigration` / `repairApplyMigration`（重试幂等迁移，成功标记 `dirty=false`，失败保留 `dirty=true`）
+
+修复：
+- `applyMigration` 中 INSERT 失败回退为 UPDATE dirty=true
+- SQL 执行失败时显式 `Update("dirty", true)` 确保 dirty 持久化（DDL 隐式提交无法依赖事务回滚）
+- 错误处理不再吞掉 SQL 执行错误
+- 所有 return 路径都释放 advisory lock
+
+**3. `apps/server/internal/config/config.go`（修改）**
+
+- `MigrationConfig` 新增 `RepairDirty bool` 字段
+- 新增 `MIGRATION_REPAIR_DIRTY` 环境变量解析（`true`/`1`/`yes`）
+- `InitContainer` 改用 `migration.RunWithConfig`，传入 `DBTarget`（host:port/database）和 `RepairDirty`
+
+**4. `docker-compose.yml`（修改）**
+
+- `mysql:8.0` → `mysql:8.0.36`（固定小版本，避免漂移）
+- server 服务 `environment` 新增 `MIGRATION_REPAIR_DIRTY: ${MIGRATION_REPAIR_DIRTY:-false}`
+
+**5. `scripts/one_click_deploy.sh`（修改）**
+
+- 新增 `--reset-data` 参数（需输入 `YES I UNDERSTAND DATA WILL BE LOST` 二次确认）
+- 移除 `DELETE FROM schema_migrations WHERE dirty=1` 自动清理逻辑
+- 移除 `DROP TABLE system_update_log` 破坏性操作
+- 新增 MySQL 健康检查（mysqladmin ping + SQL 双重校验，120s 超时）
+- 新增 `SELECT VERSION()` 输出
+- 新增 dirty 检测 + 自动 `mysqldump --single-transaction` 备份
+- 新增自动设置 `MIGRATION_REPAIR_DIRTY=true` 走幂等修复流程
+- server 未就绪时输出完整诊断（`docker compose ps` / mysql 日志 / server 日志 / `schema_migrations` 状态）
+
+**6. `scripts/clean_dirty_migration.sh`（完全重写）**
+
+新增四种模式：
+
+| 模式 | 命令 | 行为 |
+|------|------|------|
+| 默认（dry-run） | `bash scripts/clean_dirty_migration.sh` | 只查询、不修改 |
+| `--show` | `bash scripts/clean_dirty_migration.sh --show` | 仅显示当前 dirty 状态 |
+| `--dry-run` | `bash scripts/clean_dirty_migration.sh --dry-run` | 显示 dirty 状态 + 对应对象检查 |
+| `--repair` | `bash scripts/clean_dirty_migration.sh --repair` | 备份 + `MIGRATION_REPAIR_DIRTY=true` + 重启 server + 验证 |
+| `--force-delete` | `bash scripts/clean_dirty_migration.sh --force-delete` | 危险操作，需输入 `YES DELETE DIRTY RECORDS ONLY` |
+
+特性：
+- 检查 v15 对应的所有对象（end_user/end_user_card/end_user_token 表、app_card.end_user_id 字段、idx_end_user_id 索引、sys_config enduser 配置项）
+- 显示 MySQL 版本、数据库、容器名、备份文件路径
+- 显式禁止 `docker compose down -v`
+
+**7. `.env.example`（修改）**
+
+新增 `MIGRATION_REPAIR_DIRTY=false` 配置项 + 详细使用文档
+
+**8. `apps/server/internal/migration/migrator_test.go`（新增）**
+
+13 个测试用例：
+
+| 测试名 | 类型 | 是否依赖 MySQL |
+|--------|------|---------------|
+| `TestParseMigrations_ValidFilenames` | 单元 | 否 |
+| `TestParseMigrations_DuplicateVersions` | 单元 | 否 |
+| `TestParseMigrations_InvalidFilenames` | 单元 | 否 |
+| `TestFormatDirtyError_VerifyMessageContent` | 单元 | 否 |
+| `TestSortMigrations` | 单元 | 否 |
+| `TestIntegration_FreshDatabaseFullMigration` | 集成 | 是 |
+| `TestIntegration_Version15Repeatable` | 集成 | 是 |
+| `TestIntegration_DirtyRejectsStartup` | 集成 | 是 |
+| `TestIntegration_DirtyRepairSuccess` | 集成 | 是 |
+| `TestIntegration_DirtyRepairFailurePreservesDirty` | 集成 | 是 |
+| `TestIntegration_AdvisoryLockConcurrentProtection` | 集成 | 是 |
+| `TestIntegration_MultipleServerInstancesConcurrentMigration` | 集成 | 是 |
+| `TestIntegration_DBConnectionFailureDoesNotMarkSuccess` | 单元 | 否 |
+
+**9. `scripts/verify_migration_015.sh`（新增）**
+
+10 项静态检查：不包含 `ADD COLUMN IF NOT EXISTS` / `ADD INDEX IF NOT EXISTS`、CREATE TABLE 用 IF NOT EXISTS、有 INFORMATION_SCHEMA 检查、有 PREPARE/EXECUTE、INSERT 用 ON DUPLICATE KEY UPDATE、无破坏性 DROP、使用 `DATABASE()`、PREPARE/DEALLOCATE 配对
+
+#### 兼容性保证
+
+修改能够兼容已经部分执行过的 version 15：
+
+| 半成品状态 | 旧 SQL 行为 | 新 SQL 行为 |
+|----------|----------|----------|
+| `end_user` 表已存在 | `CREATE TABLE IF NOT EXISTS` 跳过 | 同 |
+| `end_user_card` 表已存在 | 同上 | 同 |
+| `end_user_token` 表已存在 | 同上 | 同 |
+| `app_card.end_user_id` 字段不存在 | 第一条 ALTER 失败（语法错）→ 整个迁移失败 | 查询 `INFORMATION_SCHEMA.COLUMNS` 显示 count=0 → 执行 `ALTER TABLE app_card ADD COLUMN end_user_id ...` → 成功 |
+| `app_card.end_user_id` 字段已存在 | 旧 SQL 已无法到此步 | 查询显示 count=1 → `SET @ddl='SELECT 1'` → 跳过 |
+| `idx_end_user_id` 索引不存在 | 第二条 ALTER 失败 | 查询 `INFORMATION_SCHEMA.STATISTICS` 显示 count=0 → 动态 SQL `ADD INDEX` → 成功 |
+| `idx_end_user_id` 索引已存在 | 旧 SQL 已无法到此步 | 查询显示 count=1 → 跳过 |
+| `sys_config` 已有 enduser 配置 | `ON DUPLICATE KEY UPDATE` 更新 remark | `ON DUPLICATE KEY UPDATE` 更新全部字段 |
+| `sys_config` 无 enduser 配置 | INSERT 成功 | INSERT 成功 |
+
+#### 验证
+
+##### 已通过 ✓
+
+| 测试 | 命令 | 实际结果 |
+|------|------|---------|
+| go vet | `go vet ./internal/migration/... ./internal/config/...` | exit 0，无任何输出 |
+| Go 单元测试 | `go test -run 'TestParseMigrations\|TestFormatDirtyError\|TestSortMigrations\|TestIntegration_DBConnection' ./internal/migration/...` | `ok github.com/your-org/keyauth-saas/apps/server/internal/migration 0.019s` |
+| Go 全部测试 | `go test ./...` | 26 个包全部 `ok` |
+| SQL 静态验证 | `bash scripts/verify_migration_015.sh` | 10/10 通过 |
+| shellcheck -S warning | `shellcheck -S warning scripts/*.sh` | 仅 1 个 SC2034 警告（`is_ubuntu appears unused`，预先存在问题，与本次修改无关） |
+| docker-compose.yml 语法 | `python3 -c "import yaml; yaml.safe_load(open('docker-compose.yml'))"` | YAML valid；mysql image = `mysql:8.0.36`；server environment 含 `MIGRATION_AUTO`、`MIGRATION_DIR`、`MIGRATION_REPAIR_DIRTY` |
+
+##### 未通过 / 未执行 ✗
+
+| 测试 | 原因 |
+|------|------|
+| MySQL 集成测试（13 个 TestIntegration_* 用例） | 沙箱环境无 Docker、无 mysql-server-8.0 / mariadb-server 包，无法启动 MySQL 8.0 实例 |
+| Docker Compose 真实部署测试 | 沙箱环境无 `docker` 命令 |
+
+##### 集成测试运行方法（部署到真实环境后）
+
+```bash
+export MIGRATION_TEST_DSN="root:password@tcp(127.0.0.1:3306)/test_db?multiStatements=true&parseTime=true"
+cd apps/server && go test -v -run TestIntegration ./internal/migration/...
+```
+
+#### 操作命令
+
+**A. 已有数据的安全修复命令**（不删除数据卷）：
+
+```bash
+cd /www/wwwroot/keyauth
+git pull origin main
+bash scripts/one_click_deploy.sh
+# 脚本会自动检测 dirty → 备份 → 走 MIGRATION_REPAIR_DIRTY=true 修复流程
+```
+
+**B. 全新部署命令**：
+
+```bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/laobi465/wlyz/main/scripts/one_click_deploy.sh)"
+```
+
+#### 铁律遵循
+
+- **铁律 04（禁硬编码）**：所有 advisory lock 名常量化、所有错误消息中的字段名/路径走变量拼接、无任何字面量密码硬编码
+- **铁律 05（配置后台化）**：`MIGRATION_REPAIR_DIRTY` 通过环境变量 + `.env.example` 配置；不强制写死任何 sys_config 默认值
+- **铁律 06（防幻觉）**：不声称"已修复"（沙箱无 MySQL 集成测试验证）；测试用例基于固定输入断言；明确标注未执行的测试项；错误消息中的版本号用 `N` 占位符避免 `fmt.Errorf` 格式化冲突
+
+#### 仍然存在的风险
+
+1. **MySQL 集成测试未执行**：13 个 `TestIntegration_*` 用例虽已编写，但未在真实 MySQL 8.0 上验证
+2. **未在真实 dirty 数据库上验证修复流程**：`MIGRATION_REPAIR_DIRTY=true` 的端到端流程只在代码层面验证
+3. **MySQL 8.0.36 的小版本固定**：未来若该版本出现 CVE，需要手动升级
+4. **advisory lock 跨连接生效**：MySQL advisory lock 是 session 级别的，连接被断开时锁会自动释放
+5. **预先存在的 `is_ubuntu` shellcheck 警告**：与本次修复无关，未处理
+
+
 ## [0.6.1] - 2026-07-20（安全审计 P1 + P3 修复）
 
 ### [安全] 全项目安全审计修复（21 P1 普通 + 34 P3 优化）

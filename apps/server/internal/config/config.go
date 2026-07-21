@@ -89,11 +89,12 @@ type CryptoConfig struct {
 	RSAPublicKeyPath  string `yaml:"rsa_public_key_path"`  // RSA-4096 公钥文件
 }
 
-// MigrationConfig 数据库迁移配置（v0.3.5 新增）
+// MigrationConfig 数据库迁移配置（v0.3.5 新增，v0.6.2 增强）
 // 铁律 05：迁移目录路径走配置，不硬编码
 type MigrationConfig struct {
-	Auto bool   `yaml:"auto"` // 启动时是否自动执行迁移
-	Dir  string `yaml:"dir"`  // 迁移文件目录（绝对路径或相对工作目录）
+	Auto        bool   `yaml:"auto"`         // 启动时是否自动执行迁移
+	Dir         string `yaml:"dir"`          // 迁移文件目录（绝对路径或相对工作目录）
+	RepairDirty bool   `yaml:"repair_dirty"` // v0.6.2：是否允许 dirty 状态修复（环境变量 MIGRATION_REPAIR_DIRTY=true）
 }
 
 // Load 从文件加载配置，环境变量优先覆盖
@@ -198,6 +199,11 @@ func applyEnvConfig(cfg *Config) {
 	if v := os.Getenv("MIGRATION_DIR"); v != "" {
 		cfg.Migration.Dir = v
 	}
+	// v0.6.2：MIGRATION_REPAIR_DIRTY=true 允许管理员显式开启 dirty 状态修复
+	// 默认 false：发现 dirty 拒绝启动，避免静默修复掩盖问题
+	if v := os.Getenv("MIGRATION_REPAIR_DIRTY"); v != "" {
+		cfg.Migration.RepairDirty = v == "true" || v == "1" || v == "yes"
+	}
 }
 
 func (c *Config) validate() error {
@@ -256,9 +262,16 @@ func InitContainer(cfg *Config) (*Container, error) {
 	sqlDB.SetMaxOpenConns(cfg.MySQL.MaxOpenConns)
 	sqlDB.SetMaxIdleConns(cfg.MySQL.MaxIdleConns)
 
-	// 1.1 启动时自动迁移（v0.3.5 新增，替代 mysql entrypoint 自动执行）
+	// 1.1 启动时自动迁移（v0.3.5 新增，v0.6.2 增强：支持 dirty 修复 + 并发保护）
 	if cfg.Migration.Auto {
-		if err := migration.Run(db, cfg.Migration.Dir); err != nil {
+		// 构建 DBTarget 描述（用于错误消息）
+		dbTarget := fmt.Sprintf("%s:%s/%s", cfg.MySQL.Host, cfg.MySQL.Port, cfg.MySQL.Database)
+		if err := migration.RunWithConfig(db, migration.Config{
+			Auto:        cfg.Migration.Auto,
+			Dir:         cfg.Migration.Dir,
+			RepairDirty: cfg.Migration.RepairDirty,
+			DBTarget:    dbTarget,
+		}); err != nil {
 			return nil, fmt.Errorf("数据库迁移失败: %w", err)
 		}
 	}

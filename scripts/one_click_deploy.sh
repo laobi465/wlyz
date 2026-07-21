@@ -35,6 +35,54 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+# ---------- v0.6.2：参数解析 ----------
+# 默认部署是数据保留模式；只有显式传入 --reset-data 才允许重置数据库
+# --reset-data 会触发强警告 + 二次确认
+RESET_DATA=0
+for arg in "$@"; do
+    case "$arg" in
+        --reset-data)
+            RESET_DATA=1
+            ;;
+        -h|--help)
+            echo "用法: bash scripts/one_click_deploy.sh [--reset-data]"
+            echo "  默认（无参数）：保留现有数据，遇到 dirty 走修复流程"
+            echo "  --reset-data   重置数据库（删除数据卷，需二次确认）"
+            echo ""
+            echo "环境变量："
+            echo "  MIGRATION_REPAIR_DIRTY=true   允许 dirty 状态修复（默认 false）"
+            exit 0
+            ;;
+    esac
+done
+
+if [[ $RESET_DATA -eq 1 ]]; then
+    echo -e "${RED}${BOLD}"
+    echo "============================================================"
+    echo " ⚠️  警告：--reset-data 将删除所有业务数据！"
+    echo "============================================================"
+    echo -e "${NC}"
+    echo "此操作会："
+    echo "  1. 执行 docker compose down -v（删除 mysql-data 数据卷）"
+    echo "  2. 删除所有租户、用户、卡密、应用、配置和日志数据"
+    echo "  3. 数据不可恢复（除非有备份）"
+    echo ""
+    echo "推荐替代方案（保留数据）："
+    echo "  默认执行 bash scripts/one_click_deploy.sh 即可保留数据"
+    echo "  遇到 dirty 状态会自动备份并走 MIGRATION_REPAIR_DIRTY 修复流程"
+    echo ""
+    echo -e "${RED}请确认是否继续执行 --reset-data（数据将永久丢失）${NC}"
+    read -r -p "输入 'YES I UNDERSTAND DATA WILL BE LOST' 确认: " CONFIRM_INPUT
+    if [[ "$CONFIRM_INPUT" != "YES I UNDERSTAND DATA WILL BE LOST" ]]; then
+        log "用户未确认，已取消 --reset-data 操作"
+        exit 0
+    fi
+    log "用户已确认 --reset-data，将执行 docker compose down -v"
+    if [[ -f docker-compose.yml ]]; then
+        docker compose down -v || warn "docker compose down -v 执行失败（可能数据卷不存在）"
+    fi
+fi
+
 # 项目配置
 REPO_URL="https://github.com/laobi465/wlyz.git"
 PROJECT_DIR="/www/wwwroot/keyauth"
@@ -401,60 +449,85 @@ fi
 # ---------- Step 7: 构建并启动服务 ----------
 step "Step 7/10: 构建并启动 Docker 服务"
 
-# 关键：先单独启动 mysql + redis，等 mysql 就绪后清理可能的 dirty 状态，再启动全部服务
-# 这样可避免「重试部署时 schema_migrations 残留 dirty 记录 → server 启动被拒绝」的死循环
+# 关键：先单独启动 mysql + redis，等 mysql 就绪后检测 dirty 状态（v0.6.2 不再自动删除）
+# v0.6.2 修复：原脚本默认执行 DELETE FROM schema_migrations WHERE dirty=1，
+# 这会跳过失败的迁移而不修复半成品 schema，掩盖问题。现改为：
+#   1. 检测 dirty 状态
+#   2. 自动备份数据库
+#   3. 提示管理员开启 MIGRATION_REPAIR_DIRTY=true 走修复流程
+#   4. 不删除任何 dirty 记录，不删除数据卷
 log "先启动 mysql + redis（确保数据库就绪后再启动 server）..."
 docker compose up -d --build mysql redis
 
-log "等待 mysql 就绪（最长 60s）..."
+log "等待 mysql 就绪（健康检查，最长 120s）..."
 MYSQL_READY=0
-for _ in {1..30}; do
+for _ in {1..60}; do
     if docker compose exec -T mysql mysqladmin ping -h 127.0.0.1 -uroot -p"${MYSQL_ROOT_PASSWORD}" >/dev/null 2>&1; then
-        MYSQL_READY=1
-        log "✓ mysql 已就绪"
-        break
+        # 进一步校验：能正常执行 SQL（避免 ping 通过但连接被拒）
+        if docker compose exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" "${MYSQL_DATABASE:-keyauth}" \
+            -N -e "SELECT 1;" >/dev/null 2>&1; then
+            MYSQL_READY=1
+            log "✓ mysql 已就绪（ping + SQL 双重校验通过）"
+            break
+        fi
     fi
     sleep 2
 done
-[[ $MYSQL_READY -eq 0 ]] && warn "mysql 等待超时，跳过 dirty 清理"
+[[ $MYSQL_READY -eq 0 ]] && warn "mysql 等待超时（120s），跳过 dirty 检测，可能影响后续迁移"
 
-# 清理 schema_migrations 的 dirty 状态（重试部署时常见）
-# 成因：之前部署时 mysql 容器异常重启 / 网络断开 / 迁移执行到一半中断
-# 后果：schema_migrations 表留下 dirty=1 记录，server 启动时检测到直接拒绝
-# 修复：删除 dirty 记录，server 重启后会重新执行该版本迁移
+# v0.6.2：检测 dirty 状态（不再自动 DELETE）
+# 成因：之前部署时迁移执行到一半失败，schema_migrations 留下 dirty=1
+# 修复策略：自动备份 + 提示管理员开启 MIGRATION_REPAIR_DIRTY=true
+#          不删除任何 dirty 记录，不执行 docker compose down -v
+DIRTY_BACKUP_FILE=""
 if [[ $MYSQL_READY -eq 1 ]]; then
-    DIRTY_COUNT=$(docker compose exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" "${MYSQL_DATABASE:-keyauth}" \
-        -N -e "SELECT COUNT(*) FROM schema_migrations WHERE dirty=1;" 2>/dev/null || echo "0")
-    if [[ "${DIRTY_COUNT:-0}" -gt 0 ]]; then
-        warn "检测到 schema_migrations 有 ${DIRTY_COUNT} 条 dirty 记录，正在清理..."
-        DIRTY_VERSIONS=$(docker compose exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" "${MYSQL_DATABASE:-keyauth}" \
-            -N -e "SELECT version FROM schema_migrations WHERE dirty=1;" 2>/dev/null || echo "")
-        log "  dirty 版本：${DIRTY_VERSIONS}"
-        docker compose exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" "${MYSQL_DATABASE:-keyauth}" \
-            -e "DELETE FROM schema_migrations WHERE dirty=1;" >/dev/null 2>&1
-        log "✓ dirty 记录已清理，server 重启后会重新执行该版本迁移"
-    else
-        log "✓ 无 dirty 记录"
-    fi
+    # 输出 MySQL 版本（用于排查兼容性问题）
+    MYSQL_VERSION=$(docker compose exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" \
+        -N -e "SELECT VERSION();" 2>/dev/null || echo "unknown")
+    log "MySQL 版本：${MYSQL_VERSION}"
 
-    # 额外安全检查：如果 system_update_log 表已存在但 schema_migrations 没有记录 v11
-    # （说明 v11 部分执行成功但事务回滚了），手动 DROP 让 v11 能重新创建
-    # 注意：只在首次部署场景（sys_admin 表无真实数据）执行，避免破坏业务数据
-    ADMIN_REAL_CHECK=$(docker compose exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" "${MYSQL_DATABASE:-keyauth}" \
-        -N -e "SELECT COUNT(*) FROM sys_admin WHERE id=1 AND password_hash NOT LIKE '%PLACEHOLDER_BCRYPT_HASH%';" 2>/dev/null || echo "0")
-    if [[ "${ADMIN_REAL_CHECK:-0}" -eq 0 ]]; then
-        # 首次部署场景，安全清理可能的部分执行残留
-        for tbl in system_update_log; do
-            TBL_EXISTS=$(docker compose exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" "${MYSQL_DATABASE:-keyauth}" \
-                -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${MYSQL_DATABASE:-keyauth}' AND table_name='${tbl}';" 2>/dev/null || echo "0")
-            V11_APPLIED=$(docker compose exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" "${MYSQL_DATABASE:-keyauth}" \
-                -N -e "SELECT COUNT(*) FROM schema_migrations WHERE version=11;" 2>/dev/null || echo "0")
-            if [[ "${TBL_EXISTS:-0}" -eq 1 && "${V11_APPLIED:-0}" -eq 0 ]]; then
-                warn "  检测到 ${tbl} 表残留但 v11 未标记完成，DROP 后让迁移重新创建"
-                docker compose exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" "${MYSQL_DATABASE:-keyauth}" \
-                    -e "DROP TABLE IF EXISTS ${tbl};" >/dev/null 2>&1
+    # 检查 schema_migrations 表是否存在
+    SM_EXISTS=$(docker compose exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" "${MYSQL_DATABASE:-keyauth}" \
+        -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${MYSQL_DATABASE:-keyauth}' AND table_name='schema_migrations';" 2>/dev/null || echo "0")
+
+    if [[ "${SM_EXISTS:-0}" -eq 1 ]]; then
+        DIRTY_COUNT=$(docker compose exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" "${MYSQL_DATABASE:-keyauth}" \
+            -N -e "SELECT COUNT(*) FROM schema_migrations WHERE dirty=1;" 2>/dev/null || echo "0")
+
+        if [[ "${DIRTY_COUNT:-0}" -gt 0 ]]; then
+            warn "检测到 schema_migrations 有 ${DIRTY_COUNT} 条 dirty 记录"
+            DIRTY_VERSIONS=$(docker compose exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" "${MYSQL_DATABASE:-keyauth}" \
+                -N -e "SELECT version FROM schema_migrations WHERE dirty=1;" 2>/dev/null || echo "")
+            warn "  dirty 版本：${DIRTY_VERSIONS}"
+
+            # 自动备份数据库（修复前必须备份）
+            BACKUP_TS=$(date '+%Y%m%d_%H%M%S')
+            DIRTY_BACKUP_FILE="${PROJECT_DIR}/backup_dirty_${BACKUP_TS}.sql"
+            log "  自动备份数据库到：${DIRTY_BACKUP_FILE}"
+            if docker compose exec -T mysql mysqldump -uroot -p"${MYSQL_ROOT_PASSWORD}" \
+                --single-transaction --routines --triggers "${MYSQL_DATABASE:-keyauth}" \
+                > "${DIRTY_BACKUP_FILE}" 2>/dev/null; then
+                log "  ✓ 数据库备份完成（大小：$(du -h "${DIRTY_BACKUP_FILE}" | cut -f1)）"
+            else
+                warn "  ✗ 数据库备份失败，请手动备份后再继续"
+                warn "  手动备份命令：docker compose exec -T mysql mysqldump -uroot -p<密码> ${MYSQL_DATABASE:-keyauth} > backup.sql"
+                DIRTY_BACKUP_FILE=""
             fi
-        done
+
+            # 自动开启 MIGRATION_REPAIR_DIRTY=true（v0.6.2 新流程）
+            log "  自动开启 MIGRATION_REPAIR_DIRTY=true 走幂等迁移修复流程..."
+            if ! grep -q "^MIGRATION_REPAIR_DIRTY=" .env; then
+                echo "MIGRATION_REPAIR_DIRTY=true" >> .env
+            else
+                sed -i 's|^MIGRATION_REPAIR_DIRTY=.*|MIGRATION_REPAIR_DIRTY=true|g' .env
+            fi
+            log "  ✓ .env 已设置 MIGRATION_REPAIR_DIRTY=true"
+            log "  修复后请改回 false：sed -i 's|^MIGRATION_REPAIR_DIRTY=.*|MIGRATION_REPAIR_DIRTY=false|g' .env"
+        else
+            log "✓ 无 dirty 记录，schema_migrations 状态正常"
+        fi
+    else
+        log "✓ schema_migrations 表不存在（首次部署或未执行过迁移）"
     fi
 fi
 
@@ -490,38 +563,79 @@ for _ in {1..30}; do
     sleep 2
 done
 
-# server 未就绪时的自动诊断与修复（关键：dirty 状态自动清理）
+# server 未就绪时的自动诊断与修复（v0.6.2：不再 DELETE dirty，走修复流程）
 if [[ "${DEPLOY_STATE[server_ok]}" != "true" ]]; then
     warn "后端 server 等待超时，开始自动诊断..."
 
     # 抓取 server 日志
-    SERVER_LOGS=$(docker compose logs --tail=100 server 2>&1 || true)
+    SERVER_LOGS=$(docker compose logs --tail=200 server 2>&1 || true)
 
-    # 检测 1：dirty 状态错误
+    # 检测 1：dirty 状态错误（v0.6.2：不再 DELETE，走 MIGRATION_REPAIR_DIRTY=true 修复流程）
     if echo "$SERVER_LOGS" | grep -qi "dirty"; then
-        warn "检测到 schema_migrations dirty 状态错误，自动清理..."
+        warn "检测到 schema_migrations dirty 状态错误"
         DIRTY_VERS=$(echo "$SERVER_LOGS" | grep -oE "version=[0-9]+" | head -5 | tr '\n' ' ' || echo "")
-        log "  dirty 版本：${DIRTY_VERS:-未知}"
+        warn "  dirty 版本：${DIRTY_VERS:-未知}"
+        warn "  v0.6.2 不再自动 DELETE dirty 记录（会掩盖问题）"
 
-        # 清理 dirty 记录
-        docker compose exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" "${MYSQL_DATABASE:-keyauth}" \
-            -e "DELETE FROM schema_migrations WHERE dirty=1;" >/dev/null 2>&1 && \
-            log "  ✓ dirty 记录已清理" || warn "  清理失败（可能 mysql 未就绪）"
+        # 备份数据库（如果还没备份）
+        if [[ -z "$DIRTY_BACKUP_FILE" ]]; then
+            BACKUP_TS=$(date '+%Y%m%d_%H%M%S')
+            DIRTY_BACKUP_FILE="${PROJECT_DIR}/backup_dirty_${BACKUP_TS}.sql"
+            log "  自动备份数据库到：${DIRTY_BACKUP_FILE}"
+            docker compose exec -T mysql mysqldump -uroot -p"${MYSQL_ROOT_PASSWORD}" \
+                --single-transaction --routines --triggers "${MYSQL_DATABASE:-keyauth}" \
+                > "${DIRTY_BACKUP_FILE}" 2>/dev/null && \
+                log "  ✓ 备份完成（大小：$(du -h "${DIRTY_BACKUP_FILE}" | cut -f1)）" || \
+                warn "  ✗ 备份失败，请手动备份"
+        fi
 
-        # 重启 server
-        log "  重启 server 容器..."
-        docker compose restart server >/dev/null 2>&1
+        # 设置 MIGRATION_REPAIR_DIRTY=true 并重启
+        log "  开启 MIGRATION_REPAIR_DIRTY=true 并重启 server 走幂等迁移修复流程..."
+        if ! grep -q "^MIGRATION_REPAIR_DIRTY=" .env; then
+            echo "MIGRATION_REPAIR_DIRTY=true" >> .env
+        else
+            sed -i 's|^MIGRATION_REPAIR_DIRTY=.*|MIGRATION_REPAIR_DIRTY=true|g' .env
+        fi
+        docker compose up -d server >/dev/null 2>&1
 
         # 重新等待 server 就绪（最长 60s）
         log "  重新等待 server 就绪（最长 60s）..."
         for _ in {1..30}; do
             if curl -sf http://127.0.0.1:${SERVER_PORT:-8080}/health >/dev/null 2>&1; then
-                log "  ✓ 后端 server 已就绪（dirty 清理后恢复）"
+                log "  ✓ 后端 server 已就绪（dirty 修复成功）"
                 DEPLOY_STATE[server_ok]="true"
+                # 修复成功后改回 false
+                sed -i 's|^MIGRATION_REPAIR_DIRTY=.*|MIGRATION_REPAIR_DIRTY=false|g' .env
+                log "  ✓ MIGRATION_REPAIR_DIRTY 已改回 false"
                 break
             fi
             sleep 2
         done
+
+        # 仍未就绪，输出详细诊断
+        if [[ "${DEPLOY_STATE[server_ok]}" != "true" ]]; then
+            err "  ✗ dirty 修复后仍未就绪，输出完整诊断信息："
+            echo ""
+            echo -e "${CYAN}==== docker compose ps ====${NC}"
+            docker compose ps 2>&1 || true
+            echo ""
+            echo -e "${CYAN}==== mysql 容器日志（最近 30 行） ====${NC}"
+            docker compose logs --tail=30 mysql 2>&1 || true
+            echo ""
+            echo -e "${CYAN}==== server 容器日志（最近 50 行） ====${NC}"
+            docker compose logs --tail=50 server 2>&1 || true
+            echo ""
+            echo -e "${CYAN}==== schema_migrations 状态 ====${NC}"
+            docker compose exec -T mysql mysql -uroot -p"${MYSQL_ROOT_PASSWORD}" "${MYSQL_DATABASE:-keyauth}" \
+                -e "SELECT version, dirty, applied_at FROM schema_migrations ORDER BY version;" 2>&1 || true
+            echo ""
+            if [[ -n "$DIRTY_BACKUP_FILE" && -f "$DIRTY_BACKUP_FILE" ]]; then
+                warn "数据库已备份到：${DIRTY_BACKUP_FILE}"
+            fi
+            warn "  请根据日志中的 SQL 错误手动修复迁移文件后重试"
+            warn "  修复后重新执行：bash scripts/one_click_deploy.sh"
+            warn "  或使用辅助工具：bash scripts/clean_dirty_migration.sh --show"
+        fi
     fi
 
     # 检测 2：配置错误（AES_KEY / JWT_SECRET / MySQL 连接）
