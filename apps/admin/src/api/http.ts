@@ -38,7 +38,7 @@ http.interceptors.request.use(
   (err) => Promise.reject(err)
 )
 
-// 是否正在刷新 token（避免并发刷新）
+// 是否正在刷新 token（避免并发刷新）—— 三角色（admin/tenant/agent）专用
 let isRefreshing = false
 let refreshSubscribers: Array<(token: string) => void> = []
 
@@ -49,6 +49,19 @@ const subscribeTokenRefresh = (cb: (token: string) => void) => {
 const onTokenRefreshed = (token: string) => {
   refreshSubscribers.forEach((cb) => cb(token))
   refreshSubscribers = []
+}
+
+// P1-07: H5 终端用户独立的刷新队列（与三角色 token 隔离，避免并发 refresh 误登出）
+let isH5Refreshing = false
+let h5RefreshSubscribers: Array<(token: string) => void> = []
+
+const subscribeH5TokenRefresh = (cb: (token: string) => void) => {
+  h5RefreshSubscribers.push(cb)
+}
+
+const onH5TokenRefreshed = (token: string) => {
+  h5RefreshSubscribers.forEach((cb) => cb(token))
+  h5RefreshSubscribers = []
 }
 
 // 响应拦截
@@ -117,6 +130,22 @@ http.interceptors.response.use(
         // 标记重试
         originalRequest._retry = true
 
+        // P1-07: 正在刷新则排队等待，避免并发 refresh 误登出
+        if (isH5Refreshing) {
+          return new Promise((resolve, reject) => {
+            subscribeH5TokenRefresh((newToken: string) => {
+              if (!newToken) {
+                reject(err)
+                return
+              }
+              originalRequest.headers.Authorization = `Bearer ${newToken}`
+              resolve(http(originalRequest))
+            })
+          })
+        }
+
+        // 开始刷新
+        isH5Refreshing = true
         try {
           const resp = await endUserRefreshApi(endUserStore.refreshToken)
           // 持久化新的 token（保留原 user 信息和 appKey）
@@ -127,12 +156,17 @@ http.interceptors.response.use(
             expires_at: Date.now() + resp.expires_in * 1000,
             user: (endUserStore.user ?? null) as any
           })
-          originalRequest.headers.Authorization = `Bearer ${resp.access_token}`
+          const newToken = resp.access_token
+          onH5TokenRefreshed(newToken)
+          originalRequest.headers.Authorization = `Bearer ${newToken}`
           return http(originalRequest)
         } catch (refreshErr) {
+          onH5TokenRefreshed('')
           endUserStore.clear()
           redirectToH5Login()
           return Promise.reject(refreshErr)
+        } finally {
+          isH5Refreshing = false
         }
       }
 

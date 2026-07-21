@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/your-org/keyauth-saas/apps/server/internal/config"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 	"gorm.io/gorm"
@@ -218,31 +219,45 @@ func BranchMatches(ref, branch string) bool {
 
 // ============== 3. Redis 互斥锁 ==============
 
+// releaseLockScript 释放锁的 Lua 脚本：仅当 Redis 中锁值等于 token 时才删除
+// 铁律 06：避免多实例部署下实例 A 锁过期后实例 B 抢锁、A 完成后误删 B 的锁
+const releaseLockScript = `
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+else
+    return 0
+end
+`
+
 // AcquireLock 获取更新互斥锁（防止并发触发）
-// 铁律 06：使用 SET NX EX 模式原子加锁；锁超时由 sys_config 控制
-func (m *Manager) AcquireLock(ctx context.Context) (bool, error) {
+// 铁律 06：使用 SET NX EX 模式原子加锁；锁值为 UUID token，释放时通过 Lua 脚本原子比较并删除
+// 返回 token（成功时）与 ok；调用方需保存 token 并在 ReleaseLock 时传入
+func (m *Manager) AcquireLock(ctx context.Context) (string, bool) {
 	// 进程内互斥（双重保险）
 	if !m.mu.TryLock() {
-		return false, nil
+		return "", false
 	}
-	// Redis 分布式锁
+	// Redis 分布式锁：value 使用 UUID token，便于释放时校验归属
 	lockTimeout := m.cache.GetInt(ctx, CfgKeyLockTimeout, 600)
-	// 锁值 = 当前时间戳，用于异常情况下判断锁是否过期（简化版：直接 NX EX）
-	ok, err := m.cache.RedisClient().SetNX(ctx, m.lockKey, "locked", time.Duration(lockTimeout)*time.Second).Result()
+	token := uuid.NewString()
+	ok, err := m.cache.RedisClient().SetNX(ctx, m.lockKey, token, time.Duration(lockTimeout)*time.Second).Result()
 	if err != nil {
 		m.mu.Unlock()
-		return false, fmt.Errorf("获取 Redis 锁失败: %w", err)
+		return "", false
 	}
 	if !ok {
 		m.mu.Unlock()
-		return false, nil
+		return "", false
 	}
-	return true, nil
+	return token, true
 }
 
 // ReleaseLock 释放更新互斥锁
-func (m *Manager) ReleaseLock(ctx context.Context) {
-	_, _ = m.cache.RedisClient().Del(ctx, m.lockKey).Result()
+// 铁律 06：使用 Lua 脚本原子比较 token 后删除，避免误删其他实例持有的锁
+func (m *Manager) ReleaseLock(ctx context.Context, token string) {
+	if token != "" {
+		_, _ = m.cache.RedisClient().Eval(ctx, releaseLockScript, []string{m.lockKey}, token).Result()
+	}
 	m.mu.Unlock()
 }
 
@@ -294,18 +309,13 @@ func (m *Manager) ExecuteUpdate(ctx context.Context, opts UpdateOptions) (*Updat
 	}
 
 	// 1. 加锁
-	acquired, err := m.AcquireLock(ctx)
-	if err != nil {
-		result.Status = StatusFailed
-		result.ErrorMessage = err.Error()
-		return result, err
-	}
+	token, acquired := m.AcquireLock(ctx)
 	if !acquired {
 		result.Status = StatusFailed
 		result.ErrorMessage = "已有更新在进行中（locked）"
 		return result, fmt.Errorf("update locked")
 	}
-	defer m.ReleaseLock(ctx)
+	defer m.ReleaseLock(ctx, token)
 
 	// 2. 读取目标分支
 	branch := opts.Branch
@@ -477,18 +487,13 @@ func (m *Manager) Rollback(ctx context.Context, failedLogID uint64, opts UpdateO
 	}
 
 	// 加锁
-	acquired, err := m.AcquireLock(ctx)
-	if err != nil {
-		result.Status = StatusFailed
-		result.ErrorMessage = err.Error()
-		return result, err
-	}
+	token, acquired := m.AcquireLock(ctx)
 	if !acquired {
 		result.Status = StatusFailed
 		result.ErrorMessage = "已有更新在进行中（locked）"
 		return result, fmt.Errorf("update locked")
 	}
-	defer m.ReleaseLock(ctx)
+	defer m.ReleaseLock(ctx, token)
 
 	// 读取原失败日志的 commit_before 作为回滚目标
 	var failedLog model.SystemUpdateLog

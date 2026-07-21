@@ -8,7 +8,7 @@
   </div>
 
   <el-dialog v-model="dialogVisible" :title="latestNotice?.title" width="600px">
-    <div v-html="latestNotice?.content"></div>
+    <div v-html="sanitizedContent"></div>
     <template #footer>
       <el-button type="primary" @click="dialogVisible = false">已读</el-button>
     </template>
@@ -16,13 +16,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import DOMPurify from 'dompurify'
 import { useSysConfigStore } from '@/stores/sysConfig'
 // import { listActiveNotices } from '@/api/notice'  // 待实现
 
 const sysConfig = useSysConfigStore()
 const latestNotice = ref<{ title: string; content: string } | null>(null)
 const dialogVisible = ref(false)
+
+// P1-01: 对后端返回的 HTML 内容做净化，防止 <script> 等 XSS 注入
+const sanitizedContent = computed(() =>
+  DOMPurify.sanitize(latestNotice.value?.content || '', { USE_PROFILES: { html: true } })
+)
 
 onMounted(async () => {
   // 待实现：加载最新平台公告

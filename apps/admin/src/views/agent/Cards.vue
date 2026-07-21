@@ -197,7 +197,8 @@ const unitCost = computed(() => {
   return currentCardType.value ? Number(currentCardType.value.agent_base_price) : 0
 })
 
-const totalCost = computed(() => unitCost.value * form.quantity)
+// P1-04: 使用整数分计算，避免 IEEE 754 浮点精度误差导致余额边界判断错误
+const totalCost = computed(() => Math.round(unitCost.value * form.quantity * 100) / 100)
 
 const balanceAfter = computed(() => {
   return Math.max(0, profile.value.balance - totalCost.value)

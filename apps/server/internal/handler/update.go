@@ -1,9 +1,10 @@
 // v0.4.0 在线更新 Handler
 // 包含 Webhook 接收 + 管理后台状态/触发/历史/回滚
 // 严格遵循铁律 04/05/06：
-//   04 - webhook 密钥 / 分支 / 自动开关 / 部署脚本路径 全部从 sys_config 读取
-//   05 - 8 项 update.* 配置可通过后台「系统配置」实时调整
-//   06 - webhook 签名校验用 hmac.Equal 防时序攻击；shell 命令显式组合不拼接用户输入
+//
+//	04 - webhook 密钥 / 分支 / 自动开关 / 部署脚本路径 全部从 sys_config 读取
+//	05 - 8 项 update.* 配置可通过后台「系统配置」实时调整
+//	06 - webhook 签名校验用 hmac.Equal 防时序攻击；shell 命令显式组合不拼接用户输入
 package handler
 
 import (
@@ -14,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 	"github.com/your-org/keyauth-saas/apps/server/internal/update"
@@ -75,13 +77,13 @@ func GitHubWebhook(deps *Deps) gin.HandlerFunc {
 		if !autoUpdate {
 			// 仅记录通知，等待管理员手动触发
 			middleware.Success(c, gin.H{
-				"received":      true,
-				"auto_update":   false,
-				"head_commit":   event.HeadCommit.ID,
+				"received":       true,
+				"auto_update":    false,
+				"head_commit":    event.HeadCommit.ID,
 				"commit_message": event.HeadCommit.Message,
-				"sender":        event.Sender.Login,
-				"branch":        event.Ref,
-				"message":       "已收到推送通知，需管理员手动触发更新",
+				"sender":         event.Sender.Login,
+				"branch":         event.Ref,
+				"message":        "已收到推送通知，需管理员手动触发更新",
 			})
 			return
 		}
@@ -99,13 +101,13 @@ func GitHubWebhook(deps *Deps) gin.HandlerFunc {
 		}()
 
 		middleware.Success(c, gin.H{
-			"received":      true,
-			"auto_update":   true,
-			"head_commit":   event.HeadCommit.ID,
+			"received":       true,
+			"auto_update":    true,
+			"head_commit":    event.HeadCommit.ID,
 			"commit_message": event.HeadCommit.Message,
-			"sender":        event.Sender.Login,
-			"branch":        event.Ref,
-			"message":       "已触发自动更新",
+			"sender":         event.Sender.Login,
+			"branch":         event.Ref,
+			"message":        "已触发自动更新",
 		})
 	}
 }
@@ -144,13 +146,13 @@ func AdminUpdateStatus(deps *Deps) gin.HandlerFunc {
 		deps.DB.Model(&model.SystemUpdateLog{}).Where("status IN ?", []string{update.StatusFailed, update.StatusRolledBack}).Count(&failedCount)
 
 		resp := gin.H{
-			"current_commit":   currentCommit,
-			"is_locked":        isLocked,
-			"auto_update":      autoUpdate,
-			"branch":           branch,
-			"success_count":    successCount,
-			"failed_count":     failedCount,
-			"latest_log":       nil,
+			"current_commit": currentCommit,
+			"is_locked":      isLocked,
+			"auto_update":    autoUpdate,
+			"branch":         branch,
+			"success_count":  successCount,
+			"failed_count":   failedCount,
+			"latest_log":     nil,
 		}
 		if hasLatest {
 			resp["latest_log"] = latestLog
@@ -239,7 +241,8 @@ func AdminListUpdateHistory(deps *Deps) gin.HandlerFunc {
 
 		var logs []model.SystemUpdateLog
 		if err := q.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&logs).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败: "+err.Error())
+			logger.Error("update: list logs failed", "err", err)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败")
 			return
 		}
 
@@ -305,9 +308,9 @@ func AdminRollbackUpdate(deps *Deps) gin.HandlerFunc {
 		// 记录操作日志
 		fid := req.FailedLogID
 		RecordOperation(deps, c, "update", "rollback_update", "success", "system", &fid, map[string]interface{}{
-			"failed_log_id":  req.FailedLogID,
-			"target_commit":  failedLog.CommitBefore,
-			"trigger_by":     adminID,
+			"failed_log_id": req.FailedLogID,
+			"target_commit": failedLog.CommitBefore,
+			"trigger_by":    adminID,
 		})
 
 		middleware.Success(c, gin.H{
@@ -368,9 +371,9 @@ func AdminUpdatePoll(deps *Deps) gin.HandlerFunc {
 
 		// 仅 SELECT 轻量字段（避免 log_text 大字段）
 		var latest struct {
-			Status        string `gorm:"column:status"`
-			TriggerSource string `gorm:"column:trigger_source"`
-			CommitAfter   string `gorm:"column:commit_after"`
+			Status        string    `gorm:"column:status"`
+			TriggerSource string    `gorm:"column:trigger_source"`
+			CommitAfter   string    `gorm:"column:commit_after"`
 			CreatedAt     time.Time `gorm:"column:created_at"`
 		}
 		hasLatest := true

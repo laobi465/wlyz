@@ -18,6 +18,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/auth"
+	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 	"github.com/your-org/keyauth-saas/apps/server/internal/quota"
@@ -36,12 +37,12 @@ type loginReq struct {
 }
 
 type registerTenantReq struct {
-	Username        string `json:"username" binding:"required,min=3,max=64"`
-	Password        string `json:"password" binding:"required,min=8,max=64"`
-	Email           string `json:"email" binding:"required,email"`
-	Phone           string `json:"phone" binding:"omitempty,max=32"`
-	Company         string `json:"company" binding:"omitempty,max=128"`
-	Agreement       bool   `json:"agreement" binding:"required,eq=true"` // 必须同意协议
+	Username  string `json:"username" binding:"required,min=3,max=64"`
+	Password  string `json:"password" binding:"required,min=8,max=64"`
+	Email     string `json:"email" binding:"required,email"`
+	Phone     string `json:"phone" binding:"omitempty,max=32"`
+	Company   string `json:"company" binding:"omitempty,max=128"`
+	Agreement bool   `json:"agreement" binding:"required,eq=true"` // 必须同意协议
 }
 
 type refreshReq struct {
@@ -51,11 +52,11 @@ type refreshReq struct {
 type loginResp struct {
 	// 扁平 token 字段（与前端契约一致：apps/admin/src/api/auth.ts LoginResp）
 	// 注意：expires_at 是绝对 Unix 时间戳（秒），不是相对秒数 expires_in
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresAt    int64  `json:"expires_at"` // access token 过期绝对时间戳（秒）
-	RefreshAt    int64  `json:"refresh_at"` // refresh token 过期绝对时间戳（秒）
-	TokenType    string `json:"token_type"`
+	AccessToken  string   `json:"access_token"`
+	RefreshToken string   `json:"refresh_token"`
+	ExpiresAt    int64    `json:"expires_at"` // access token 过期绝对时间戳（秒）
+	RefreshAt    int64    `json:"refresh_at"` // refresh token 过期绝对时间戳（秒）
+	TokenType    string   `json:"token_type"`
 	User         userInfo `json:"user"`
 	// 2FA 相关（与前端 totp_required 对齐）
 	Require2FA bool   `json:"totp_required"` // true 表示需要二次验证，token 字段为空
@@ -76,17 +77,17 @@ type userInfo struct {
 
 // getAuthParams 从 sys_config 读取认证相关参数（带缓存）
 type authParams struct {
-	AccessTTL       time.Duration
-	RefreshTTL      time.Duration
-	Issuer          string
-	MaxAttempts     int
-	LockSeconds     int
-	WindowSeconds   int
-	TOTPRequired    bool // 当前角色是否强制 2FA
-	TOTPIssuer      string
-	TOTPPeriod      uint
-	TOTPSkew        uint
-	PasswordMinLen  int
+	AccessTTL      time.Duration
+	RefreshTTL     time.Duration
+	Issuer         string
+	MaxAttempts    int
+	LockSeconds    int
+	WindowSeconds  int
+	TOTPRequired   bool // 当前角色是否强制 2FA
+	TOTPIssuer     string
+	TOTPPeriod     uint
+	TOTPSkew       uint
+	PasswordMinLen int
 }
 
 func loadAuthParams(deps *Deps, role string) authParams {
@@ -143,7 +144,8 @@ func doLogin(
 	// 1. 检查账号锁定
 	locked, lockTTL, err := auth.IsAccountLocked(ctx, deps.Redis, role, req.Username)
 	if err != nil {
-		middleware.Fail(c, http.StatusInternalServerError, 5001, "登录服务异常: "+err.Error())
+		logger.Error("login: check account lock failed", "err", err, "role", role, "username", req.Username)
+		middleware.Fail(c, http.StatusInternalServerError, 5001, "登录服务异常")
 		return
 	}
 	if locked {
@@ -166,7 +168,8 @@ func doLogin(
 			middleware.Fail(c, http.StatusUnauthorized, 1004, "用户名或密码错误")
 			return
 		}
-		middleware.Fail(c, http.StatusInternalServerError, 5002, "查询账号失败: "+err.Error())
+		logger.Error("login: lookup account failed", "err", err, "role", role, "username", req.Username)
+		middleware.Fail(c, http.StatusInternalServerError, 5002, "查询账号失败")
 		return
 	}
 
@@ -230,7 +233,8 @@ func doLogin(
 		JTI:        jti,
 	})
 	if err != nil {
-		middleware.Fail(c, http.StatusInternalServerError, 5004, "签发 Token 失败: "+err.Error())
+		logger.Error("login: generate token pair failed", "err", err, "role", role, "user_id", id)
+		middleware.Fail(c, http.StatusInternalServerError, 5004, "签发 Token 失败")
 		return
 	}
 
@@ -395,7 +399,8 @@ func TenantRegister(deps *Deps) gin.HandlerFunc {
 		// 3. 检查用户名唯一
 		var count int64
 		if err := deps.DB.Model(&model.SysTenant{}).Where("username = ?", req.Username).Count(&count).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5005, "查询失败: "+err.Error())
+			logger.Error("tenant register: check username unique failed", "err", err, "username", req.Username)
+			middleware.Fail(c, http.StatusInternalServerError, 5005, "查询失败")
 			return
 		}
 		if count > 0 {
@@ -406,7 +411,8 @@ func TenantRegister(deps *Deps) gin.HandlerFunc {
 		// 4. 加密密码
 		passwordHash, err := crypto.HashPassword(req.Password)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5006, "密码加密失败: "+err.Error())
+			logger.Error("tenant register: hash password failed", "err", err)
+			middleware.Fail(c, http.StatusInternalServerError, 5006, "密码加密失败")
 			return
 		}
 
@@ -453,28 +459,29 @@ func TenantRegister(deps *Deps) gin.HandlerFunc {
 		}
 
 		// 9. 自动签发 Token（注册后免登录）
-	// v0.4.0：生成 jti 与登录保持一致
-	params := loadAuthParams(deps, auth.RoleTenant)
-	jti := uuid.NewString()
-	tokenPair, err := auth.GenerateTokenPair(auth.TokenOptions{
-		Secret:     deps.Config.JWT.Secret,
-		Issuer:     params.Issuer,
-		UserID:     tenant.ID,
-		Username:   tenant.Username,
-		Role:       auth.RoleTenant,
-		TenantID:   tenant.ID,
-		AccessTTL:  params.AccessTTL,
-		RefreshTTL: params.RefreshTTL,
-		JTI:        jti,
-	})
-	if err != nil {
-		middleware.Fail(c, http.StatusInternalServerError, 5004, "签发 Token 失败: "+err.Error())
-		return
-	}
+		// v0.4.0：生成 jti 与登录保持一致
+		params := loadAuthParams(deps, auth.RoleTenant)
+		jti := uuid.NewString()
+		tokenPair, err := auth.GenerateTokenPair(auth.TokenOptions{
+			Secret:     deps.Config.JWT.Secret,
+			Issuer:     params.Issuer,
+			UserID:     tenant.ID,
+			Username:   tenant.Username,
+			Role:       auth.RoleTenant,
+			TenantID:   tenant.ID,
+			AccessTTL:  params.AccessTTL,
+			RefreshTTL: params.RefreshTTL,
+			JTI:        jti,
+		})
+		if err != nil {
+			logger.Error("tenant register: generate token pair failed", "err", err, "tenant_id", tenant.ID)
+			middleware.Fail(c, http.StatusInternalServerError, 5004, "签发 Token 失败")
+			return
+		}
 
-	// 10. 写入会话记录（与登录保持一致）
-	_ = recordLoginSession(deps, auth.RoleTenant, tenant.ID, jti, c.ClientIP(),
-		c.Request.Header.Get("User-Agent"), params.RefreshTTL)
+		// 10. 写入会话记录（与登录保持一致）
+		_ = recordLoginSession(deps, auth.RoleTenant, tenant.ID, jti, c.ClientIP(),
+			c.Request.Header.Get("User-Agent"), params.RefreshTTL)
 
 		middleware.Success(c, gin.H{
 			"access_token":  tokenPair.AccessToken,
@@ -489,8 +496,8 @@ func TenantRegister(deps *Deps) gin.HandlerFunc {
 				TenantID: tenant.ID,
 				Status:   tenant.Status,
 			},
-			"package_id":       packageID,
-			"trial_days":       trialDays,
+			"package_id":              packageID,
+			"trial_days":              trialDays,
 			"subscription_expires_at": expiresAt, // 租户订阅过期时间（区别于 token 过期）
 		})
 	}
@@ -540,7 +547,8 @@ func AgentRegister(deps *Deps) gin.HandlerFunc {
 				middleware.Fail(c, http.StatusBadRequest, 1008, "邀请码不存在")
 				return
 			}
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询邀请码失败: "+err.Error())
+			logger.Error("agent register: query invite code failed", "err", err, "code", req.InviteCode)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询邀请码失败")
 			return
 		}
 		if ic.Status != "active" {
@@ -590,7 +598,8 @@ func AgentRegister(deps *Deps) gin.HandlerFunc {
 		// 6. 加载易支付配置
 		epayCfg, err := loadPlatformPayConfig(deps)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "支付配置加载失败: "+err.Error())
+			logger.Error("agent register: load platform pay config failed", "err", err)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "支付配置加载失败")
 			return
 		}
 
@@ -601,11 +610,13 @@ func AgentRegister(deps *Deps) gin.HandlerFunc {
 		//     铁律 04：DB 不存明文密码也不存哈希到 AgentRegistrationOrder（订单表只存账号元信息）
 		pwdHash, err := crypto.HashPassword(req.Password)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "密码加密失败: "+err.Error())
+			logger.Error("agent register: hash password failed", "err", err)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "密码加密失败")
 			return
 		}
 		if err := cacheAgentRegisterPassword(deps, orderNo, pwdHash); err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5003, "密码缓存失败: "+err.Error())
+			logger.Error("agent register: cache password failed", "err", err, "order_no", orderNo)
+			middleware.Fail(c, http.StatusInternalServerError, 5003, "密码缓存失败")
 			return
 		}
 
@@ -625,7 +636,8 @@ func AgentRegister(deps *Deps) gin.HandlerFunc {
 		if err := deps.DB.Create(order).Error; err != nil {
 			// 订单创建失败：清理 Redis 密码缓存避免泄漏
 			deps.Redis.Del(ctx, "agent_register:pwd:"+orderNo)
-			middleware.Fail(c, http.StatusInternalServerError, 5003, "创建订单失败: "+err.Error())
+			logger.Error("agent register: create order failed", "err", err, "order_no", orderNo)
+			middleware.Fail(c, http.StatusInternalServerError, 5003, "创建订单失败")
 			return
 		}
 
@@ -642,7 +654,8 @@ func AgentRegister(deps *Deps) gin.HandlerFunc {
 			ClientIP:   c.ClientIP(),
 		})
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5004, "构造支付 URL 失败: "+err.Error())
+			logger.Error("agent register: build pay url failed", "err", err, "order_no", orderNo)
+			middleware.Fail(c, http.StatusInternalServerError, 5004, "构造支付 URL 失败")
 			return
 		}
 
@@ -671,7 +684,7 @@ func AgentRegisterOrderStatus(deps *Deps) gin.HandlerFunc {
 				middleware.Fail(c, http.StatusNotFound, 1010, "订单不存在")
 				return
 			}
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询订单失败: "+err.Error())
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询订单失败")
 			return
 		}
 
@@ -707,9 +720,9 @@ func AgentRegisterConfig(deps *Deps) gin.HandlerFunc {
 		}
 
 		middleware.Success(c, gin.H{
-			"register_fee":    fee,
-			"pay_enabled":     payEnabled,
-			"pay_methods":     methods,
+			"register_fee":         fee,
+			"pay_enabled":          payEnabled,
+			"pay_methods":          methods,
 			"order_expire_seconds": deps.CfgCache.GetInt64(ctx, "pay.order_expire_seconds", 1800),
 		})
 	}

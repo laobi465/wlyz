@@ -441,7 +441,7 @@ func AdminReconciliation(deps *Deps) gin.HandlerFunc {
 			}
 		}
 
-		// 聚合统计
+		// 聚合统计（P1-08 修复：原 stats 查询未应用 tenant_id 条件，超管按开发者过滤无效，改为复用 q）
 		var stats struct {
 			OrderCount    int64   `json:"order_count"`
 			GrossTotal    float64 `json:"gross_total"`
@@ -451,14 +451,12 @@ func AdminReconciliation(deps *Deps) gin.HandlerFunc {
 			PendingSum    float64 `json:"pending_sum"`
 		}
 
-		deps.DB.Model(&model.PlatformSettlement{}).
-			Where("created_at >= ? AND created_at <= ?", startTime, endTime).
-			Select(`COUNT(*) AS order_count,
-				COALESCE(SUM(gross_amount), 0) AS gross_total,
-				COALESCE(SUM(commission_amount), 0) AS commission_sum,
-				COALESCE(SUM(net_amount), 0) AS net_total,
-				COALESCE(SUM(CASE WHEN status = 'settled' THEN net_amount ELSE 0 END), 0) AS settled_sum,
-				COALESCE(SUM(CASE WHEN status = 'pending' THEN net_amount ELSE 0 END), 0) AS pending_sum`).
+		q.Select(`COUNT(*) AS order_count,
+			COALESCE(SUM(gross_amount), 0) AS gross_total,
+			COALESCE(SUM(commission_amount), 0) AS commission_sum,
+			COALESCE(SUM(net_amount), 0) AS net_total,
+			COALESCE(SUM(CASE WHEN status = 'settled' THEN net_amount ELSE 0 END), 0) AS settled_sum,
+			COALESCE(SUM(CASE WHEN status = 'pending' THEN net_amount ELSE 0 END), 0) AS pending_sum`).
 			Scan(&stats)
 
 		// 已提现金额（同一时间区间内 tenant_withdraw.status=paid 的 amount 求和）

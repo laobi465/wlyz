@@ -1,8 +1,9 @@
 // v0.4.0 数据备份恢复 Handler
 // 严格遵循铁律 04/05/06：
-//   04 - 备份目录 / 保留天数 / 加密密钥 / 压缩开关 全部从 sys_config 读取
-//   05 - 6 项 backup.* 配置可通过后台实时调整
-//   06 - 下载前 checksum 校验；恢复前严格校验文件完整性
+//
+//	04 - 备份目录 / 保留天数 / 加密密钥 / 压缩开关 全部从 sys_config 读取
+//	05 - 6 项 backup.* 配置可通过后台实时调整
+//	06 - 下载前 checksum 校验；恢复前严格校验文件完整性
 package handler
 
 import (
@@ -13,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/backup"
+	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 )
@@ -56,9 +58,9 @@ func AdminCreateBackup(deps *Deps) gin.HandlerFunc {
 		})
 
 		middleware.Success(c, gin.H{
-			"triggered":    true,
-			"backup_type":  req.BackupType,
-			"message":      "备份已异步触发，请通过 /admin/backup/list 查看进度",
+			"triggered":   true,
+			"backup_type": req.BackupType,
+			"message":     "备份已异步触发，请通过 /admin/backup/list 查看进度",
 		})
 	}
 }
@@ -84,7 +86,8 @@ func AdminListBackups(deps *Deps) gin.HandlerFunc {
 
 		var logs []model.SystemBackupLog
 		if err := q.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&logs).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败: "+err.Error())
+			logger.Error("backup: list logs failed", "err", err)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败")
 			return
 		}
 
@@ -240,7 +243,8 @@ func AdminCleanupBackups(deps *Deps) gin.HandlerFunc {
 
 		deleted, err := mgr.CleanupExpired(ctx)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "清理失败: "+err.Error())
+			logger.Error("backup: cleanup expired failed", "err", err)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "清理失败")
 			return
 		}
 
@@ -287,16 +291,16 @@ func AdminBackupStatus(deps *Deps) gin.HandlerFunc {
 			Select("COALESCE(SUM(file_size), 0)").Scan(&totalSize)
 
 		resp := gin.H{
-			"auto_enabled":    mgr.IsAutoBackupEnabled(ctx),
-			"backup_dir":      deps.CfgCache.GetString(ctx, backup.CfgKeyBackupDir, "data/backups"),
-			"retention_days":  deps.CfgCache.GetInt(ctx, backup.CfgKeyRetentionDays, 30),
-			"compress":        deps.CfgCache.GetBool(ctx, backup.CfgKeyCompress, true),
-			"encrypted":       deps.CfgCache.GetString(ctx, backup.CfgKeyEncryptionKey, "") != "",
-			"total_backups":   totalBackups,
-			"success_count":   successCount,
-			"failed_count":    failedCount,
-			"total_size":      totalSize,
-			"latest_success":  nil,
+			"auto_enabled":   mgr.IsAutoBackupEnabled(ctx),
+			"backup_dir":     deps.CfgCache.GetString(ctx, backup.CfgKeyBackupDir, "data/backups"),
+			"retention_days": deps.CfgCache.GetInt(ctx, backup.CfgKeyRetentionDays, 30),
+			"compress":       deps.CfgCache.GetBool(ctx, backup.CfgKeyCompress, true),
+			"encrypted":      deps.CfgCache.GetString(ctx, backup.CfgKeyEncryptionKey, "") != "",
+			"total_backups":  totalBackups,
+			"success_count":  successCount,
+			"failed_count":   failedCount,
+			"total_size":     totalSize,
+			"latest_success": nil,
 		}
 		if hasLatest {
 			resp["latest_success"] = latestSuccess

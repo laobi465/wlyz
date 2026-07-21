@@ -67,20 +67,11 @@ func SignatureAuth(db *gorm.DB, rdb *redis.Client, cfgReader ConfigReader) gin.H
 			return
 		}
 
-		// 4. Nonce 防重放
-		nonceExpire := cfgReader.GetInt(c.Request.Context(), configKeyNonceExpire, 300)
-		nonceKey := "nonce:" + nonce
-		ok, err := rdb.SetNX(c.Request.Context(), nonceKey, 1, time.Duration(nonceExpire)*time.Second).Result()
-		if err != nil || !ok {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 1001, "message": "请求已过期或重复"})
-			return
-		}
-
-		// 5. 读取请求体（用于签名）
+		// 4. 读取请求体（用于签名）
 		bodyBytes, _ := io.ReadAll(c.Request.Body)
 		c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes)) // 重置 body
 
-		// 6. 构造签名原文：METHOD\nPATH?QUERY\nTIMESTAMP\nNONCE\nBODY
+		// 5. 构造签名原文：METHOD\nPATH?QUERY\nTIMESTAMP\nNONCE\nBODY
 		pathQuery := c.Request.URL.Path
 		if c.Request.URL.RawQuery != "" {
 			pathQuery += "?" + c.Request.URL.RawQuery
@@ -93,7 +84,7 @@ func SignatureAuth(db *gorm.DB, rdb *redis.Client, cfgReader ConfigReader) gin.H
 			string(bodyBytes),
 		}, "\n")
 
-		// 7. 解密 SignSecret 并计算签名
+		// 6. 解密 SignSecret 并计算签名
 		// 注：crypto.Manager 需通过依赖注入获取（简化版直接全局，正式版应注入）
 		cryptoMgr := GetCryptoManager()
 		if cryptoMgr == nil {
@@ -105,26 +96,31 @@ func SignatureAuth(db *gorm.DB, rdb *redis.Client, cfgReader ConfigReader) gin.H
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"code": 1006, "message": "签名密钥解密失败"})
 			return
 		}
-		expectedSig := crypto.HMACSHA256(signSecret, []byte(signString))
+		// 注：使用 HMACSHA512_256（SHA-512/256 变体）与客户端 SDK 对齐
+		// SDK（csharp/java/php/go/python/node/cpp）均基于 sha512.New512_256 实现
+		expectedSig := crypto.HMACSHA512_256(signSecret, []byte(signString))
 
-		// 8. 常量时间比较（防时序攻击）
-		if !crypto.HMACEqual(expectedSig, signature) {
-			// 尝试用旧密钥（轮换期）
-			if app.SignSecretPrev != "" {
-				oldSecret, err := cryptoMgr.DecryptAES(app.SignSecretPrev)
-				if err == nil {
-					oldSig := crypto.HMACSHA256(oldSecret, []byte(signString))
-					if crypto.HMACEqual(oldSig, signature) {
-						// 旧密钥通过，继续
-						c.Set("app_id", app.ID)
-						c.Set("tenant_id", app.TenantID)
-						c.Set("app", &app)
-						c.Next()
-						return
-					}
-				}
+		// 7. 常量时间比较（防时序攻击），失败时尝试旧密钥（轮换期）
+		sigOK := crypto.HMACEqual(expectedSig, signature)
+		if !sigOK && app.SignSecretPrev != "" {
+			if oldSecret, err := cryptoMgr.DecryptAES(app.SignSecretPrev); err == nil {
+				oldSig := crypto.HMACSHA512_256(oldSecret, []byte(signString))
+				sigOK = crypto.HMACEqual(oldSig, signature)
 			}
+		}
+		if !sigOK {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 1002, "message": "签名校验失败"})
+			return
+		}
+
+		// 8. Nonce 防重放（P1-02 修复：移到签名校验通过后再 SetNX）
+		// 原实现先 SetNX 再校验签名，攻击者构造大量随机 nonce + 错误签名即可污染 Redis nonce 命名空间。
+		// 调整顺序：签名校验通过后再写 nonce，确保只有合法请求才会占用 nonce 槽位。
+		nonceExpire := cfgReader.GetInt(c.Request.Context(), configKeyNonceExpire, 300)
+		nonceKey := "nonce:" + nonce
+		ok, err := rdb.SetNX(c.Request.Context(), nonceKey, 1, time.Duration(nonceExpire)*time.Second).Result()
+		if err != nil || !ok {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 1001, "message": "请求已过期或重复"})
 			return
 		}
 

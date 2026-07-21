@@ -17,6 +17,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
+	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/metrics"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
@@ -31,13 +32,13 @@ import (
 // ============== DTO ==============
 
 type createOrderReq struct {
-	AppID       uint64 `json:"app_id" binding:"required"`
-	CardTypeID  uint64 `json:"card_type_id" binding:"required"`
-	Quantity    int    `json:"quantity" binding:"required,min=1,max=100"`
-	PayType     string `json:"pay_type" binding:"required,oneof=alipay wxpay qqpay"`
+	AppID        uint64 `json:"app_id" binding:"required"`
+	CardTypeID   uint64 `json:"card_type_id" binding:"required"`
+	Quantity     int    `json:"quantity" binding:"required,min=1,max=100"`
+	PayType      string `json:"pay_type" binding:"required,oneof=alipay wxpay qqpay"`
 	BuyerContact string `json:"buyer_contact" binding:"omitempty,max=128"`
-	AgentID     uint64 `json:"agent_id" binding:"omitempty"` // 推广代理 ID（可选）
-	PayChannel  string `json:"pay_channel" binding:"omitempty,oneof=epay usdt paypal stripe"` // v0.5.0 海外支付通道，留空默认 epay
+	AgentID      uint64 `json:"agent_id" binding:"omitempty"`                                  // 推广代理 ID（可选）
+	PayChannel   string `json:"pay_channel" binding:"omitempty,oneof=epay usdt paypal stripe"` // v0.5.0 海外支付通道，留空默认 epay
 }
 
 // ============== 平台易支付配置加载 ==============
@@ -254,7 +255,8 @@ func CreatePayOrder(deps *Deps) gin.HandlerFunc {
 			ClientIP:     c.ClientIP(),
 		}
 		if err := deps.DB.Create(order).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 4007, "创建订单失败: "+err.Error())
+			logger.Error("pay: create order failed", "err", err, "tenant_id", app.TenantID, "order_no", order.OrderNo)
+			middleware.Fail(c, http.StatusInternalServerError, 4007, "创建订单失败")
 			return
 		}
 
@@ -278,16 +280,16 @@ func CreatePayOrder(deps *Deps) gin.HandlerFunc {
 		}
 
 		middleware.Success(c, gin.H{
-			"order_no":       orderNo,
-			"order_id":       order.ID,
-			"pay_url":        payURL,
-			"total_amount":   totalAmount,
-			"money":          moneyStr,
-			"pay_type":       req.PayType,
-			"pay_mode":       ternary(useTenantPay, "tenant", "platform"), // v0.3.6 标识支付通道
-			"expire_at":      time.Now().Add(time.Duration(orderExpire) * time.Second).Unix(),
-			"quantity":       req.Quantity,
-			"card_type":      ct.Name,
+			"order_no":     orderNo,
+			"order_id":     order.ID,
+			"pay_url":      payURL,
+			"total_amount": totalAmount,
+			"money":        moneyStr,
+			"pay_type":     req.PayType,
+			"pay_mode":     ternary(useTenantPay, "tenant", "platform"), // v0.3.6 标识支付通道
+			"expire_at":    time.Now().Add(time.Duration(orderExpire) * time.Second).Unix(),
+			"quantity":     req.Quantity,
+			"card_type":    ct.Name,
 		})
 	}
 }
@@ -416,7 +418,8 @@ func handleOverseasPayOrder(deps *Deps, c *gin.Context, req *createOrderReq, app
 		ClientIP:     c.ClientIP(),
 	}
 	if err := deps.DB.Create(order).Error; err != nil {
-		middleware.Fail(c, http.StatusInternalServerError, 4007, "创建订单失败: "+err.Error())
+		logger.Error("pay: create provider order failed", "err", err, "order_no", order.OrderNo)
+		middleware.Fail(c, http.StatusInternalServerError, 4007, "创建订单失败")
 		return
 	}
 
@@ -441,14 +444,14 @@ func handleOverseasPayOrder(deps *Deps, c *gin.Context, req *createOrderReq, app
 
 	namePrefix := deps.CfgCache.GetString(ctx, "pay.platform.order_name_prefix", "KeyAuth卡密")
 	orderParams := &payment.OrderParams{
-		OrderNo:    orderNo,
-		Amount:     amountStr,
-		AmountRaw:  totalAmount,
-		Subject:    fmt.Sprintf("%s·%s×%d", namePrefix, ct.Name, req.Quantity),
-		NotifyURL:  resolveOverseasNotifyURL(deps, c, req.PayChannel),
-		ReturnURL:  resolveReturnURL(deps, c),
-		ClientIP:   c.ClientIP(),
-		OrderID:    order.ID,
+		OrderNo:   orderNo,
+		Amount:    amountStr,
+		AmountRaw: totalAmount,
+		Subject:   fmt.Sprintf("%s·%s×%d", namePrefix, ct.Name, req.Quantity),
+		NotifyURL: resolveOverseasNotifyURL(deps, c, req.PayChannel),
+		ReturnURL: resolveReturnURL(deps, c),
+		ClientIP:  c.ClientIP(),
+		OrderID:   order.ID,
 	}
 
 	// 4. 初始化 provider 并创建订单
@@ -669,16 +672,16 @@ func GetPayOrder(deps *Deps) gin.HandlerFunc {
 		}
 
 		middleware.Success(c, gin.H{
-			"order_no":       order.OrderNo,
-			"pay_status":     order.PayStatus,
-			"pay_channel":    order.PayChannel,
-			"total_amount":   order.TotalAmount,
-			"quantity":       order.Quantity,
-			"card_ids":       cardIDs,
-			"card_keys":      cardKeys, // v0.3.5：仅在 paid 时非空
-			"pay_trade_no":   order.PayTradeNo,
-			"paid_at":        order.PaidAt,
-			"created_at":     order.CreatedAt,
+			"order_no":     order.OrderNo,
+			"pay_status":   order.PayStatus,
+			"pay_channel":  order.PayChannel,
+			"total_amount": order.TotalAmount,
+			"quantity":     order.Quantity,
+			"card_ids":     cardIDs,
+			"card_keys":    cardKeys, // v0.3.5：仅在 paid 时非空
+			"pay_trade_no": order.PayTradeNo,
+			"paid_at":      order.PaidAt,
+			"created_at":   order.CreatedAt,
 		})
 	}
 }
@@ -725,7 +728,7 @@ func EpayNotify(deps *Deps) gin.HandlerFunc {
 			return
 		}
 
-			// 4. 处理订单（按订单号前缀分发，v0.3.6 新增 REG 代理注册分支）
+		// 4. 处理订单（按订单号前缀分发，v0.3.6 新增 REG 代理注册分支）
 		//    ORD → 卡密购买（processPaidOrder）
 		//    REG → 代理注册（processAgentRegisterPaid）
 		if err := dispatchPaidOrder(deps, notify); err != nil {
@@ -874,9 +877,9 @@ func processPaidOrder(deps *Deps, notify *epay.NotifyParams) error {
 	txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
 		// 7.1 更新订单状态
 		if err := tx.Model(&order).Updates(map[string]interface{}{
-			"pay_status":    "paid",
-			"pay_trade_no":  notify.TradeNo,
-			"paid_at":       now,
+			"pay_status":        "paid",
+			"pay_trade_no":      notify.TradeNo,
+			"paid_at":           now,
 			"commission_amount": commissionAmount,
 		}).Error; err != nil {
 			return fmt.Errorf("更新订单状态失败: %w", err)
@@ -941,16 +944,16 @@ func processPaidOrder(deps *Deps, notify *epay.NotifyParams) error {
 
 	// v0.4.0 Webhook：异步分发 order.paid 事件（通知开发者订单已支付 + 已自动发卡）
 	DispatchWebhookEvent(deps, order.TenantID, openapi.EventOrderPaid, gin.H{
-		"order_no":         order.OrderNo,
-		"order_id":         order.ID,
-		"app_id":           order.AppID,
-		"card_type_id":     order.CardTypeID,
-		"quantity":         order.Quantity,
-		"total_amount":     order.TotalAmount,
+		"order_no":          order.OrderNo,
+		"order_id":          order.ID,
+		"app_id":            order.AppID,
+		"card_type_id":      order.CardTypeID,
+		"quantity":          order.Quantity,
+		"total_amount":      order.TotalAmount,
 		"commission_amount": commissionAmount,
-		"net_amount":       netAmount,
-		"pay_trade_no":     notify.TradeNo,
-		"paid_at":          now.Unix(),
+		"net_amount":        netAmount,
+		"pay_trade_no":      notify.TradeNo,
+		"paid_at":           now.Unix(),
 	})
 
 	return nil
@@ -1044,18 +1047,18 @@ func processAgentRegisterPaid(deps *Deps, notify *epay.NotifyParams) error {
 
 		// 7.3 INSERT Agent（Status=active，可直接登录）
 		agent := &model.Agent{
-			TenantID:        order.TenantID,
-			Username:        order.Username,
-			PasswordHash:    storedHash,
-			Phone:           order.Phone,
-			Status:          "active",
-			Balance:         0,
-			CommissionRate:  ic.DefaultCommissionRate,
-			CommissionMode:  "percentage",
-			ParentID:        parentID,   // v0.4.0：多级代理上级 ID（0=一级代理）
-			Level:           agentLevel, // v0.4.0：代理层级（1/2/3）
-			LastLoginAt:     nil,
-			LastLoginIP:     "",
+			TenantID:       order.TenantID,
+			Username:       order.Username,
+			PasswordHash:   storedHash,
+			Phone:          order.Phone,
+			Status:         "active",
+			Balance:        0,
+			CommissionRate: ic.DefaultCommissionRate,
+			CommissionMode: "percentage",
+			ParentID:       parentID,   // v0.4.0：多级代理上级 ID（0=一级代理）
+			Level:          agentLevel, // v0.4.0：代理层级（1/2/3）
+			LastLoginAt:    nil,
+			LastLoginIP:    "",
 		}
 		if err := tx.Create(agent).Error; err != nil {
 			return fmt.Errorf("创建代理账号失败: %w", err)
@@ -1064,10 +1067,10 @@ func processAgentRegisterPaid(deps *Deps, notify *epay.NotifyParams) error {
 
 		// 7.4 回填 AgentRegistrationOrder
 		if err := tx.Model(&order).Updates(map[string]interface{}{
-			"agent_id":      agent.ID,
-			"pay_status":    "paid",
-			"pay_trade_no":  notify.TradeNo,
-			"paid_at":       now,
+			"agent_id":     agent.ID,
+			"pay_status":   "paid",
+			"pay_trade_no": notify.TradeNo,
+			"paid_at":      now,
 		}).Error; err != nil {
 			return fmt.Errorf("回填订单失败: %w", err)
 		}
@@ -1362,6 +1365,7 @@ func processTenantOwnPaidOrder(deps *Deps, notify *epay.NotifyParams) error {
 //  1. 查 TenantMonthlyFeeOrder，校验金额 + 状态（pending → paid）
 //  2. 事务内更新 pay_status=paid + pay_mode=platform_epay + paid_at
 //  3. 不写抽成记录（月费直接归平台，与卡密抽成解耦）
+//
 // 铁律 04/05：金额从订单自身读取（创建时已从 sys_config 读取并入库）；订单号前缀 MFD
 // 铁律 06：幂等校验，已支付直接返回成功
 // 注：model 当前未单独存 pay_trade_no 字段，平台交易号通过 Webhook 事件 payload 保留追溯链路（待核实：后续如需对账可加列）

@@ -1,6 +1,7 @@
 // 会话与登录审计辅助
 // v0.3.1：基于 refresh_token_device 表实现 ListLoginDevices / KickDevice
-//        + log_login_failed 表实现安全统计
+//   - log_login_failed 表实现安全统计
+//
 // 严格遵循铁律 04/05/06
 package handler
 
@@ -59,8 +60,8 @@ func markAllSessionsRevoked(deps *Deps, role string, userID uint64) {
 	deps.DB.Model(&model.RefreshTokenDevice{}).
 		Where("user_role = ? AND user_id = ? AND revoked = 0", role, userID).
 		Updates(map[string]interface{}{
-			"revoked":     true,
-			"revoked_at":  now,
+			"revoked":    true,
+			"revoked_at": now,
 		})
 }
 
@@ -182,7 +183,8 @@ func ListLoginDevicesFull(deps *Deps) gin.HandlerFunc {
 				role, userID, now).
 			Order("last_active_at DESC").
 			Find(&sessions).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询登录设备失败: "+err.Error())
+			logger.Error("session: list login devices failed", "err", err, "user_id", userID, "role", role)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询登录设备失败")
 			return
 		}
 
@@ -196,22 +198,22 @@ func ListLoginDevicesFull(deps *Deps) gin.HandlerFunc {
 			// v0.4.x：动态解析 UA 拆分字段（不改 DB schema，向前兼容）
 			info := ua.Parse(s.UserAgent)
 			list = append(list, gin.H{
-				"id":             s.ID,
-				"device_id":      s.RefreshJTI,
-				"device_name":    s.DeviceName,
-				"device_type":    s.DeviceType,
-				"os":             info.OS,
-				"os_version":     info.OSVersion,
-				"browser":        info.Browser,
+				"id":              s.ID,
+				"device_id":       s.RefreshJTI,
+				"device_name":     s.DeviceName,
+				"device_type":     s.DeviceType,
+				"os":              info.OS,
+				"os_version":      info.OSVersion,
+				"browser":         info.Browser,
 				"browser_version": info.Version,
-				"is_bot":         info.DeviceType == ua.DeviceBot,
-				"ip":             s.ClientIP,
-				"location":       "", // 待核实 v0.4.x：接入 IP 地理库
-				"user_agent":     s.UserAgent,
-				"last_active_at": s.LastActiveAt,
-				"created_at":     s.CreatedAt,
-				"expires_at":     s.ExpiresAt,
-				"current":        isCurrent,
+				"is_bot":          info.DeviceType == ua.DeviceBot,
+				"ip":              s.ClientIP,
+				"location":        "", // 待核实 v0.4.x：接入 IP 地理库
+				"user_agent":      s.UserAgent,
+				"last_active_at":  s.LastActiveAt,
+				"created_at":      s.CreatedAt,
+				"expires_at":      s.ExpiresAt,
+				"current":         isCurrent,
 			})
 		}
 
@@ -256,7 +258,8 @@ func KickDeviceFull(deps *Deps) gin.HandlerFunc {
 			"revoked":    true,
 			"revoked_at": now,
 		}).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "撤销会话失败: "+err.Error())
+			logger.Error("session: revoke session failed", "err", err, "session_id", session.ID)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "撤销会话失败")
 			return
 		}
 

@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 	"github.com/your-org/keyauth-saas/apps/server/internal/multilevel"
@@ -246,41 +247,72 @@ func AdminListTenants(deps *Deps) gin.HandlerFunc {
 
 		var tenants []model.SysTenant
 		if err := q.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&tenants).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败: "+err.Error())
+			logger.Error("admin: list tenants query failed", "err", err)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败")
 			return
 		}
 
 		// 联表查询套餐名 + 统计 app_count / card_count
+		// 批量查询避免 N+1：先收集 ID，再一次性聚合
+		tenantIDs := make([]uint64, 0, len(tenants))
+		pkgIDs := make([]uint64, 0, len(tenants))
+		for _, t := range tenants {
+			tenantIDs = append(tenantIDs, t.ID)
+			if t.PackageID != 0 {
+				pkgIDs = append(pkgIDs, t.PackageID)
+			}
+		}
+
+		// 批量查套餐名
+		pkgNameMap := make(map[uint64]string)
+		if len(pkgIDs) > 0 {
+			var pkgs []model.SysPackage
+			deps.DB.Select("id, name").Where("id IN ?", pkgIDs).Find(&pkgs)
+			for _, p := range pkgs {
+				pkgNameMap[p.ID] = p.Name
+			}
+		}
+
+		// 批量统计 app_count / card_count / settled_balance
+		type tenantAgg struct {
+			TenantID       uint64  `gorm:"column:tenant_id"`
+			AppCount       int64   `gorm:"column:app_count"`
+			CardCount      int64   `gorm:"column:card_count"`
+			SettledBalance float64 `gorm:"column:settled_balance"`
+		}
+		var aggs []tenantAgg
+		if len(tenantIDs) > 0 {
+			deps.DB.Table("sys_tenant AS t").
+				Select("t.id AS tenant_id, "+
+					"(SELECT COUNT(*) FROM app WHERE app.tenant_id = t.id) AS app_count, "+
+					"(SELECT COUNT(*) FROM app_card WHERE app_card.tenant_id = t.id) AS card_count, "+
+					"(SELECT COALESCE(SUM(ps.net_amount), 0) FROM platform_settlement ps WHERE ps.tenant_id = t.id AND ps.status = 'settled') AS settled_balance").
+				Where("t.id IN ?", tenantIDs).
+				Scan(&aggs)
+		}
+		aggMap := make(map[uint64]tenantAgg, len(aggs))
+		for _, a := range aggs {
+			aggMap[a.TenantID] = a
+		}
+
 		list := make([]gin.H, 0, len(tenants))
 		for _, t := range tenants {
-			var pkgName string
-			deps.DB.Model(&model.SysPackage{}).Where("id = ?", t.PackageID).Select("name").Scan(&pkgName)
-
-			var appCount, cardCount int64
-			deps.DB.Model(&model.App{}).Where("tenant_id = ?", t.ID).Count(&appCount)
-			deps.DB.Model(&model.AppCard{}).Where("tenant_id = ?", t.ID).Count(&cardCount)
-
-			// 开发者结算余额 = 已结算的 net_amount 累计
-			var settledBalance float64
-			deps.DB.Model(&model.PlatformSettlement{}).
-				Where("tenant_id = ? AND status = ?", t.ID, "settled").
-				Select("COALESCE(SUM(net_amount), 0)").Scan(&settledBalance)
-
+			agg := aggMap[t.ID]
 			list = append(list, gin.H{
-				"id":           t.ID,
-				"username":     t.Username,
-				"email":        t.Email,
-				"phone":        t.Phone,
-				"company":      t.Company,
-				"status":       t.Status,
-				"package_id":   t.PackageID,
-				"package_name": pkgName,
-				"app_count":    appCount,
-				"card_count":   cardCount,
-				"balance":      settledBalance,
-				"created_at":   t.CreatedAt,
-				"expired_at":   t.ExpiresAt,
-				"remark":       t.Remark,
+				"id":            t.ID,
+				"username":      t.Username,
+				"email":         t.Email,
+				"phone":         t.Phone,
+				"company":       t.Company,
+				"status":        t.Status,
+				"package_id":    t.PackageID,
+				"package_name":  pkgNameMap[t.PackageID],
+				"app_count":     agg.AppCount,
+				"card_count":    agg.CardCount,
+				"balance":       agg.SettledBalance,
+				"created_at":    t.CreatedAt,
+				"expired_at":    t.ExpiresAt,
+				"remark":        t.Remark,
 				"last_login_at": t.LastLoginAt,
 			})
 		}
@@ -353,7 +385,8 @@ func AdminCreateTenant(deps *Deps) gin.HandlerFunc {
 			Remark:       req.Remark,
 		}
 		if err := deps.DB.Create(tenant).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5003, "创建失败: "+err.Error())
+			logger.Error("admin: create tenant failed", "err", err, "username", req.Username)
+			middleware.Fail(c, http.StatusInternalServerError, 5003, "创建失败")
 			return
 		}
 
@@ -422,7 +455,8 @@ func AdminUpdateTenant(deps *Deps) gin.HandlerFunc {
 		}
 
 		if err := deps.DB.Model(&model.SysTenant{}).Where("id = ?", id).Updates(updates).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "更新失败: "+err.Error())
+			logger.Error("admin: update tenant failed", "err", err, "id", id)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "更新失败")
 			return
 		}
 
@@ -506,7 +540,8 @@ func AdminCreatePackage(deps *Deps) gin.HandlerFunc {
 			Status:       status,
 		}
 		if err := deps.DB.Create(pkg).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "创建失败: "+err.Error())
+			logger.Error("admin: create package failed", "err", err, "name", req.Name)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "创建失败")
 			return
 		}
 
@@ -551,7 +586,8 @@ func AdminUpdatePackage(deps *Deps) gin.HandlerFunc {
 		}
 
 		if err := deps.DB.Model(&model.SysPackage{}).Where("id = ?", id).Updates(updates).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "更新失败: "+err.Error())
+			logger.Error("admin: update package failed", "err", err, "id", id)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "更新失败")
 			return
 		}
 
@@ -583,26 +619,56 @@ func AdminListAgents(deps *Deps) gin.HandlerFunc {
 
 		var agents []model.Agent
 		if err := q.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&agents).Error; err != nil {
+			logger.Error("admin: list agents query failed", "err", err)
 			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败")
 			return
 		}
 
+		// 批量查询避免 N+1：tenant_name / inviter_username / 统计字段
+		agentIDs := make([]uint64, 0, len(agents))
+		tenantIDs := make([]uint64, 0, len(agents))
+		inviterIDs := make([]uint64, 0, len(agents))
+		for _, a := range agents {
+			agentIDs = append(agentIDs, a.ID)
+			if a.TenantID != 0 {
+				tenantIDs = append(tenantIDs, a.TenantID)
+			}
+			if a.InviterID != nil && *a.InviterID != 0 {
+				inviterIDs = append(inviterIDs, *a.InviterID)
+			}
+		}
+
+		// 批量查 tenant 用户名
+		tenantNameMap := make(map[uint64]string)
+		if len(tenantIDs) > 0 {
+			var tenants []model.SysTenant
+			deps.DB.Select("id, username").Where("id IN ?", tenantIDs).Find(&tenants)
+			for _, t := range tenants {
+				tenantNameMap[t.ID] = t.Username
+			}
+		}
+
+		// 批量查 inviter 用户名（agent 表）
+		inviterNameMap := make(map[uint64]string)
+		if len(inviterIDs) > 0 {
+			var inviters []model.Agent
+			deps.DB.Select("id, username").Where("id IN ?", inviterIDs).Find(&inviters)
+			for _, a := range inviters {
+				inviterNameMap[a.ID] = a.Username
+			}
+		}
+
+		// 批量查 frozen_balance / total_commission / total_withdraw
+		frozenMap := agentFrozenBalanceBatch(deps.DB, agentIDs)
+		commissionMap := agentTotalCommissionBatch(deps.DB, agentIDs)
+		withdrawMap := agentTotalWithdrawPaidBatch(deps.DB, agentIDs)
+
 		list := make([]gin.H, 0, len(agents))
 		for _, a := range agents {
-			// 联表开发者用户名
-			var tenantName string
-			deps.DB.Model(&model.SysTenant{}).Where("id = ?", a.TenantID).Select("username").Scan(&tenantName)
-
-			// 联表邀请人用户名（如有）
 			inviterUsername := ""
-			if a.InviterID != nil {
-				deps.DB.Model(&model.Agent{}).Where("id = ?", *a.InviterID).Select("username").Scan(&inviterUsername)
+			if a.InviterID != nil && *a.InviterID != 0 {
+				inviterUsername = inviterNameMap[*a.InviterID]
 			}
-
-			// 统计字段
-			frozenBalance := agentFrozenBalance(deps.DB, a.ID)
-			totalCommission := agentTotalCommission(deps.DB, a.ID)
-			totalWithdraw := agentTotalWithdrawPaid(deps.DB, a.ID)
 
 			list = append(list, gin.H{
 				"id":               a.ID,
@@ -611,11 +677,11 @@ func AdminListAgents(deps *Deps) gin.HandlerFunc {
 				"phone":            a.Phone,
 				"email":            a.Email,
 				"tenant_id":        a.TenantID,
-				"tenant_name":      tenantName,
+				"tenant_name":      tenantNameMap[a.TenantID],
 				"balance":          a.Balance,
-				"frozen_balance":   frozenBalance,
-				"total_commission": totalCommission,
-				"total_withdraw":   totalWithdraw,
+				"frozen_balance":   frozenMap[a.ID],
+				"total_commission": commissionMap[a.ID],
+				"total_withdraw":   withdrawMap[a.ID],
 				"status":           a.Status,
 				"commission_mode":  a.CommissionMode,
 				"commission_rate":  a.CommissionRate,
@@ -688,7 +754,8 @@ func AdminUpdateAgent(deps *Deps) gin.HandlerFunc {
 		}
 
 		if err := deps.DB.Model(&model.Agent{}).Where("id = ?", id).Updates(updates).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "更新失败: "+err.Error())
+			logger.Error("admin: update agent failed", "err", err, "id", id)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "更新失败")
 			return
 		}
 
@@ -816,7 +883,8 @@ func AdminCreateNotice(deps *Deps) gin.HandlerFunc {
 			CreatedBy:     userID,
 		}
 		if err := deps.DB.Create(notice).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "创建失败: "+err.Error())
+			logger.Error("admin: create notice failed", "err", err, "title", req.Title)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "创建失败")
 			return
 		}
 
@@ -908,7 +976,8 @@ func AdminUpdateNotice(deps *Deps) gin.HandlerFunc {
 		}
 
 		if err := deps.DB.Model(&model.Notice{}).Where("id = ?", id).Updates(updates).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "更新失败: "+err.Error())
+			logger.Error("admin: update notice failed", "err", err, "id", id)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "更新失败")
 			return
 		}
 
@@ -927,7 +996,8 @@ func AdminDeleteNotice(deps *Deps) gin.HandlerFunc {
 		}
 
 		if err := deps.DB.Delete(&model.Notice{}, id).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "删除失败: "+err.Error())
+			logger.Error("admin: delete notice failed", "err", err, "id", id)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "删除失败")
 			return
 		}
 
@@ -1128,7 +1198,8 @@ func AdminAddIPBlacklist(deps *Deps) gin.HandlerFunc {
 			ExpiresAt:     expiresAt,
 		}
 		if err := deps.DB.Create(item).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "创建失败: "+err.Error())
+			logger.Error("admin: create ip blacklist failed", "err", err, "ip", req.IP)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "创建失败")
 			return
 		}
 
@@ -1153,7 +1224,8 @@ func AdminRemoveIPBlacklist(deps *Deps) gin.HandlerFunc {
 		}
 
 		if err := deps.DB.Delete(&model.SecIPBlacklist{}, id).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "删除失败: "+err.Error())
+			logger.Error("admin: delete ip blacklist failed", "err", err, "id", id)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "删除失败")
 			return
 		}
 
@@ -1185,7 +1257,8 @@ func AdminGetAgentTree(deps *Deps) gin.HandlerFunc {
 				middleware.Fail(c, http.StatusNotFound, 1004, "代理账号不存在")
 				return
 			}
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "构建代理树失败: "+err.Error())
+			logger.Error("admin: build agent tree failed", "err", err, "agent_id", agentID)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "构建代理树失败")
 			return
 		}
 
@@ -1235,7 +1308,8 @@ func AdminListVersions(deps *Deps) gin.HandlerFunc {
 
 		var items []adminVersionListItem
 		if err := q.Order("app_version.id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Scan(&items).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败: "+err.Error())
+			logger.Error("admin: list versions query failed", "err", err)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败")
 			return
 		}
 
@@ -1414,7 +1488,8 @@ func AdminApproveSubdomain(deps *Deps) gin.HandlerFunc {
 
 		if err := deps.DB.Model(&model.Agent{}).Where("id = ?", agentID).
 			Update("subdomain_status", "approved").Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "审批失败: "+err.Error())
+			logger.Error("admin: approve subdomain failed", "err", err, "agent_id", agentID)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "审批失败")
 			return
 		}
 
@@ -1457,7 +1532,8 @@ func AdminRejectSubdomain(deps *Deps) gin.HandlerFunc {
 
 		if err := deps.DB.Model(&model.Agent{}).Where("id = ?", agentID).
 			Update("subdomain_status", "rejected").Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "驳回失败: "+err.Error())
+			logger.Error("admin: reject subdomain failed", "err", err, "agent_id", agentID)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "驳回失败")
 			return
 		}
 
@@ -1504,23 +1580,46 @@ func AdminListPendingApps(deps *Deps) gin.HandlerFunc {
 
 		var apps []model.App
 		if err := q.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&apps).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败: "+err.Error())
+			logger.Error("admin: list pending apps query failed", "err", err)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败")
 			return
+		}
+
+		// 批量查询 tenant_username + auditor_name 避免 N+1
+		appTenantIDs := make([]uint64, 0, len(apps))
+		appAuditorIDs := make([]uint64, 0, len(apps))
+		for _, a := range apps {
+			if a.TenantID != 0 {
+				appTenantIDs = append(appTenantIDs, a.TenantID)
+			}
+			if a.AuditedBy > 0 {
+				appAuditorIDs = append(appAuditorIDs, a.AuditedBy)
+			}
+		}
+		appTenantNameMap := make(map[uint64]string)
+		if len(appTenantIDs) > 0 {
+			var tenants []model.SysTenant
+			deps.DB.Select("id, username").Where("id IN ?", appTenantIDs).Find(&tenants)
+			for _, t := range tenants {
+				appTenantNameMap[t.ID] = t.Username
+			}
+		}
+		appAuditorNameMap := make(map[uint64]string)
+		if len(appAuditorIDs) > 0 {
+			var admins []model.SysAdmin
+			deps.DB.Select("id, username").Where("id IN ?", appAuditorIDs).Find(&admins)
+			for _, ad := range admins {
+				appAuditorNameMap[ad.ID] = ad.Username
+			}
 		}
 
 		// 联表查租户用户名 + 审核人用户名
 		list := make([]gin.H, 0, len(apps))
 		for _, a := range apps {
-			var tenantUsername string
-			deps.DB.Model(&model.SysTenant{}).Where("id = ?", a.TenantID).Select("username").Scan(&tenantUsername)
-			var auditorName string
-			if a.AuditedBy > 0 {
-				deps.DB.Model(&model.SysAdmin{}).Where("id = ?", a.AuditedBy).Select("username").Scan(&auditorName)
-			}
 			list = append(list, gin.H{
 				"id":             a.ID,
 				"tenant_id":      a.TenantID,
-				"tenant_username": tenantUsername,
+				"tenant_username": appTenantNameMap[a.TenantID],
 				"name":           a.Name,
 				"app_key":        a.AppKey,
 				"status":         a.Status,
@@ -1528,7 +1627,7 @@ func AdminListPendingApps(deps *Deps) gin.HandlerFunc {
 				"audit_remark":   a.AuditRemark,
 				"audited_at":     a.AuditedAt,
 				"audited_by":     a.AuditedBy,
-				"auditor_name":   auditorName,
+				"auditor_name":   appAuditorNameMap[a.AuditedBy],
 				"created_at":     a.CreatedAt,
 			})
 		}
@@ -1583,7 +1682,8 @@ func AdminAuditApp(deps *Deps) gin.HandlerFunc {
 			"audited_by":    adminID,
 		}
 		if err := deps.DB.Model(&app).Updates(updates).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "审核失败: "+err.Error())
+			logger.Error("admin: audit app failed", "err", err, "app_id", appID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "审核失败")
 			return
 		}
 
@@ -1632,7 +1732,8 @@ func AdminOfflineApp(deps *Deps) gin.HandlerFunc {
 		}
 
 		if err := deps.DB.Model(&app).Update("status", "disabled").Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "下架失败: "+err.Error())
+			logger.Error("admin: offline app failed", "err", err, "app_id", appID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "下架失败")
 			return
 		}
 
@@ -1670,7 +1771,8 @@ func AdminOnlineApp(deps *Deps) gin.HandlerFunc {
 		}
 
 		if err := deps.DB.Model(&app).Update("status", "active").Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "上架失败: "+err.Error())
+			logger.Error("admin: online app failed", "err", err, "app_id", appID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "上架失败")
 			return
 		}
 

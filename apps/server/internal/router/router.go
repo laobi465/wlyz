@@ -484,6 +484,10 @@ func Register(container *config.Container) *gin.Engine {
 
 	// ----- 公共 API（无需鉴权） -----
 	publicGroup := v1.Group("/public")
+	// P1-05 修复：公开端点（login/refresh/register 等）挂限流，防暴力枚举 / 短信轰炸。
+	// 使用 "sensitive" 策略：默认 10 次/分钟（按 IP，1 分钟窗口），可通过 sys_config
+	// security.rate.limit_sensitive 调整。Redis 故障时 fail-open 保证主链路可用。
+	publicGroup.Use(middleware.RateLimitByIP(container.Redis, container.ConfigCache(), "sensitive"))
 	{
 		publicGroup.POST("/auth/admin/login", handler.AdminLogin(deps))
 		publicGroup.POST("/auth/tenant/register", handler.TenantRegister(deps))

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/crypto"
@@ -30,7 +31,8 @@ func InstallStatus(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		installed, err := checkInstalled(deps.DB)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "检测安装状态失败: "+err.Error())
+			logger.Error("install: check installed status failed", "err", err)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "检测安装状态失败")
 			return
 		}
 
@@ -93,7 +95,8 @@ func Install(deps *Deps) gin.HandlerFunc {
 		// 1. 二次校验：已安装则拒绝
 		installed, err := checkInstalled(deps.DB)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "检测安装状态失败: "+err.Error())
+			logger.Error("install: check installed status failed", "err", err)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "检测安装状态失败")
 			return
 		}
 		if installed {
@@ -111,7 +114,8 @@ func Install(deps *Deps) gin.HandlerFunc {
 		// 3. 计算 bcrypt 哈希（cost=12）
 		hash, err := crypto.HashPassword(req.AdminPassword)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "密码加密失败: "+err.Error())
+			logger.Error("install: hash admin password failed", "err", err)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "密码加密失败")
 			return
 		}
 
@@ -155,7 +159,8 @@ func Install(deps *Deps) gin.HandlerFunc {
 			return nil
 		})
 		if txErr != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "安装失败: "+txErr.Error())
+			logger.Error("install: transaction failed", "err", txErr)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "安装失败")
 			return
 		}
 

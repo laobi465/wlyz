@@ -211,9 +211,9 @@ func BenchmarkGenerateCardKey_Loop10000(b *testing.B) {
 // ============== 7. decodeSegment 单元测试 ==============
 
 func TestDecodeSegment(t *testing.T) {
-	// 4 字节熵解码为 4 字符段
-	entropy := []byte{0, 1, 2, 3}
-	seg := decodeSegment(entropy, cardKeyCharset, len(cardKeyCharset))
+	// 生成 4 字符段（使用 crypto/rand.Int 拒绝采样）
+	seg, err := decodeSegment(cardKeyCharset, len(cardKeyCharset))
+	require.NoError(t, err)
 	assert.Len(t, seg, 4)
 
 	// 验证每个字符都在字符集内
@@ -222,20 +222,24 @@ func TestDecodeSegment(t *testing.T) {
 	}
 }
 
-func TestDecodeSegment_Deterministic(t *testing.T) {
-	// 相同熵应产生相同结果
-	entropy := []byte{10, 20, 30, 40}
-	seg1 := decodeSegment(entropy, cardKeyCharset, len(cardKeyCharset))
-	seg2 := decodeSegment(entropy, cardKeyCharset, len(cardKeyCharset))
-	assert.Equal(t, seg1, seg2)
+func TestDecodeSegment_AlwaysValid(t *testing.T) {
+	// 多次调用都应产生有效的 4 字符段（内部使用 crypto/rand.Int 拒绝采样）
+	for i := 0; i < 100; i++ {
+		seg, err := decodeSegment(cardKeyCharset, len(cardKeyCharset))
+		require.NoError(t, err)
+		assert.Len(t, seg, 4)
+		for _, ch := range seg {
+			assert.True(t, strings.ContainsRune(cardKeyCharset, ch))
+		}
+	}
 }
 
-func TestDecodeSegment_DifferentEntropy(t *testing.T) {
-	// 不同熵应大概率产生不同结果
-	seg1 := decodeSegment([]byte{0, 0, 0, 0}, cardKeyCharset, len(cardKeyCharset))
-	seg2 := decodeSegment([]byte{1, 2, 3, 4}, cardKeyCharset, len(cardKeyCharset))
-	// 极小概率相同（如 0%30 == 30%30），但 4 个字符全相同概率 < 1/30^3
+func TestDecodeSegment_Randomness(t *testing.T) {
+	// 两次调用应大概率产生不同结果（内部使用 crypto/rand.Int）
+	seg1, _ := decodeSegment(cardKeyCharset, len(cardKeyCharset))
+	seg2, _ := decodeSegment(cardKeyCharset, len(cardKeyCharset))
+	// 极小概率相同（4 个字符全相同概率 < 1/31^4）
 	if seg1 == seg2 {
-		t.Logf("警告：不同熵产生相同段（小概率事件）：seg1=%s seg2=%s", seg1, seg2)
+		t.Logf("警告：两次随机调用产生相同段（小概率事件）：seg1=%s seg2=%s", seg1, seg2)
 	}
 }

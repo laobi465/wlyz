@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/heartbeat"
+	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 	"github.com/your-org/keyauth-saas/apps/server/internal/openapi"
@@ -78,7 +79,8 @@ func TenantCreateCardType(deps *Deps) gin.HandlerFunc {
 			Status:          "active",
 		}
 		if err := deps.DB.Create(ct).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "创建卡类失败: "+err.Error())
+			logger.Error("card: create card type failed", "err", err)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "创建卡类失败")
 			return
 		}
 		middleware.Success(c, ct)
@@ -258,7 +260,8 @@ func TenantGenerateCards(deps *Deps) gin.HandlerFunc {
 		// 旧版循环 GenerateCardKey 在 10000 条时耗时 ~3.5s；新版 GenerateCardKeys ~0.8s（提速 4-5 倍）
 		cardKeysGenerated, err := crypto.GenerateCardKeys(req.Prefix, req.Quantity)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "批量生成卡密失败: "+err.Error())
+			logger.Error("card: batch generate card keys failed", "err", err, "prefix", req.Prefix, "quantity", req.Quantity)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "批量生成卡密失败")
 			return
 		}
 
@@ -298,19 +301,19 @@ func TenantGenerateCards(deps *Deps) gin.HandlerFunc {
 
 		// v0.4.0 Webhook：异步分发 card.generated 事件（仅通知批次级元信息，不含卡密明文）
 		DispatchWebhookEvent(deps, tenantID, openapi.EventCardGenerated, gin.H{
-			"batch_no":    batchNo,
-			"app_id":      req.AppID,
+			"batch_no":     batchNo,
+			"app_id":       req.AppID,
 			"card_type_id": req.CardTypeID,
-			"quantity":    req.Quantity,
+			"quantity":     req.Quantity,
 			"generated_at": time.Now().Unix(),
 		})
 
 		middleware.Success(c, gin.H{
-			"batch_no":   batchNo,
-			"quantity":   req.Quantity,
-			"card_keys":  cardKeys, // 仅本次返回，开发者需自行保存
-			"card_ids":   extractCardIDs(cards),
-			"warn":       "卡密明文仅本次返回一次，请立即保存或导出",
+			"batch_no":  batchNo,
+			"quantity":  req.Quantity,
+			"card_keys": cardKeys, // 仅本次返回，开发者需自行保存
+			"card_ids":  extractCardIDs(cards),
+			"warn":      "卡密明文仅本次返回一次，请立即保存或导出",
 		})
 	}
 }
@@ -427,8 +430,8 @@ func TenantBanCard(deps *Deps) gin.HandlerFunc {
 		now := time.Now()
 		if err := deps.DB.Model(&model.AppCard{}).Where("id = ?", id).
 			Updates(map[string]interface{}{
-				"status":       "banned",
-				"banned_at":    now,
+				"status":        "banned",
+				"banned_at":     now,
 				"banned_reason": req.Reason,
 			}).Error; err != nil {
 			middleware.Fail(c, http.StatusInternalServerError, 5002, "封禁失败")
@@ -451,7 +454,7 @@ func TenantBanCard(deps *Deps) gin.HandlerFunc {
 				}
 				deps.DB.Model(&model.AppDevice{}).Where("id IN ?", deviceIDs).
 					Updates(map[string]interface{}{
-						"status":           "banned",
+						"status":            "banned",
 						"last_heartbeat_at": nil,
 					})
 			}
@@ -774,12 +777,12 @@ func TenantImportCardsCSV(deps *Deps) gin.HandlerFunc {
 		// 记录操作日志
 		RecordOperation(deps, c, "card", "import_csv", "success",
 			"tenant", nil, map[string]interface{}{
-				"tenant_id":      tenantID,
-				"batch_no":       batchNo,
-				"success_count":  successCount,
-				"failed_count":   len(failed),
-				"empty_count":    emptyCount,
-				"dup_count":      dupCount,
+				"tenant_id":     tenantID,
+				"batch_no":      batchNo,
+				"success_count": successCount,
+				"failed_count":  len(failed),
+				"empty_count":   emptyCount,
+				"dup_count":     dupCount,
 			})
 
 		middleware.Success(c, gin.H{

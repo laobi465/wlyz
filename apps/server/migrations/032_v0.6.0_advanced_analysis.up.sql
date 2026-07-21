@@ -92,37 +92,37 @@ CREATE TABLE IF NOT EXISTS `user_risk_score` (
 
 -- ============== 2. sys_config 配置项（10 项） ==============
 
-INSERT INTO `sys_config` (`config_key`, `config_value`, `config_type`, `config_group`, `description`, `is_sensitive`, `created_at`, `updated_at`) VALUES
+INSERT INTO `sys_config` (`config_key`, `config_value`, `config_type`, `config_name`, `config_group`, `remark`, `created_at`, `updated_at`) VALUES
 -- 总开关
-('analysis.enabled', '1', 'bool', 'analysis', '高级分析总开关', 0, NOW(), NOW()),
+('analysis.enabled', '1', 'bool', '高级分析总开关', 'analysis', '', NOW(), NOW()),
 -- 三大模块独立开关
-('analysis.behavior.enabled', '1', 'bool', 'analysis', '用户行为分析模块开关', 0, NOW(), NOW()),
-('analysis.card_profile.enabled', '1', 'bool', 'analysis', '卡密使用画像模块开关', 0, NOW(), NOW()),
-('analysis.risk_score.enabled', '1', 'bool', 'analysis', '风险评分模块开关', 0, NOW(), NOW()),
+('analysis.behavior.enabled', '1', 'bool', '用户行为分析模块开关', 'analysis', '', NOW(), NOW()),
+('analysis.card_profile.enabled', '1', 'bool', '卡密使用画像模块开关', 'analysis', '', NOW(), NOW()),
+('analysis.risk_score.enabled', '1', 'bool', '风险评分模块开关', 'analysis', '', NOW(), NOW()),
 -- 风险评分阈值
-('analysis.risk_score.high_threshold', '70', 'int', 'analysis', '高风险阈值（达到则标记 high，>=critical_threshold 自动封禁候选）', 0, NOW(), NOW()),
-('analysis.risk_score.medium_threshold', '40', 'int', 'analysis', '中风险阈值（达到则标记 medium）', 0, NOW(), NOW()),
-('analysis.risk_score.critical_threshold', '100', 'int', 'analysis', '致命风险阈值（达到自动封禁候选）', 0, NOW(), NOW()),
+('analysis.risk_score.high_threshold', '70', 'number', '高风险阈值（达到则标记 high，>=critical_threshold 自动封禁候选）', 'analysis', '', NOW(), NOW()),
+('analysis.risk_score.medium_threshold', '40', 'number', '中风险阈值（达到则标记 medium）', 'analysis', '', NOW(), NOW()),
+('analysis.risk_score.critical_threshold', '100', 'number', '致命风险阈值（达到自动封禁候选）', 'analysis', '', NOW(), NOW()),
 -- 聚合参数
-('analysis.aggregate_interval_seconds', '3600', 'int', 'analysis', '聚合 worker 运行间隔（秒）', 0, NOW(), NOW()),
-('analysis.top_n', '20', 'int', 'analysis', 'TOP N 列表长度', 0, NOW(), NOW()),
-('analysis.lookback_days', '30', 'int', 'analysis', '回溯分析天数', 0, NOW(), NOW());
+('analysis.aggregate_interval_seconds', '3600', 'number', '聚合 worker 运行间隔（秒）', 'analysis', '', NOW(), NOW()),
+('analysis.top_n', '20', 'number', 'TOP N 列表长度', 'analysis', '', NOW(), NOW()),
+('analysis.lookback_days', '30', 'number', '回溯分析天数', 'analysis', '', NOW(), NOW());
 
 -- ============== 3. 风险评分权重配置（7 项，可调） ==============
 
-INSERT INTO `sys_config` (`config_key`, `config_value`, `config_type`, `config_group`, `description`, `is_sensitive`, `created_at`, `updated_at`) VALUES
-('analysis.risk_score.weight.high_freq', '25', 'int', 'analysis', '高频请求风险权重', 0, NOW(), NOW()),
-('analysis.risk_score.weight.geo_anomaly', '20', 'int', 'analysis', '异地登录风险权重', 0, NOW(), NOW()),
-('analysis.risk_score.weight.new_device', '10', 'int', 'analysis', '新设备风险权重', 0, NOW(), NOW()),
-('analysis.risk_score.weight.abnormal_ua', '15', 'int', 'analysis', '异常 UA 风险权重', 0, NOW(), NOW()),
-('analysis.risk_score.weight.fail_rate_high', '20', 'int', 'analysis', '失败率超阈值风险权重', 0, NOW(), NOW()),
-('analysis.risk_score.weight.multi_ip', '15', 'int', 'analysis', '24h 多 IP 风险权重', 0, NOW(), NOW()),
-('analysis.risk_score.weight.multi_dev', '15', 'int', 'analysis', '24h 多设备风险权重', 0, NOW(), NOW());
+INSERT INTO `sys_config` (`config_key`, `config_value`, `config_type`, `config_name`, `config_group`, `remark`, `created_at`, `updated_at`) VALUES
+('analysis.risk_score.weight.high_freq', '25', 'number', '高频请求风险权重', 'analysis', '', NOW(), NOW()),
+('analysis.risk_score.weight.geo_anomaly', '20', 'number', '异地登录风险权重', 'analysis', '', NOW(), NOW()),
+('analysis.risk_score.weight.new_device', '10', 'number', '新设备风险权重', 'analysis', '', NOW(), NOW()),
+('analysis.risk_score.weight.abnormal_ua', '15', 'number', '异常 UA 风险权重', 'analysis', '', NOW(), NOW()),
+('analysis.risk_score.weight.fail_rate_high', '20', 'number', '失败率超阈值风险权重', 'analysis', '', NOW(), NOW()),
+('analysis.risk_score.weight.multi_ip', '15', 'number', '24h 多 IP 风险权重', 'analysis', '', NOW(), NOW()),
+('analysis.risk_score.weight.multi_dev', '15', 'number', '24h 多设备风险权重', 'analysis', '', NOW(), NOW());
 
 -- ============== 4. 异常模式阈值（4 项） ==============
 
-INSERT INTO `sys_config` (`config_key`, `config_value`, `config_type`, `config_group`, `description`, `is_sensitive`, `created_at`, `updated_at`) VALUES
-('analysis.risk_score.threshold.fail_rate', '50', 'int', 'analysis', '失败率告警阈值（百分比，>50% 触发加分）', 0, NOW(), NOW()),
-('analysis.risk_score.threshold.multi_ip_count', '3', 'int', 'analysis', '24h 内多 IP 告警阈值（>=3 触发加分）', 0, NOW(), NOW()),
-('analysis.risk_score.threshold.multi_dev_count', '5', 'int', 'analysis', '24h 内多设备告警阈值（>=5 触发加分）', 0, NOW(), NOW()),
-('analysis.risk_score.decay_days', '7', 'int', 'analysis', '风险评分衰减周期（天，每天衰减 1/decay_days）', 0, NOW(), NOW());
+INSERT INTO `sys_config` (`config_key`, `config_value`, `config_type`, `config_name`, `config_group`, `remark`, `created_at`, `updated_at`) VALUES
+('analysis.risk_score.threshold.fail_rate', '50', 'number', '失败率告警阈值（百分比，>50% 触发加分）', 'analysis', '', NOW(), NOW()),
+('analysis.risk_score.threshold.multi_ip_count', '3', 'number', '24h 内多 IP 告警阈值（>=3 触发加分）', 'analysis', '', NOW(), NOW()),
+('analysis.risk_score.threshold.multi_dev_count', '5', 'number', '24h 内多设备告警阈值（>=5 触发加分）', 'analysis', '', NOW(), NOW()),
+('analysis.risk_score.decay_days', '7', 'number', '风险评分衰减周期（天，每天衰减 1/decay_days）', 'analysis', '', NOW(), NOW());

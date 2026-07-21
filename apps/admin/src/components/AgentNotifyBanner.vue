@@ -8,7 +8,7 @@
   </div>
 
   <el-dialog v-model="dialogVisible" :title="notice.title" width="600px">
-    <div v-html="notice.content"></div>
+    <div v-html="sanitizedContent"></div>
     <template #footer>
       <el-button type="primary" @click="dialogVisible = false">已读</el-button>
     </template>
@@ -16,13 +16,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
+import DOMPurify from 'dompurify'
 
-defineProps<{
+const props = defineProps<{
   notice: { title: string; content: string }
 }>()
 
 const dialogVisible = ref(false)
+
+// P1-02: 对后端返回的 HTML 内容做净化，防止 <script> 等 XSS 注入
+const sanitizedContent = computed(() =>
+  DOMPurify.sanitize(props.notice?.content || '', { USE_PROFILES: { html: true } })
+)
 </script>
 
 <style scoped lang="scss">

@@ -102,8 +102,14 @@ func ValidateTOTP(secret, code string, skew uint) bool {
 	if len(code) != 6 {
 		return false
 	}
-	// pquerna/otp 默认 skew=1，可通过 ValidateCustom 调整
-	return totp.Validate(code, secret)
+	// 使用 ValidateCustom 应用传入的 skew 参数（默认 Period=30 / DigitsSix / SHA1）
+	ok, _ := totp.ValidateCustom(code, secret, time.Now().UTC(), totp.ValidateOpts{
+		Period:    30,
+		Skew:      skew,
+		Digits:    otp.DigitsSix,
+		Algorithm: otp.AlgorithmSHA1,
+	})
+	return ok
 }
 
 // ValidateTOTPCustom 自定义参数校验（用于 skew / period / digits 与默认值不同时）

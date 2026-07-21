@@ -46,17 +46,21 @@ func CloudflareRealIP(cfgReader ConfigReader) gin.HandlerFunc {
 		}
 
 		headerName := cfgReader.GetString(ctx, configKeyCFRealIPHeader, "CF-Connecting-IP")
-		realIP := strings.TrimSpace(c.GetHeader(headerName))
 
-		// 校验来源 CIDR（可选，生产环境强烈建议配置 Cloudflare CIDR 列表）
+		// 校验来源 CIDR（生产环境强烈建议配置 Cloudflare CIDR 列表）
+		// P1-04 修复：trustedCIDRs 为空时不得信任 CF-Connecting-IP 头（攻击者可伪造），
+		//           回退到 c.ClientIP()；仅当 remote addr 命中受信 CIDR 时才读取 CF 头。
 		trustedCIDRs := cfgReader.GetString(ctx, configKeyCFTrustedCIDRs, "")
+		realIP := ""
 		if trustedCIDRs != "" {
 			remoteIP := hostFromAddr(c.Request.RemoteAddr)
-			if remoteIP != "" && !ipInCIDRList(remoteIP, trustedCIDRs) {
-				// 来源不受信，忽略 CF 头，回退到 c.ClientIP()
-				realIP = c.ClientIP()
+			if remoteIP != "" && ipInCIDRList(remoteIP, trustedCIDRs) {
+				// 来源受信：读取 CF 头作为真实 IP
+				realIP = strings.TrimSpace(c.GetHeader(headerName))
 			}
+			// 否则来源不受信，realIP 留空，下面回退到 c.ClientIP()
 		}
+		// trustedCIDRs 为空：realIP 留空，下面回退到 c.ClientIP()
 
 		if realIP == "" {
 			realIP = c.ClientIP()

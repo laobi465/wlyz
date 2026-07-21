@@ -1,5 +1,5 @@
 // Package crypto 客户端 SDK 签名对齐测试
-// 验证 Python / Node.js / PHP / Go / Java / C++ / C# 七语言 SDK 与后端 HMACSHA256 输出完全一致
+// 验证 Python / Node.js / PHP / Go / Java / C++ / C# 七语言 SDK 与后端 HMACSHA512_256 输出完全一致
 // 易语言（epl）Windows-only，不参与本测试（Linux CI 无法执行）
 // 严格遵循铁律 06：所有断言基于已知固定输入，无随机/不确定性
 //
@@ -127,7 +127,7 @@ func sdkScriptsDir() string {
 	return filepath.Join(filepath.Dir(file), "..", "..", "..", "..", "sdks", "tests")
 }
 
-// TestSignAlignment_AllLanguages 七语言 SDK 签名 vs 后端 HMACSHA256 完全一致
+// TestSignAlignment_AllLanguages 七语言 SDK 签名 vs 后端 HMACSHA512_256 完全一致
 // 这是 v0.3.6 客户端 SDK 接入规范（SPEC 7.4）的核心保障测试
 // v0.4.0 扩展：从 3 语言扩展到 7 语言（新增 Go / Java / C++ / C#）
 func TestSignAlignment_AllLanguages(t *testing.T) {
@@ -160,7 +160,7 @@ func TestSignAlignment_AllLanguages(t *testing.T) {
 	for _, tc := range signTestCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// 1. 后端基准签名
-			backendSig := HMACSHA256(tc.secret, []byte(tc.msg))
+			backendSig := HMACSHA512_256(tc.secret, []byte(tc.msg))
 			require.NotEmpty(t, backendSig)
 			require.Len(t, backendSig, 64, "后端签名应为 64 位 hex")
 
@@ -342,12 +342,12 @@ func runCSharpScript(t *testing.T, sourcePath, secret, msg string) (string, erro
 	return strings.TrimSpace(string(out)), nil
 }
 
-// TestSignAlignment_BackendDeterministic 后端 HMACSHA256 对同一输入应确定性输出
+// TestSignAlignment_BackendDeterministic 后端 HMACSHA512_256 对同一输入应确定性输出
 func TestSignAlignment_BackendDeterministic(t *testing.T) {
 	secret := "deterministic-secret"
 	msg := "POST\n/api/v1/client/login\n1\nn\n{}"
-	sig1 := HMACSHA256(secret, []byte(msg))
-	sig2 := HMACSHA256(secret, []byte(msg))
+	sig1 := HMACSHA512_256(secret, []byte(msg))
+	sig2 := HMACSHA512_256(secret, []byte(msg))
 	assert.Equal(t, sig1, sig2, "同一输入应产生相同签名")
 	assert.Len(t, sig1, 64)
 }

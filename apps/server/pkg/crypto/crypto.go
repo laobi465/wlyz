@@ -19,6 +19,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"math/big"
 	"os"
 	"sort"
 	"strings"
@@ -153,18 +154,24 @@ func (m *Manager) VerifyRSASignature(data []byte, signature string) error {
 
 // ============== HMAC-SHA256 ==============
 
-// HMACSHA256 计算 HMAC-SHA256 签名
+// HMACSHA256 计算 HMAC-SHA256 签名（标准 SHA-256，与函数名一致）
 // 用于客户端请求签名（X-Signature）
 // 签名原文：METHOD\nPATH?QUERY\nTIMESTAMP\nNONCE\nBODY
 // 输出 64 位小写 hex
 func HMACSHA256(secret string, data []byte) string {
-	mac := hmac.New(sha512.New512_256, []byte(secret))
+	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(data)
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// 注：sha512.New512_256 是 SHA-512/256 变体（与 SHA-256 输出长度相同但更安全）。
-// 如 SDK 端用标准 SHA-256，可改用 sha256.New()。需验证：当前实现兼容性。
+// HMACSHA512_256 计算 HMAC-SHA-512/256 签名（SHA-512/256 变体）
+// 与 HMACSHA256 输出长度相同（64 位 hex）但算法不同；保留用于历史兼容
+// 注：sha512.New512_256 是 SHA-512/256 变体（与标准 SHA-256 输出长度相同但内部状态不同）
+func HMACSHA512_256(secret string, data []byte) string {
+	mac := hmac.New(sha512.New512_256, []byte(secret))
+	mac.Write(data)
+	return hex.EncodeToString(mac.Sum(nil))
+}
 
 // HMACEqual 常量时间比较（防时序攻击）
 func HMACEqual(a, b string) bool {
@@ -173,7 +180,7 @@ func HMACEqual(a, b string) bool {
 
 // HMACSHA256Hex 标准 HMAC-SHA256（v0.5.0 新增：海外支付通道专用）
 // 用于 USDT webhook 签名 / Stripe webhook 签名 / PayPal webhook 签名
-// 与 HMACSHA256（SHA-512/256 变体）区别：本函数使用标准 SHA-256，与外部 API 文档一致
+// 与 HMACSHA256 算法相同（均使用标准 SHA-256），仅参数类型不同（string vs []byte），与外部 API 文档一致
 // 输出 64 位小写 hex
 func HMACSHA256Hex(secret, data string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
@@ -304,21 +311,14 @@ func GenerateCardKey(prefix string) (key, hash, checksum string, err error) {
 	return key, hash, checksum, nil
 }
 
-// GenerateCardKeys v0.5.0 批量生成卡密（性能优化版本）
-//
-// 优化点（目标：10000 条/秒）：
-//   1. 单次 rand.Read 预取所有随机字节（count * 16 字节），避免 N 次系统调用
-//   2. 使用 sync.Pool 复用大缓冲区
-//   3. 预计算 SHA-512 写入复用 buffer
-//   4. 返回结构体切片而非多返回值，方便调用方批量入库
+// GenerateCardKeys v0.5.0 批量生成卡密
 //
 // 铁律 04：仍使用 crypto/rand 系统熵源，安全性不降级
-// 铁律 06：随机字节不足时返回 error，不静默截断
+// 铁律 06：使用 crypto/rand.Int 拒绝采样，消除 byte%charsetLen 取模偏差
+//   （cardKeyCharset 长度 31 非 2 的幂，取模会导致前 8 字符概率偏高约 12.5%）；
+//   随机字节不足时返回 error，不静默截断
 //
-// 性能对比：
-//   - 旧版 GenerateCardKey 循环 10000 次：~3.5s（每次 4 次 rand.Read + 4 次 string 分配）
-//   - 新版 GenerateCardKeys(10000)：~0.8s（1 次 rand.Read + 批量处理）
-//   - 提速约 4-5 倍
+// 注：每张卡密 4 段 × 4 字符，每字符通过 cryptoRandInt 从 cardKeyCharset 均匀采样
 func GenerateCardKeys(prefix string, count int) ([]CardKey, error) {
 	if count <= 0 {
 		return nil, errors.New("count 必须大于 0")
@@ -327,26 +327,19 @@ func GenerateCardKeys(prefix string, count int) ([]CardKey, error) {
 		return nil, errors.New("单批次最大 100000")
 	}
 
-	// 1. 一次性预取所有随机字节（每张卡密 16 字节熵）
-	// 铁律 06：rand.Read 在 Linux 上读 /dev/urandom，单次大块读取比多次小块快 5x+
-	totalBytes := count * cardKeyTotalLen
-	entropyBuf := make([]byte, totalBytes)
-	if _, err := rand.Read(entropyBuf); err != nil {
-		return nil, fmt.Errorf("预取随机字节失败: %w", err)
-	}
-
-	// 2. 批量构造卡密
+	// 批量构造卡密
 	result := make([]CardKey, count)
-	charsetLen := len(cardKeyCharset) // 30
+	charsetLen := len(cardKeyCharset)
 
 	for i := 0; i < count; i++ {
-		offset := i * cardKeyTotalLen
 		// 4 段 × 4 字符
-		segments := [cardKeySegments]string{
-			decodeSegment(entropyBuf[offset:offset+4], cardKeyCharset, charsetLen),
-			decodeSegment(entropyBuf[offset+4:offset+8], cardKeyCharset, charsetLen),
-			decodeSegment(entropyBuf[offset+8:offset+12], cardKeyCharset, charsetLen),
-			decodeSegment(entropyBuf[offset+12:offset+16], cardKeyCharset, charsetLen),
+		var segments [cardKeySegments]string
+		for j := 0; j < cardKeySegments; j++ {
+			seg, err := decodeSegment(cardKeyCharset, charsetLen)
+			if err != nil {
+				return nil, fmt.Errorf("生成卡密段失败: %w", err)
+			}
+			segments[j] = seg
 		}
 
 		var key string
@@ -376,29 +369,46 @@ type CardKey struct {
 	Checksum string
 }
 
-// decodeSegment 将 4 字节熵解码为 4 字符段（字符集取模）
-// 铁律 06：使用 byte 直接索引字符集，避免 string(buf) 转换开销
-func decodeSegment(entropy []byte, charset string, charsetLen int) string {
-	// 长度 4 固定，直接内联以避免分配
-	return string([]byte{
-		charset[int(entropy[0])%charsetLen],
-		charset[int(entropy[1])%charsetLen],
-		charset[int(entropy[2])%charsetLen],
-		charset[int(entropy[3])%charsetLen],
-	})
+// cryptoRandInt 使用 crypto/rand.Int 返回 [0, max) 范围内均匀分布的随机整数
+// 铁律 06：替代 byte%max 取模，消除 max 非 2 的幂时的模偏差
+func cryptoRandInt(max int) (int, error) {
+	if max <= 0 {
+		return 0, errors.New("max 必须大于 0")
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(max)))
+	if err != nil {
+		return 0, err
+	}
+	return int(n.Int64()), nil
+}
+
+// decodeSegment 生成 4 字符段（使用 crypto/rand.Int 拒绝采样，消除取模偏差）
+// 铁律 06：使用 cryptoRandInt 替代 byte%charsetLen，避免 charset 长度非 2 的幂时前段概率偏高
+func decodeSegment(charset string, charsetLen int) (string, error) {
+	buf := make([]byte, 4)
+	for i := 0; i < 4; i++ {
+		idx, err := cryptoRandInt(charsetLen)
+		if err != nil {
+			return "", err
+		}
+		buf[i] = charset[idx]
+	}
+	return string(buf), nil
 }
 
 // randomString 用 crypto/rand 生成随机字符串
+// 铁律 06：使用 cryptoRandInt 拒绝采样，消除取模偏差
 func randomString(n int, charset string) (string, error) {
 	if n <= 0 {
 		return "", errors.New("长度必须大于 0")
 	}
 	buf := make([]byte, n)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
 	for i := 0; i < n; i++ {
-		buf[i] = charset[int(buf[i])%len(charset)]
+		idx, err := cryptoRandInt(len(charset))
+		if err != nil {
+			return "", err
+		}
+		buf[i] = charset[idx]
 	}
 	return string(buf), nil
 }

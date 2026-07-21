@@ -1,8 +1,9 @@
 // v0.4.0 监控告警 Handler
 // 严格遵循铁律 04/05/06：
-//   04 - 采集间隔 / 阈值 / webhook URL / 静默期 / 告警开关 全部从 sys_config 读取
-//   05 - 9 项 monitor.* 配置可通过后台「系统配置」实时调整
-//   06 - 仅暴露查询/触发/确认接口；指标采集与阈值比较在 monitor 包内完成（显式 switch 不 eval）
+//
+//	04 - 采集间隔 / 阈值 / webhook URL / 静默期 / 告警开关 全部从 sys_config 读取
+//	05 - 9 项 monitor.* 配置可通过后台「系统配置」实时调整
+//	06 - 仅暴露查询/触发/确认接口；指标采集与阈值比较在 monitor 包内完成（显式 switch 不 eval）
 package handler
 
 import (
@@ -12,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 	"github.com/your-org/keyauth-saas/apps/server/internal/monitor"
@@ -28,15 +30,15 @@ func AdminMonitorStatus(deps *Deps) gin.HandlerFunc {
 
 		// 配置概览
 		configs := gin.H{
-			"collect_interval":      mgr.GetCollectInterval(ctx),
-			"alert_enabled":         mgr.IsAlertEnabled(ctx),
-			"silence_minutes":       deps.CfgCache.GetInt(ctx, monitor.CfgKeySilenceMinutes, 30),
-			"retention_days":        deps.CfgCache.GetInt(ctx, monitor.CfgKeyRetentionDays, 30),
-			"webhook_configured":    deps.CfgCache.GetString(ctx, monitor.CfgKeyNotifyWebhookURL, "") != "",
-			"threshold_cpu":         deps.CfgCache.GetFloat64(ctx, monitor.CfgKeyThresholdCPU, 90),
-			"threshold_memory":      deps.CfgCache.GetFloat64(ctx, monitor.CfgKeyThresholdMemory, 90),
-			"threshold_disk":        deps.CfgCache.GetFloat64(ctx, monitor.CfgKeyThresholdDisk, 85),
-			"threshold_error_rate":  deps.CfgCache.GetFloat64(ctx, monitor.CfgKeyThresholdErrorRate, 10),
+			"collect_interval":     mgr.GetCollectInterval(ctx),
+			"alert_enabled":        mgr.IsAlertEnabled(ctx),
+			"silence_minutes":      deps.CfgCache.GetInt(ctx, monitor.CfgKeySilenceMinutes, 30),
+			"retention_days":       deps.CfgCache.GetInt(ctx, monitor.CfgKeyRetentionDays, 30),
+			"webhook_configured":   deps.CfgCache.GetString(ctx, monitor.CfgKeyNotifyWebhookURL, "") != "",
+			"threshold_cpu":        deps.CfgCache.GetFloat64(ctx, monitor.CfgKeyThresholdCPU, 90),
+			"threshold_memory":     deps.CfgCache.GetFloat64(ctx, monitor.CfgKeyThresholdMemory, 90),
+			"threshold_disk":       deps.CfgCache.GetFloat64(ctx, monitor.CfgKeyThresholdDisk, 85),
+			"threshold_error_rate": deps.CfgCache.GetFloat64(ctx, monitor.CfgKeyThresholdErrorRate, 10),
 		}
 
 		// 当前活跃告警
@@ -71,8 +73,8 @@ func AdminMonitorStatus(deps *Deps) gin.HandlerFunc {
 			Scan(&aggs)
 
 		resp := gin.H{
-			"configs":         configs,
-			"active_alerts":   activeAlerts,
+			"configs":       configs,
+			"active_alerts": activeAlerts,
 			"stats": gin.H{
 				"total_alerts":   totalAlerts,
 				"firing_count":   firingCount,
@@ -100,7 +102,8 @@ func AdminCollectNow(deps *Deps) gin.HandlerFunc {
 
 		result, err := mgr.CollectAndEvaluate(ctx)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "采集失败: "+err.Error())
+			logger.Error("monitor: collect and evaluate failed", "err", err)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "采集失败")
 			return
 		}
 
@@ -287,14 +290,14 @@ func AdminResendAlert(deps *Deps) gin.HandlerFunc {
 		aid := req.AlertID
 		uid := getUserID(c)
 		RecordOperation(deps, c, "monitor", "resend_alert", "success", "system", &uid, map[string]interface{}{
-			"alert_id":   aid,
-			"sent":       sent,
+			"alert_id": aid,
+			"sent":     sent,
 		})
 
 		middleware.Success(c, gin.H{
-			"sent":      sent,
-			"alert_id":  req.AlertID,
-			"message":   "通知已发送",
+			"sent":     sent,
+			"alert_id": req.AlertID,
+			"message":  "通知已发送",
 		})
 	}
 }
@@ -310,7 +313,8 @@ func AdminCleanupMetrics(deps *Deps) gin.HandlerFunc {
 
 		deleted, err := mgr.CleanupExpiredMetrics(ctx)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "清理失败: "+err.Error())
+			logger.Error("monitor: cleanup expired metrics failed", "err", err)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "清理失败")
 			return
 		}
 

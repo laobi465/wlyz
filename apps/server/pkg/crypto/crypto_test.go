@@ -115,19 +115,19 @@ func TestHMACSHA256_DifferentInput(t *testing.T) {
 	assert.NotEqual(t, sig1, sig3)
 }
 
-func TestHMACSHA256_MatchesStandardSHA512_256(t *testing.T) {
-	// 验证后端使用的是 SHA-512/256 变体（与标准 SHA-256 不同）
+func TestHMACSHA512_256_MatchesStandardSHA512_256(t *testing.T) {
+	// 验证 HMACSHA512_256 使用的是 SHA-512/256 变体（与标准 SHA-256 不同）
 	// 标准 SHA-256 HMAC 输出：
 	stdSHA256 := hex.EncodeToString(hmacSHA256Std([]byte("secret"), []byte("data")))
 	// 后端 SHA-512/256 HMAC 输出：
-	backend := HMACSHA256("secret", []byte("data"))
+	backend := HMACSHA512_256("secret", []byte("data"))
 
 	// 两者长度都是 64 hex，但内容应不同
 	assert.Len(t, stdSHA256, 64)
 	assert.Len(t, backend, 64)
-	// 待核实：sha512.New512_256 vs sha256 应产生不同结果
+	// sha512.New512_256 vs sha256 应产生不同结果
 	assert.NotEqual(t, stdSHA256, backend,
-		"后端 HMACSHA256 应使用 sha512.New512_256 变体，与标准 SHA-256 不同")
+		"HMACSHA512_256 应使用 sha512.New512_256 变体，与标准 SHA-256 不同")
 }
 
 // hmacSHA256Std 标准库 SHA-256 HMAC（用于对比测试）
@@ -404,9 +404,9 @@ func TestGenerateHWID(t *testing.T) {
 // ============== SHA-512/256 验证（防 SDK 签名不一致 bug） ==============
 
 func TestSHA512_256_Variant(t *testing.T) {
-	// 验证后端 crypto.HMACSHA256 使用 sha512.New512_256 变体
+	// 验证 crypto.HMACSHA512_256 使用 sha512.New512_256 变体
 	// 与标准 sha256 HMAC 应不同
-	backend := HMACSHA256("test-secret", []byte("test-body"))
+	backend := HMACSHA512_256("test-secret", []byte("test-body"))
 
 	// 标准 SHA-256 HMAC（对比组）
 	h := hmacSHA256Std([]byte("test-secret"), []byte("test-body"))
@@ -417,7 +417,7 @@ func TestSHA512_256_Variant(t *testing.T) {
 	mac2.Write([]byte("test-body"))
 	sha512_256 := hex.EncodeToString(mac2.Sum(nil))
 
-	// 后端 HMACSHA256 应等于 sha512/256，不等于 sha256
-	assert.Equal(t, sha512_256, backend, "后端 HMACSHA256 应等于 sha512/256 HMAC")
+	// HMACSHA512_256 应等于 sha512/256，不等于 sha256
+	assert.Equal(t, sha512_256, backend, "HMACSHA512_256 应等于 sha512/256 HMAC")
 	assert.NotEqual(t, stdSHA256, backend, "应与标准 sha256 HMAC 不同")
 }

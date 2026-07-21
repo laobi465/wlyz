@@ -57,7 +57,15 @@ func JWTAuth(secret string, allowedRoles string) gin.HandlerFunc {
 			return
 		}
 
-		// 3. 角色校验
+		// 3. Subject 校验（P1-01 修复：拒绝 refresh token 访问业务接口）
+		// 仅允许 access token（Subject=="access"）通过；refresh token（Subject=="refresh"，7 天 TTL）
+		// 必须走 /public/auth/refresh 端点轮换，禁止直接访问业务接口
+		if claims.Subject != "access" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 1002, "message": "token 类型错误"})
+			return
+		}
+
+		// 4. 角色校验
 		roleOK := false
 		for _, r := range allowed {
 			if strings.TrimSpace(r) == claims.Role {
@@ -70,7 +78,7 @@ func JWTAuth(secret string, allowedRoles string) gin.HandlerFunc {
 			return
 		}
 
-		// 4. 注入上下文（v0.4.0：注入 jti 供下游单点踢出使用）
+		// 5. 注入上下文（v0.4.0：注入 jti 供下游单点踢出使用）
 		c.Set("user_id", claims.UserID)
 		c.Set("username", claims.Username)
 		c.Set("role", claims.Role)
@@ -82,13 +90,21 @@ func JWTAuth(secret string, allowedRoles string) gin.HandlerFunc {
 
 // GenerateToken 生成 JWT Token
 // v0.4.0：保留 claims.ID（jti）字段，仅覆盖 Issuer/ExpiresAt/IssuedAt
+// P1-01：保留 claims.Subject（access/refresh），未指定时默认 "access"（向后兼容）
 // 调用方如需携带 jti，应在传入 claims 前设置 claims.ID
+// 调用方如需签发 refresh token，应设置 claims.Subject = "refresh"
 func GenerateToken(secret, issuer string, expireHours int, claims JWTClaims) (string, error) {
-	// 保留 jti（claims.ID），仅覆盖签发相关字段
+	// 保留 jti（claims.ID）和 Subject（P1-01：access/refresh 区分）
 	jti := claims.ID
+	subject := claims.Subject
+	if subject == "" {
+		// 向后兼容：旧调用方未显式指定 Subject 时默认签发 access token
+		subject = "access"
+	}
 	claims.RegisteredClaims = jwt.RegisteredClaims{
 		ID:        jti,
 		Issuer:    issuer,
+		Subject:   subject,
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Duration(expireHours) * time.Hour)),
 		IssuedAt:  jwt.NewNumericDate(time.Now()),
 	}

@@ -94,7 +94,12 @@ func TestCloudflareRealIP_DisabledFallback(t *testing.T) {
 
 func TestCloudflareRealIP_EnabledWithHeader(t *testing.T) {
 	db := setupCFTestDB(t)
-	cfg := setupCFCfgCache(t, db, map[string]string{"cloudflare.enabled": "1"})
+	// P1-04 修复后：必须配置 trusted_cidrs 且 RemoteAddr 命中受信 CIDR 才会信任 CF 头
+	// 此处使用 Cloudflare 官方 CIDR（173.245.48.0/20），并将 RemoteAddr 设为该网段内的地址
+	cfg := setupCFCfgCache(t, db, map[string]string{
+		"cloudflare.enabled":       "1",
+		"cloudflare.trusted_cidrs": "173.245.48.0/20,103.21.244.0/22,103.22.200.0/22",
+	})
 
 	r := setupCFEngine()
 	r.Use(CloudflareRealIP(cfg))
@@ -103,7 +108,7 @@ func TestCloudflareRealIP_EnabledWithHeader(t *testing.T) {
 	})
 
 	req := httptest.NewRequest("GET", "/test", nil)
-	req.RemoteAddr = "10.0.0.1:5678"
+	req.RemoteAddr = "173.245.48.10:5678" // 命中 173.245.48.0/20 受信 CIDR
 	req.Header.Set("CF-Connecting-IP", "203.0.113.50")
 	req.Header.Set("CF-IPCountry", "CN")
 	w := httptest.NewRecorder()

@@ -319,17 +319,18 @@ func (AgentInviteCode) TableName() string { return "agent_invite_code" }
 // AgentBalanceLog 代理余额流水
 type AgentBalanceLog struct {
 	BaseModel
-	AgentID         uint64   `gorm:"index;not null" json:"agent_id"`
-	TenantID        uint64   `gorm:"index;not null" json:"tenant_id"`
-	Type            string   `gorm:"size:32;not null" json:"type"` // recharge/deduct/commission/withdraw/adjust
-	Amount          float64  `gorm:"type:decimal(12,2);not null" json:"amount"`
-	BalanceAfter    float64  `gorm:"type:decimal(12,2);not null" json:"balance_after"`
-	RelatedOrderID  *uint64  `gorm:"index" json:"related_order_id"`
-	RelatedCardIDs  string   `gorm:"type:json" json:"related_card_ids"`
-	PayMethod       string   `gorm:"size:32" json:"pay_method"`
-	PayVoucher      string   `gorm:"size:255" json:"pay_voucher"`
-	Status          string   `gorm:"size:32;index;not null;default:pending" json:"status"`
-	Remark          string   `gorm:"size:255" json:"remark"`
+	AgentID          uint64   `gorm:"index;not null" json:"agent_id"`
+	TenantID         uint64   `gorm:"index;not null" json:"tenant_id"`
+	Type             string   `gorm:"size:32;not null" json:"type"` // recharge/deduct/commission/withdraw/adjust
+	Amount           float64  `gorm:"type:decimal(12,2);not null" json:"amount"`
+	BalanceAfter     float64  `gorm:"type:decimal(12,2);not null" json:"balance_after"`
+	RelatedOrderID   *uint64  `gorm:"index" json:"related_order_id"`
+	RelatedWithdrawID *uint64 `gorm:"index" json:"related_withdraw_id"` // P1-01/02 修复：关联 agent_withdraw id，精确匹配避免时间窗口模糊匹配错配
+	RelatedCardIDs   string   `gorm:"type:json" json:"related_card_ids"`
+	PayMethod        string   `gorm:"size:32" json:"pay_method"`
+	PayVoucher       string   `gorm:"size:255" json:"pay_voucher"`
+	Status           string   `gorm:"size:32;index;not null;default:pending" json:"status"`
+	Remark           string   `gorm:"size:255" json:"remark"`
 }
 
 func (AgentBalanceLog) TableName() string { return "agent_balance_log" }

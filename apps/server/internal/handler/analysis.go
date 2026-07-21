@@ -28,6 +28,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/your-org/keyauth-saas/apps/server/internal/analysis"
+	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 )
 
@@ -76,7 +77,8 @@ func AdminBehaviorOverview(deps *Deps) gin.HandlerFunc {
 		f := parseAnalysisFilter(c)
 		ov, err := deps.AnalysisMgr.GetBehaviorOverview(c.Request.Context(), f)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "查询行为总览失败: "+err.Error())
+			logger.Error("analysis: get behavior overview failed", "err", err)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "查询行为总览失败")
 			return
 		}
 		middleware.Success(c, ov)
@@ -372,8 +374,8 @@ func AdminReevaluateRiskUser(deps *Deps) gin.HandlerFunc {
 		detail, err := deps.AnalysisMgr.GetRiskUserDetail(c.Request.Context(), userType, uid, 10)
 		if err != nil {
 			middleware.Success(c, gin.H{
-				"user_type":  userType,
-				"user_id":    uid,
+				"user_type":   userType,
+				"user_id":     uid,
 				"reevaluated": true,
 			})
 			return
@@ -419,10 +421,10 @@ func AdminTriggerAggregation(deps *Deps) gin.HandlerFunc {
 			return
 		}
 		middleware.Success(c, gin.H{
-			"triggered":          true,
-			"users_aggregated":   users,
-			"cards_aggregated":   cards,
-			"risk_reevaluated":   risk,
+			"triggered":        true,
+			"users_aggregated": users,
+			"cards_aggregated": cards,
+			"risk_reevaluated": risk,
 		})
 	}
 }

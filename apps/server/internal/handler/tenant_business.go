@@ -278,7 +278,8 @@ func TenantListDevices(deps *Deps) gin.HandlerFunc {
 
 		var items []deviceListItem
 		if err := q.Order("app_device.id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Scan(&items).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败: "+err.Error())
+			logger.Error("tenant: list devices query failed", "err", err, "tenant_id", tenantID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败")
 			return
 		}
 		for i := range items {
@@ -397,7 +398,8 @@ func TenantListOrders(deps *Deps) gin.HandlerFunc {
 
 		var orders []orderListItem
 		if err := q.Order("app_order.id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Scan(&orders).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败: "+err.Error())
+			logger.Error("tenant: list orders query failed", "err", err, "tenant_id", tenantID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败")
 			return
 		}
 		// 后处理：计算 channel 字段
@@ -472,7 +474,8 @@ func TenantListCloudVars(deps *Deps) gin.HandlerFunc {
 
 		var items []cloudVarListItem
 		if err := q.Order("app_cloud_var.id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Scan(&items).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败: "+err.Error())
+			logger.Error("tenant: list cloud vars query failed", "err", err, "tenant_id", tenantID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败")
 			return
 		}
 
@@ -536,11 +539,13 @@ func TenantUpsertCloudVar(deps *Deps) gin.HandlerFunc {
 				Status:   "active",
 			}
 			if err := deps.DB.Create(&cv).Error; err != nil {
-				middleware.Fail(c, http.StatusInternalServerError, 5001, "创建云变量失败: "+err.Error())
+				logger.Error("tenant: create cloud var failed", "err", err, "tenant_id", tenantID, "app_id", req.AppID)
+				middleware.Fail(c, http.StatusInternalServerError, 5001, "创建云变量失败")
 				return
 			}
 		} else if result.Error != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败: "+result.Error.Error())
+			logger.Error("tenant: query cloud var failed", "err", result.Error, "tenant_id", tenantID, "app_id", req.AppID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败")
 			return
 		} else {
 			updates := map[string]interface{}{
@@ -550,7 +555,8 @@ func TenantUpsertCloudVar(deps *Deps) gin.HandlerFunc {
 				"remark":    req.Description,
 			}
 			if err := deps.DB.Model(&model.AppCloudVar{}).Where("id = ?", cv.ID).Updates(updates).Error; err != nil {
-				middleware.Fail(c, http.StatusInternalServerError, 5002, "更新云变量失败: "+err.Error())
+				logger.Error("tenant: update cloud var failed", "err", err, "id", cv.ID)
+				middleware.Fail(c, http.StatusInternalServerError, 5002, "更新云变量失败")
 				return
 			}
 		}
@@ -631,7 +637,8 @@ func TenantListVersions(deps *Deps) gin.HandlerFunc {
 
 		var items []versionListItem
 		if err := q.Order("app_version.id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Scan(&items).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败: "+err.Error())
+			logger.Error("tenant: list versions query failed", "err", err, "tenant_id", tenantID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败")
 			return
 		}
 
@@ -727,7 +734,8 @@ func TenantCreateVersion(deps *Deps) gin.HandlerFunc {
 			Status:             status,
 		}
 		if err := deps.DB.Create(v).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "创建版本失败: "+err.Error())
+			logger.Error("tenant: create version failed", "err", err, "tenant_id", tenantID, "app_id", req.AppID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "创建版本失败")
 			return
 		}
 		middleware.Success(c, v)
@@ -836,7 +844,8 @@ func TenantUpdateVersion(deps *Deps) gin.HandlerFunc {
 
 		if err := deps.DB.Model(&model.AppVersion{}).Where("id = ? AND tenant_id = ?", id, tenantID).
 			Updates(updates).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "更新失败: "+err.Error())
+			logger.Error("tenant: update version failed", "err", err, "id", id, "tenant_id", tenantID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "更新失败")
 			return
 		}
 
@@ -917,38 +926,30 @@ func TenantListAgents(deps *Deps) gin.HandlerFunc {
 
 		var agents []model.Agent
 		if err := q.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&agents).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败: "+err.Error())
+			logger.Error("tenant: list agents query failed", "err", err, "tenant_id", tenantID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败")
 			return
 		}
+
+		// 批量查询避免 N+1：commission / withdraw / frozen
+		agentIDs := make([]uint64, 0, len(agents))
+		for _, a := range agents {
+			agentIDs = append(agentIDs, a.ID)
+		}
+		commissionMap := agentTotalCommissionBatch(deps.DB, agentIDs)
+		withdrawMap := agentTotalWithdrawPaidBatch(deps.DB, agentIDs)
+		frozenMap := agentFrozenBalanceBatch(deps.DB, agentIDs)
 
 		// 后处理：子查询统计佣金/提现
 		items := make([]agentListItem, 0, len(agents))
 		for _, a := range agents {
 			item := agentListItem{
-				Agent:        a,
-				LastActiveAt: a.LastLoginAt,
+				Agent:           a,
+				LastActiveAt:    a.LastLoginAt,
+				TotalCommission: commissionMap[a.ID],
+				TotalWithdraw:   withdrawMap[a.ID],
+				FrozenBalance:   frozenMap[a.ID],
 			}
-			// total_commission = SUM(commission.amount WHERE settle_status != 'rejected')
-			var commSum sumResult
-			deps.DB.Model(&model.AgentCommission{}).
-				Where("agent_id = ? AND settle_status != ?", a.ID, "rejected").
-				Select("COALESCE(SUM(amount), 0) as total").Scan(&commSum)
-			item.TotalCommission = commSum.Total
-
-			// total_withdraw = SUM(withdraw.amount WHERE status='paid')
-			var wdSum sumResult
-			deps.DB.Model(&model.AgentWithdraw{}).
-				Where("agent_id = ? AND status = ?", a.ID, "paid").
-				Select("COALESCE(SUM(amount), 0) as total").Scan(&wdSum)
-			item.TotalWithdraw = wdSum.Total
-
-			// frozen_balance = SUM(withdraw.amount WHERE status='pending')
-			var frSum sumResult
-			deps.DB.Model(&model.AgentWithdraw{}).
-				Where("agent_id = ? AND status = ?", a.ID, "pending").
-				Select("COALESCE(SUM(amount), 0) as total").Scan(&frSum)
-			item.FrozenBalance = frSum.Total
-
 			items = append(items, item)
 		}
 
@@ -1019,7 +1020,8 @@ func TenantUpdateAgent(deps *Deps) gin.HandlerFunc {
 
 		if err := deps.DB.Model(&model.Agent{}).Where("id = ? AND tenant_id = ?", id, tenantID).
 			Updates(updates).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "更新失败: "+err.Error())
+			logger.Error("tenant: update agent failed", "err", err, "id", id, "tenant_id", tenantID)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "更新失败")
 			return
 		}
 		middleware.Success(c, gin.H{"id": id, "updated": true})
@@ -1070,7 +1072,8 @@ func TenantGenInviteCode(deps *Deps) gin.HandlerFunc {
 						"已达套餐代理数上限 "+itoa(qErr.Limit)+" 个，无法生成新邀请码")
 				}
 			} else {
-				middleware.Fail(c, http.StatusForbidden, 1007, err.Error())
+				logger.Error("tenant: quota check agents failed", "err", err, "tenant_id", tenantID)
+				middleware.Fail(c, http.StatusForbidden, 1007, "代理配额校验失败")
 			}
 			return
 		}
@@ -1167,7 +1170,8 @@ func TenantListInviteCodes(deps *Deps) gin.HandlerFunc {
 		var items []inviteCodeListItem
 		if err := q.Order("agent_invite_code.id DESC").
 			Offset((page - 1) * pageSize).Limit(pageSize).Scan(&items).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败: "+err.Error())
+			logger.Error("tenant: list invite codes query failed", "err", err, "tenant_id", tenantID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败")
 			return
 		}
 
@@ -1250,7 +1254,8 @@ func TenantListPayConfig(deps *Deps) gin.HandlerFunc {
 
 		var configs []model.TenantPayConfig
 		if err := deps.DB.Where("tenant_id = ?", tenantID).Find(&configs).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败: "+err.Error())
+			logger.Error("tenant: list pay config query failed", "err", err, "tenant_id", tenantID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败")
 			return
 		}
 
@@ -1317,7 +1322,8 @@ func TenantSavePayConfig(deps *Deps) gin.HandlerFunc {
 		// 加密 key
 		keyEnc, err := deps.Crypto.EncryptAES(req.Config.Key)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "加密 key 失败: "+err.Error())
+			logger.Error("tenant: encrypt pay config key failed", "err", err, "tenant_id", tenantID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "加密 key 失败")
 			return
 		}
 		enabled := req.Status == "active"
@@ -1340,11 +1346,13 @@ func TenantSavePayConfig(deps *Deps) gin.HandlerFunc {
 				ReturnPath:   req.Config.ReturnURL,
 			}
 			if err := deps.DB.Create(&cfg).Error; err != nil {
-				middleware.Fail(c, http.StatusInternalServerError, 5002, "创建支付配置失败: "+err.Error())
+				logger.Error("tenant: create pay config failed", "err", err, "tenant_id", tenantID, "channel", req.Channel)
+				middleware.Fail(c, http.StatusInternalServerError, 5002, "创建支付配置失败")
 				return
 			}
 		} else if result.Error != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败: "+result.Error.Error())
+			logger.Error("tenant: query pay config failed", "err", result.Error, "tenant_id", tenantID, "channel", req.Channel)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败")
 			return
 		} else {
 			oldEnabled = cfg.Enabled
@@ -1358,7 +1366,8 @@ func TenantSavePayConfig(deps *Deps) gin.HandlerFunc {
 				"return_path":   req.Config.ReturnURL,
 			}
 			if err := deps.DB.Model(&model.TenantPayConfig{}).Where("id = ?", cfg.ID).Updates(updates).Error; err != nil {
-				middleware.Fail(c, http.StatusInternalServerError, 5002, "更新支付配置失败: "+err.Error())
+				logger.Error("tenant: update pay config failed", "err", err, "id", cfg.ID)
+				middleware.Fail(c, http.StatusInternalServerError, 5002, "更新支付配置失败")
 				return
 			}
 		}
@@ -1440,8 +1449,9 @@ func TenantTestPayConfig(deps *Deps) gin.HandlerFunc {
 			success = false
 			message = "配置不完整：gateway_url/pid/key 不能为空"
 		} else if _, err := deps.Crypto.DecryptAES(cfg.KeyEncrypted); err != nil {
+			logger.Error("tenant: pay config key decrypt failed", "err", err, "config_id", cfg.ID)
 			success = false
-			message = "key 解密失败: " + err.Error()
+			message = "key 解密失败，请重新配置"
 		}
 
 		// 记录测试结果（简化）
@@ -1501,7 +1511,8 @@ func TenantListNotices(deps *Deps) gin.HandlerFunc {
 		if err := q.Order("is_pinned DESC, sort DESC, id DESC").
 			Offset((page - 1) * pageSize).Limit(pageSize).
 			Find(&notices).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败: "+err.Error())
+			logger.Error("tenant: list notices query failed", "err", err, "tenant_id", tenantID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败")
 			return
 		}
 
@@ -1633,7 +1644,8 @@ func TenantCreateNotice(deps *Deps) gin.HandlerFunc {
 			CreatedBy:     userID,
 		}
 		if err := deps.DB.Create(&notice).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "创建公告失败: "+err.Error())
+			logger.Error("tenant: create notice failed", "err", err, "tenant_id", tenantID, "title", req.Title)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "创建公告失败")
 			return
 		}
 
@@ -1763,7 +1775,8 @@ func TenantUpdateNotice(deps *Deps) gin.HandlerFunc {
 		}
 		if err := deps.DB.Model(&model.Notice{}).Where("id = ? AND tenant_id = ?", id, tenantID).
 			Updates(updates).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "更新公告失败: "+err.Error())
+			logger.Error("tenant: update notice failed", "err", err, "id", id, "tenant_id", tenantID)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "更新公告失败")
 			return
 		}
 
@@ -1802,7 +1815,8 @@ func TenantDeleteNotice(deps *Deps) gin.HandlerFunc {
 		deps.DB.Where("notice_id = ?", id).Delete(&model.NoticeRead{})
 		deps.DB.Where("notice_id = ?", id).Delete(&model.NoticeTarget{})
 		if err := deps.DB.Delete(&model.Notice{}, id).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "删除公告失败: "+err.Error())
+			logger.Error("tenant: delete notice failed", "err", err, "id", id, "tenant_id", tenantID)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "删除公告失败")
 			return
 		}
 
@@ -1842,7 +1856,8 @@ func TenantGetAgentTree(deps *Deps) gin.HandlerFunc {
 				middleware.Fail(c, http.StatusNotFound, 1004, "代理账号不存在")
 				return
 			}
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "构建代理树失败: "+err.Error())
+			logger.Error("tenant: build agent tree failed", "err", err, "agent_id", agentID, "tenant_id", tenantID)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "构建代理树失败")
 			return
 		}
 
@@ -1982,12 +1997,14 @@ func TenantUpdateSecurity(deps *Deps) gin.HandlerFunc {
 				sec.LoginRateLimitPerMin = *req.LoginRateLimitPerMin
 			}
 			if err := deps.DB.Create(&sec).Error; err != nil {
-				middleware.Fail(c, http.StatusInternalServerError, 5001, "保存安全配置失败: "+err.Error())
+				logger.Error("tenant: save security config failed", "err", err, "tenant_id", tenantID)
+				middleware.Fail(c, http.StatusInternalServerError, 5001, "保存安全配置失败")
 				return
 			}
 		} else {
 			if err := deps.DB.Model(&sec).Updates(updates).Error; err != nil {
-				middleware.Fail(c, http.StatusInternalServerError, 5001, "更新安全配置失败: "+err.Error())
+				logger.Error("tenant: update security config failed", "err", err, "tenant_id", tenantID)
+				middleware.Fail(c, http.StatusInternalServerError, 5001, "更新安全配置失败")
 				return
 			}
 		}

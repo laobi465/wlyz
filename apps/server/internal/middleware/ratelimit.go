@@ -10,6 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+	"github.com/your-org/keyauth-saas/apps/server/internal/model"
+	"gorm.io/gorm"
 )
 
 // 限流相关配置键
@@ -65,6 +67,8 @@ func RateLimitByIP(rdb *redis.Client, cfgReader ConfigReader, limitKey string) g
 
 // IPBlacklist IP 黑名单检查
 // v0.4.0：优先使用 RealIP(c)（兼容 Cloudflare 真实 IP）
+// P1-03 修复：Redis 故障时回退查 MySQL sec_ip_blacklist 表，避免 fail-open。
+// 命中条件：ip 匹配且（expires_at 为 NULL 永久封禁 或 expires_at > 当前时间）。
 func IPBlacklist(rdb *redis.Client, db interface{}) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ip := RealIP(c)
@@ -73,7 +77,23 @@ func IPBlacklist(rdb *redis.Client, db interface{}) gin.HandlerFunc {
 		// 1. 查 Redis 缓存
 		key := "ip:blacklist:" + ip
 		exists, err := rdb.Exists(ctx, key).Result()
-		if err == nil && exists > 0 {
+		if err != nil {
+			// Redis 故障：回退查 MySQL sec_ip_blacklist，避免 fail-open
+			if gormDB, ok := db.(*gorm.DB); ok && gormDB != nil {
+				var count int64
+				gormDB.WithContext(ctx).Model(&model.SecIPBlacklist{}).
+					Where("ip = ? AND (expires_at IS NULL OR expires_at > ?)", ip, time.Now()).
+					Count(&count)
+				if count > 0 {
+					c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+						"code":    1003,
+						"message": "IP 已被加入黑名单",
+					})
+					return
+				}
+			}
+			// Redis 故障且 MySQL 未命中/不可用：放行（保持原 fail-open 行为，避免 Redis 故障阻塞主链路）
+		} else if exists > 0 {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 				"code":    1003,
 				"message": "IP 已被加入黑名单",
@@ -81,9 +101,8 @@ func IPBlacklist(rdb *redis.Client, db interface{}) gin.HandlerFunc {
 			return
 		}
 
-		// 2. 注：MySQL 持久化黑名单查询应由 Service 层提供（此处省略）
-		// 需验证：Redis 黑名单与 MySQL 同步策略
-
+		// 2. Redis 正常且未命中：放行
+		// 注：MySQL 持久化黑名单的写入由 RecordCardFailure 自动封禁 + 管理员后台双路径维护
 		c.Next()
 	}
 }

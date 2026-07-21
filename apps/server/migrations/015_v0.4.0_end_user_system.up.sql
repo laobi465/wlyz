@@ -71,8 +71,20 @@ CREATE TABLE IF NOT EXISTS `end_user_token` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='v0.4.0 终端用户 Refresh Token';
 
 -- ============== app_card 表新增 end_user_id 字段（向前兼容） ==============
-ALTER TABLE `app_card` ADD COLUMN IF NOT EXISTS `end_user_id` BIGINT UNSIGNED NULL DEFAULT NULL COMMENT 'v0.4.0 绑定的终端用户 ID（可空）' AFTER `bound_device_id`;
-ALTER TABLE `app_card` ADD INDEX IF NOT EXISTS `idx_end_user_id` (`end_user_id`);
+-- 兼容 MySQL 8.0 ≤ 8.0.28 不支持 ADD COLUMN IF NOT EXISTS / ADD INDEX IF NOT EXISTS
+-- 参照 migrations/010 的 PREPARE + EXECUTE 模式实现条件添加列
+SET @col_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'app_card' AND COLUMN_NAME = 'end_user_id');
+SET @sql = IF(@col_exists = 0, 'ALTER TABLE `app_card` ADD COLUMN `end_user_id` BIGINT UNSIGNED NULL DEFAULT NULL COMMENT ''v0.4.0 绑定的终端用户 ID（可空）'' AFTER `bound_device_id`', 'SELECT 1');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- 条件添加索引 idx_end_user_id
+SET @idx_exists = (SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'app_card' AND INDEX_NAME = 'idx_end_user_id');
+SET @sql = IF(@idx_exists = 0, 'ALTER TABLE `app_card` ADD INDEX `idx_end_user_id` (`end_user_id`)', 'SELECT 1');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- ============== sys_config 10 项 ==============
 -- 铁律 04/05：注册/登录/密码/验证码/Token 配置 全部走 sys_config

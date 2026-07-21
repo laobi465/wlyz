@@ -233,11 +233,10 @@ func TestAcquireLock_FirstAcquireSuccess(t *testing.T) {
 	mgr := newManager(db, cache)
 	ctx := context.Background()
 
-	ok, err := mgr.AcquireLock(ctx)
-	require.NoError(t, err)
+	token, ok := mgr.AcquireLock(ctx)
 	assert.True(t, ok)
 	// 释放
-	mgr.ReleaseLock(ctx)
+	mgr.ReleaseLock(ctx, token)
 }
 
 func TestAcquireLock_SecondAcquireFails(t *testing.T) {
@@ -247,17 +246,15 @@ func TestAcquireLock_SecondAcquireFails(t *testing.T) {
 	ctx := context.Background()
 
 	// 第一次获取成功
-	ok1, err := mgr.AcquireLock(ctx)
-	require.NoError(t, err)
+	token1, ok1 := mgr.AcquireLock(ctx)
 	require.True(t, ok1)
 
 	// 第二次获取失败（已锁）
 	// 注：由于进程内 mutex 已被锁住，这里需要新起 goroutine 来测试
 	done := make(chan struct{})
 	var ok2 bool
-	var err2 error
 	go func() {
-		ok2, err2 = mgr.AcquireLock(ctx)
+		_, ok2 = mgr.AcquireLock(ctx)
 		close(done)
 	}()
 	select {
@@ -265,10 +262,9 @@ func TestAcquireLock_SecondAcquireFails(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("AcquireLock 第二次调用超时（TryLock 应立即返回）")
 	}
-	assert.NoError(t, err2)
 	assert.False(t, ok2, "已锁状态下应返回 false")
 
-	mgr.ReleaseLock(ctx)
+	mgr.ReleaseLock(ctx, token1)
 }
 
 func TestAcquireLock_ReleaseThenReacquire(t *testing.T) {
@@ -277,14 +273,13 @@ func TestAcquireLock_ReleaseThenReacquire(t *testing.T) {
 	mgr := newManager(db, cache)
 	ctx := context.Background()
 
-	ok1, _ := mgr.AcquireLock(ctx)
+	token1, ok1 := mgr.AcquireLock(ctx)
 	require.True(t, ok1)
-	mgr.ReleaseLock(ctx)
+	mgr.ReleaseLock(ctx, token1)
 
-	ok2, err := mgr.AcquireLock(ctx)
-	require.NoError(t, err)
+	token2, ok2 := mgr.AcquireLock(ctx)
 	assert.True(t, ok2, "释放后应能再次获取")
-	mgr.ReleaseLock(ctx)
+	mgr.ReleaseLock(ctx, token2)
 }
 
 func TestAcquireLock_RedisKeySet(t *testing.T) {
@@ -293,15 +288,15 @@ func TestAcquireLock_RedisKeySet(t *testing.T) {
 	mgr := newManager(db, cache)
 	ctx := context.Background()
 
-	ok, _ := mgr.AcquireLock(ctx)
+	token, ok := mgr.AcquireLock(ctx)
 	require.True(t, ok)
 
-	// Redis 中应存在 lock key
+	// Redis 中应存在 lock key，值为 token（UUID）
 	val, err := cache.RedisClient().Get(ctx, mgr.lockKey).Result()
 	require.NoError(t, err)
-	assert.Equal(t, "locked", val)
+	assert.Equal(t, token, val, "Redis 锁值应等于 AcquireLock 返回的 token")
 
-	mgr.ReleaseLock(ctx)
+	mgr.ReleaseLock(ctx, token)
 	// 释放后 Redis key 应被删除
 	_, err = cache.RedisClient().Get(ctx, mgr.lockKey).Result()
 	assert.Error(t, err, "释放后 Redis key 应不存在")
@@ -320,14 +315,12 @@ func TestAcquireLock_ConcurrentManagers(t *testing.T) {
 	// mgr1 先抢锁（但用 goroutine 避免进程内 mutex 阻塞 mgr2 测试）
 	// 由于 mgr1 和 mgr2 是不同实例，进程内 mutex 不互斥
 	// 但 Redis SET NX EX 是原子的，应只有一方成功
-	ok1, err1 := mgr1.AcquireLock(ctx)
-	require.NoError(t, err1)
+	_, ok1 := mgr1.AcquireLock(ctx)
 	require.True(t, ok1)
 	mgr1.mu.Unlock() // 释放进程内锁，仅保留 Redis 锁
 
 	// mgr2 此时进程内 mutex 可获取，但 Redis SET NX 应失败
-	ok2, err2 := mgr2.AcquireLock(ctx)
-	require.NoError(t, err2)
+	_, ok2 := mgr2.AcquireLock(ctx)
 	assert.False(t, ok2, "Redis 锁存在时 mgr2 应失败")
 
 	// 清理 Redis 锁
@@ -533,9 +526,9 @@ func TestIsLocked_WhenLocked(t *testing.T) {
 	mgr := newManager(db, cache)
 	ctx := context.Background()
 
-	ok, _ := mgr.AcquireLock(ctx)
+	token, ok := mgr.AcquireLock(ctx)
 	require.True(t, ok)
-	defer mgr.ReleaseLock(ctx)
+	defer mgr.ReleaseLock(ctx, token)
 
 	// 由于进程内 mutex 持有，需要绕过进程内锁直接查 Redis
 	// IsLocked 实现只查 Redis，不查进程内 mutex
@@ -580,14 +573,12 @@ func TestAcquireLock_DifferentLockKeys(t *testing.T) {
 	mgr2.lockKey = "lock:B"
 	ctx := context.Background()
 
-	ok1, err1 := mgr1.AcquireLock(ctx)
-	require.NoError(t, err1)
+	_, ok1 := mgr1.AcquireLock(ctx)
 	require.True(t, ok1)
 	// 释放进程内锁，仅保留 Redis 锁
 	mgr1.mu.Unlock()
 
-	ok2, err2 := mgr2.AcquireLock(ctx)
-	require.NoError(t, err2)
+	_, ok2 := mgr2.AcquireLock(ctx)
 	assert.True(t, ok2, "不同 lockKey 应能同时持有")
 
 	// 清理
@@ -647,8 +638,8 @@ func TestAcquireLock_ConcurrentStress(t *testing.T) {
 			mgr.lockKey = "stress:lock"
 			// 由于每个 mgr 独立，进程内 mutex 不互斥
 			// 仅靠 Redis SET NX EX 保证唯一性
-			ok, err := mgr.AcquireLock(ctx)
-			if err == nil && ok {
+			_, ok := mgr.AcquireLock(ctx)
+			if ok {
 				mu.Lock()
 				successN++
 				mu.Unlock()

@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/auth"
+	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 	"github.com/your-org/keyauth-saas/apps/server/pkg/crypto"
@@ -345,7 +346,8 @@ func ProfileMe(deps *Deps) gin.HandlerFunc {
 				middleware.Fail(c, http.StatusNotFound, 1008, "用户不存在")
 				return
 			}
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询用户信息失败: "+err.Error())
+			logger.Error("profile: load user profile failed", "err", err, "role", role, "user_id", userID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询用户信息失败")
 			return
 		}
 
@@ -429,7 +431,8 @@ func UpdateProfile(deps *Deps) gin.HandlerFunc {
 			err = deps.DB.Model(&model.Agent{}).Where("id = ?", userID).Updates(updates).Error
 		}
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "更新失败: "+err.Error())
+			logger.Error("profile: update failed", "err", err, "role", role, "user_id", userID)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "更新失败")
 			return
 		}
 
@@ -480,7 +483,8 @@ func ChangePassword(deps *Deps) gin.HandlerFunc {
 				middleware.Fail(c, http.StatusNotFound, 1008, "用户不存在")
 				return
 			}
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询用户失败: "+err.Error())
+			logger.Error("profile: load password hash failed", "err", err, "role", role, "user_id", userID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询用户失败")
 			return
 		}
 		if !crypto.CheckPassword(oldHash, req.OldPassword) {
@@ -497,7 +501,8 @@ func ChangePassword(deps *Deps) gin.HandlerFunc {
 		// 5. bcrypt 加密新密码
 		newHash, err := crypto.HashPassword(req.NewPassword)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5006, "密码加密失败: "+err.Error())
+			logger.Error("profile: hash password failed", "err", err, "role", role, "user_id", userID)
+			middleware.Fail(c, http.StatusInternalServerError, 5006, "密码加密失败")
 			return
 		}
 
@@ -514,7 +519,8 @@ func ChangePassword(deps *Deps) gin.HandlerFunc {
 			return
 		}
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "更新密码失败: "+err.Error())
+			logger.Error("profile: update password failed", "err", err, "role", role, "user_id", userID)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "更新密码失败")
 			return
 		}
 
@@ -545,7 +551,8 @@ func Setup2FA(deps *Deps) gin.HandlerFunc {
 		// 校验未绑定 2FA
 		totpSecretEnc, err := loadUserTOTPSecret(deps, role, userID)
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询 2FA 状态失败: "+err.Error())
+			logger.Error("2fa setup: load totp secret failed", "err", err, "role", role, "user_id", userID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询 2FA 状态失败")
 			return
 		}
 		if totpSecretEnc != "" {
@@ -573,7 +580,8 @@ func Setup2FA(deps *Deps) gin.HandlerFunc {
 			Skew:       params.TOTPSkew,
 		})
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5003, "生成 2FA 密钥失败: "+err.Error())
+			logger.Error("2fa setup: generate totp failed", "err", err, "role", role, "user_id", userID)
+			middleware.Fail(c, http.StatusInternalServerError, 5003, "生成 2FA 密钥失败")
 			return
 		}
 
@@ -592,12 +600,14 @@ func Setup2FA(deps *Deps) gin.HandlerFunc {
 		}
 		payload, err := json.Marshal(setupData)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5004, "序列化 2FA 数据失败: "+err.Error())
+			logger.Error("2fa setup: marshal setup data failed", "err", err, "role", role, "user_id", userID)
+			middleware.Fail(c, http.StatusInternalServerError, 5004, "序列化 2FA 数据失败")
 			return
 		}
 		setupTTL := time.Duration(deps.CfgCache.GetInt(ctx, "totp.setup_ttl_seconds", 600)) * time.Second
 		if err := deps.Redis.Set(ctx, twoFASetupKey(role, userID), payload, setupTTL).Err(); err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5005, "缓存 2FA 数据失败: "+err.Error())
+			logger.Error("2fa setup: cache setup data failed", "err", err, "role", role, "user_id", userID)
+			middleware.Fail(c, http.StatusInternalServerError, 5005, "缓存 2FA 数据失败")
 			return
 		}
 
@@ -639,7 +649,8 @@ func Verify2FA(deps *Deps) gin.HandlerFunc {
 		}
 		var setupData twoFASetupData
 		if err := json.Unmarshal([]byte(raw), &setupData); err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "解析 2FA 数据失败: "+err.Error())
+			logger.Error("2fa verify: unmarshal setup data failed", "err", err, "role", role, "user_id", userID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "解析 2FA 数据失败")
 			return
 		}
 
@@ -653,11 +664,13 @@ func Verify2FA(deps *Deps) gin.HandlerFunc {
 		// 3. AES 加密 secret 后入库
 		secretEnc, err := auth.EncryptTOTPSecret(deps.Crypto, setupData.Secret)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "加密 2FA 密钥失败: "+err.Error())
+			logger.Error("2fa verify: encrypt totp secret failed", "err", err, "role", role, "user_id", userID)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "加密 2FA 密钥失败")
 			return
 		}
 		if err := updateUserTOTPSecret(deps, role, userID, secretEnc); err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5003, "保存 2FA 密钥失败: "+err.Error())
+			logger.Error("2fa verify: update totp secret failed", "err", err, "role", role, "user_id", userID)
+			middleware.Fail(c, http.StatusInternalServerError, 5003, "保存 2FA 密钥失败")
 			return
 		}
 
@@ -665,11 +678,13 @@ func Verify2FA(deps *Deps) gin.HandlerFunc {
 		// 同时清理 v0.3.x Redis 老数据（若存在），避免数据双源不一致
 		backupEnc, err := deps.Crypto.EncryptAES(strings.Join(setupData.BackupCodes, ","))
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5004, "加密备用码失败: "+err.Error())
+			logger.Error("2fa verify: encrypt backup codes failed", "err", err, "role", role, "user_id", userID)
+			middleware.Fail(c, http.StatusInternalServerError, 5004, "加密备用码失败")
 			return
 		}
 		if err := updateUserBackupCodes(deps, role, userID, backupEnc); err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5005, "保存备用码失败: "+err.Error())
+			logger.Error("2fa verify: update backup codes failed", "err", err, "role", role, "user_id", userID)
+			middleware.Fail(c, http.StatusInternalServerError, 5005, "保存备用码失败")
 			return
 		}
 		_ = deps.Redis.Del(ctx, twoFABackupKey(role, userID)).Err()
@@ -720,7 +735,8 @@ func Disable2FA(deps *Deps) gin.HandlerFunc {
 				middleware.Fail(c, http.StatusNotFound, 1008, "用户不存在")
 				return
 			}
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询用户失败: "+err.Error())
+			logger.Error("2fa disable: load password hash failed", "err", err, "role", role, "user_id", userID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询用户失败")
 			return
 		}
 		if !crypto.CheckPassword(oldHash, req.Password) {
@@ -731,7 +747,8 @@ func Disable2FA(deps *Deps) gin.HandlerFunc {
 		// 3. 校验 TOTP 验证码
 		totpSecretEnc, err := loadUserTOTPSecret(deps, role, userID)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "查询 2FA 状态失败: "+err.Error())
+			logger.Error("2fa disable: load totp secret failed", "err", err, "role", role, "user_id", userID)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "查询 2FA 状态失败")
 			return
 		}
 		if totpSecretEnc == "" {
@@ -740,7 +757,8 @@ func Disable2FA(deps *Deps) gin.HandlerFunc {
 		}
 		secretPlain, err := auth.DecryptTOTPSecret(deps.Crypto, totpSecretEnc)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5003, "2FA 密钥解密失败: "+err.Error())
+			logger.Error("2fa disable: decrypt totp secret failed", "err", err, "role", role, "user_id", userID)
+			middleware.Fail(c, http.StatusInternalServerError, 5003, "2FA 密钥解密失败")
 			return
 		}
 		params := loadAuthParams(deps, role)
@@ -751,7 +769,8 @@ func Disable2FA(deps *Deps) gin.HandlerFunc {
 
 		// 4. 清空 totp_secret
 		if err := updateUserTOTPSecret(deps, role, userID, ""); err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5004, "关闭 2FA 失败: "+err.Error())
+			logger.Error("2fa disable: clear totp secret failed", "err", err, "role", role, "user_id", userID)
+			middleware.Fail(c, http.StatusInternalServerError, 5004, "关闭 2FA 失败")
 			return
 		}
 

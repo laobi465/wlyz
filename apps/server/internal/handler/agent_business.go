@@ -18,6 +18,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/metrics"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
@@ -138,6 +139,65 @@ func agentTotalWithdrawPaid(db *gorm.DB, agentID uint64) float64 {
 		Where("agent_id = ? AND status = ?", agentID, "paid").
 		Select("COALESCE(SUM(amount), 0)").Scan(&v)
 	return v
+}
+
+// ============== 批量聚合（避免 N+1）==============
+
+// agentSumRow 聚合查询返回行
+type agentSumRow struct {
+	AgentID uint64  `gorm:"column:agent_id"`
+	Total   float64 `gorm:"column:total"`
+}
+
+// agentFrozenBalanceBatch 批量查询冻结余额（pending 提现总额）
+func agentFrozenBalanceBatch(db *gorm.DB, agentIDs []uint64) map[uint64]float64 {
+	result := make(map[uint64]float64, len(agentIDs))
+	if len(agentIDs) == 0 {
+		return result
+	}
+	var rows []agentSumRow
+	db.Model(&model.AgentWithdraw{}).
+		Select("agent_id, COALESCE(SUM(amount), 0) AS total").
+		Where("agent_id IN ? AND status = ?", agentIDs, "pending").
+		Group("agent_id").Scan(&rows)
+	for _, r := range rows {
+		result[r.AgentID] = r.Total
+	}
+	return result
+}
+
+// agentTotalCommissionBatch 批量查询累计佣金
+func agentTotalCommissionBatch(db *gorm.DB, agentIDs []uint64) map[uint64]float64 {
+	result := make(map[uint64]float64, len(agentIDs))
+	if len(agentIDs) == 0 {
+		return result
+	}
+	var rows []agentSumRow
+	db.Model(&model.AgentCommission{}).
+		Select("agent_id, COALESCE(SUM(amount), 0) AS total").
+		Where("agent_id IN ? AND settle_status != ?", agentIDs, "rejected").
+		Group("agent_id").Scan(&rows)
+	for _, r := range rows {
+		result[r.AgentID] = r.Total
+	}
+	return result
+}
+
+// agentTotalWithdrawPaidBatch 批量查询累计已打款提现
+func agentTotalWithdrawPaidBatch(db *gorm.DB, agentIDs []uint64) map[uint64]float64 {
+	result := make(map[uint64]float64, len(agentIDs))
+	if len(agentIDs) == 0 {
+		return result
+	}
+	var rows []agentSumRow
+	db.Model(&model.AgentWithdraw{}).
+		Select("agent_id, COALESCE(SUM(amount), 0) AS total").
+		Where("agent_id IN ? AND status = ?", agentIDs, "paid").
+		Group("agent_id").Scan(&rows)
+	for _, r := range rows {
+		result[r.AgentID] = r.Total
+	}
+	return result
 }
 
 // ============== 1. AgentDashboard 代理工作台 ==============
@@ -939,16 +999,18 @@ func AgentWithdraw(deps *Deps) gin.HandlerFunc {
 			withdrawID = wd.ID
 
 			// 3. 写 balance_log（type='withdraw', status='pending'）
+			// P1-01/02 修复：填充 related_withdraw_id，审核时按此精确匹配，避免时间窗口模糊匹配错配
 			log := &model.AgentBalanceLog{
-				AgentID:      agentID,
-				TenantID:     tenantID,
-				Type:         "withdraw",
-				Amount:       -req.Amount,
-				BalanceAfter: agent.Balance,
-				PayMethod:    req.Method,
-				PayVoucher:   req.Account,
-				Status:       "pending",
-				Remark:       balanceRemark,
+				AgentID:           agentID,
+				TenantID:          tenantID,
+				Type:              "withdraw",
+				Amount:            -req.Amount,
+				BalanceAfter:      agent.Balance,
+				RelatedWithdrawID: &withdrawID,
+				PayMethod:         req.Method,
+				PayVoucher:        req.Account,
+				Status:            "pending",
+				Remark:            balanceRemark,
 			}
 			if err := tx.Create(log).Error; err != nil {
 				return fmt.Errorf("写入流水失败: %w", err)
@@ -1040,7 +1102,8 @@ func AgentRecharge(deps *Deps) gin.HandlerFunc {
 			Remark:       req.Remark,
 		}
 		if err := deps.DB.Create(log).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "提交充值申请失败: "+err.Error())
+			logger.Error("agent: submit recharge request failed", "err", err, "agent_id", agentID, "tenant_id", tenantID)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "提交充值申请失败")
 			return
 		}
 
@@ -1391,7 +1454,8 @@ func AgentListSubordinates(deps *Deps) gin.HandlerFunc {
 
 		subs, err := multilevel.ListSubordinates(c.Request.Context(), deps.DB, agentID, tenantID)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "查询下级代理失败: "+err.Error())
+			logger.Error("agent: list subordinates failed", "err", err, "agent_id", agentID, "tenant_id", tenantID)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "查询下级代理失败")
 			return
 		}
 
@@ -1426,7 +1490,8 @@ func AgentGetTree(deps *Deps) gin.HandlerFunc {
 				middleware.Fail(c, http.StatusNotFound, 1004, "代理账号不存在")
 				return
 			}
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "构建代理树失败: "+err.Error())
+			logger.Error("agent: build agent tree failed", "err", err, "agent_id", agentID, "tenant_id", tenantID)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "构建代理树失败")
 			return
 		}
 

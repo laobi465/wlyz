@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 	"github.com/your-org/keyauth-saas/apps/server/internal/risk"
@@ -32,7 +33,8 @@ func AdminListRiskRules(deps *Deps) gin.HandlerFunc {
 		}
 		rules, err := deps.RiskMgr.ListRules(c.Request.Context())
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "查询规则失败: "+err.Error())
+			logger.Error("risk: list rules failed", "err", err)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "查询规则失败")
 			return
 		}
 		middleware.Success(c, gin.H{"list": rules, "total": len(rules)})
@@ -215,14 +217,14 @@ func AdminListRiskEvents(deps *Deps) gin.HandlerFunc {
 		}
 
 		params := risk.ListEventsParams{
-			Page:       page,
-			PageSize:   pageSize,
-			UserType:   strings.TrimSpace(c.Query("user_type")),
-			RuleType:   strings.TrimSpace(c.Query("rule_type")),
-			Action:     strings.TrimSpace(c.Query("action")),
-			ClientIP:   strings.TrimSpace(c.Query("client_ip")),
-			StartDate:  strings.TrimSpace(c.Query("start_date")),
-			EndDate:    strings.TrimSpace(c.Query("end_date")),
+			Page:      page,
+			PageSize:  pageSize,
+			UserType:  strings.TrimSpace(c.Query("user_type")),
+			RuleType:  strings.TrimSpace(c.Query("rule_type")),
+			Action:    strings.TrimSpace(c.Query("action")),
+			ClientIP:  strings.TrimSpace(c.Query("client_ip")),
+			StartDate: strings.TrimSpace(c.Query("start_date")),
+			EndDate:   strings.TrimSpace(c.Query("end_date")),
 		}
 		if ack := c.Query("acknowledged"); ack != "" {
 			b := ack == "1" || ack == "true"
@@ -231,7 +233,8 @@ func AdminListRiskEvents(deps *Deps) gin.HandlerFunc {
 
 		events, total, err := deps.RiskMgr.ListEvents(c.Request.Context(), params)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "查询事件失败: "+err.Error())
+			logger.Error("risk: list events failed", "err", err)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "查询事件失败")
 			return
 		}
 		middleware.Success(c, gin.H{

@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 	"github.com/your-org/keyauth-saas/apps/server/internal/openapi"
@@ -138,6 +139,11 @@ func TenantApproveRecharge(deps *Deps) gin.HandlerFunc {
 		// 事务：加余额 → 更新流水 → 写审核备注
 		var newBalance float64
 		txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
+			// 0. 锁定 agent 行（P1-03 修复：防止并发审核双倍加余额）
+			var agent model.Agent
+			if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&agent, log.AgentID).Error; err != nil {
+				return err
+			}
 			// 1. 加余额
 			if err := tx.Model(&model.Agent{}).Where("id = ?", log.AgentID).
 				UpdateColumn("balance", gorm.Expr("balance + ?", actualAmount)).Error; err != nil {
@@ -235,7 +241,8 @@ func TenantRejectRecharge(deps *Deps) gin.HandlerFunc {
 				"remark":     "驳回: " + req.Reason,
 				"updated_at": time.Now(),
 			}).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "驳回失败: "+err.Error())
+			logger.Error("tenant_finance: reject recharge failed", "err", err)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "驳回失败")
 			return
 		}
 
@@ -311,7 +318,9 @@ type tenantPayWithdrawReq struct {
 
 // TenantPayWithdraw POST /api/v1/tenant/withdrawals/:id/pay
 // 流程（事务）：校验 status=pending → 标记 withdraw.status=paid + paid_at + pay_trade_no
-//            → 更新对应 balance_log status=settled
+//
+//	→ 更新对应 balance_log status=settled
+//
 // 注：申请提现时已扣余额，此处仅标记已打款，不涉及金额变动
 func TenantPayWithdraw(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -364,12 +373,10 @@ func TenantPayWithdraw(deps *Deps) gin.HandlerFunc {
 				}).Error; err != nil {
 				return err
 			}
-			// 2. 找到对应的 balance_log（type=withdraw, agent_id, 同一时间段）
-			// 注：申请提现时同时写了 balance_log，但未记录 withdraw_id，这里按 agent_id + amount + 时间窗口匹配
+			// 2. 按 related_withdraw_id 精确匹配对应 balance_log（P1-01/02 修复：原按 agent_id + 时间窗口模糊匹配会错配）
 			if err := tx.Model(&model.AgentBalanceLog{}).
-				Where("agent_id = ? AND tenant_id = ? AND type = ? AND status = ? AND created_at >= ?",
-					w.AgentID, tenantID, "withdraw", "pending", w.CreatedAt).
-				Limit(1).
+				Where("related_withdraw_id = ? AND tenant_id = ? AND type = ?",
+					id, tenantID, "withdraw").
 				Updates(map[string]interface{}{
 					"status":     "settled",
 					"updated_at": now,
@@ -405,8 +412,9 @@ func TenantPayWithdraw(deps *Deps) gin.HandlerFunc {
 
 // TenantRejectWithdraw POST /api/v1/tenant/withdrawals/:id/reject
 // 流程（事务）：校验 status=pending → 退回余额（balance += amount）
-//            → withdraw.status=rejected + audit_remark
-//            → 对应 balance_log status=rejected
+//
+//	→ withdraw.status=rejected + audit_remark
+//	→ 对应 balance_log status=rejected
 func TenantRejectWithdraw(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := getTenantID(c)
@@ -466,11 +474,10 @@ func TenantRejectWithdraw(deps *Deps) gin.HandlerFunc {
 				}).Error; err != nil {
 				return err
 			}
-			// 4. 更新对应 balance_log
+			// 4. 按 related_withdraw_id 精确匹配对应 balance_log（P1-01/02 修复：原按 agent_id + 时间窗口模糊匹配会错配）
 			if err := tx.Model(&model.AgentBalanceLog{}).
-				Where("agent_id = ? AND tenant_id = ? AND type = ? AND status = ? AND created_at >= ?",
-					w.AgentID, tenantID, "withdraw", "pending", w.CreatedAt).
-				Limit(1).
+				Where("related_withdraw_id = ? AND tenant_id = ? AND type = ?",
+					id, tenantID, "withdraw").
 				Updates(map[string]interface{}{
 					"status":        "rejected",
 					"balance_after": newBalance,
@@ -499,9 +506,9 @@ func TenantRejectWithdraw(deps *Deps) gin.HandlerFunc {
 // TenantGetMonthlyFeeCurrent GET /api/v1/tenant/monthly_fee/current
 // 返回当前开发者月费配置 + 当前账单周期 + 是否欠费
 // 铁律 05：月费开关/金额/免费天数从 sys_config 读取
-//  - pay.tenant_monthly_fee.enabled=0 时返回 enabled=false，前端隐藏月费入口
-//  - pay.tenant_monthly_fee.amount 决定账单金额
-//  - pay.tenant_monthly_fee.free_days 决定注册后免费天数，期间不生成账单
+//   - pay.tenant_monthly_fee.enabled=0 时返回 enabled=false，前端隐藏月费入口
+//   - pay.tenant_monthly_fee.amount 决定账单金额
+//   - pay.tenant_monthly_fee.free_days 决定注册后免费天数，期间不生成账单
 func TenantGetMonthlyFeeCurrent(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := getTenantID(c)
@@ -551,16 +558,16 @@ func TenantGetMonthlyFeeCurrent(deps *Deps) gin.HandlerFunc {
 			Select("COALESCE(SUM(amount), 0)").Scan(&pendingAmount)
 
 		middleware.Success(c, gin.H{
-			"enabled":           enabled,
-			"amount":            amount,
-			"free_days":         freeDays,
-			"in_free_period":    inFreePeriod,
-			"free_until":        freeUntil.Unix(),
-			"period_start":      periodStart.Unix(),
-			"period_end":        periodEnd.Unix(),
-			"current_order":     currentOrder,
-			"pending_count":     pendingCount,
-			"pending_amount":    pendingAmount,
+			"enabled":        enabled,
+			"amount":         amount,
+			"free_days":      freeDays,
+			"in_free_period": inFreePeriod,
+			"free_until":     freeUntil.Unix(),
+			"period_start":   periodStart.Unix(),
+			"period_end":     periodEnd.Unix(),
+			"current_order":  currentOrder,
+			"pending_count":  pendingCount,
+			"pending_amount": pendingAmount,
 		})
 	}
 }
@@ -622,10 +629,14 @@ func TenantPayMonthlyFee(deps *Deps) gin.HandlerFunc {
 		periodStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 		periodEnd := periodStart.AddDate(0, 1, 0).Add(-time.Second)
 
-		// 5. 幂等：同周期已有 pending 订单则复用，避免重复生成
+		// 5. 幂等：同周期已有订单（不论 pay_status）则复用，避免重复生成
+		// P1-05 修复：原仅查 pay_status='pending'，已 paid 后再访问会创建新订单导致重复扣费
+		//   - 已存在 pending 订单：复用，重新拉起支付
+		//   - 已存在 paid 订单：直接返回当前订单，拒绝重复创建
+		//   - 已存在 closed 订单：直接返回当前订单，由前端提示用户
 		var order model.TenantMonthlyFeeOrder
-		err := deps.DB.Where("tenant_id = ? AND period_start = ? AND pay_status = ?",
-			tenantID, periodStart, "pending").
+		err := deps.DB.Where("tenant_id = ? AND period_start = ?",
+			tenantID, periodStart).
 			Order("id DESC").First(&order).Error
 		if err == gorm.ErrRecordNotFound {
 			// 6. 创建新订单
@@ -651,7 +662,8 @@ func TenantPayMonthlyFee(deps *Deps) gin.HandlerFunc {
 		// 7. 加载易支付配置 + 构造跳转 URL
 		payCfg, err := loadPlatformPayConfig(deps)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 4006, "平台支付配置错误: "+err.Error())
+			logger.Error("tenant_finance: load platform pay config failed", "err", err)
+			middleware.Fail(c, http.StatusInternalServerError, 4006, "平台支付配置错误")
 			return
 		}
 		namePrefix := deps.CfgCache.GetString(ctx, "pay.platform.order_name_prefix", "KeyAuth开发者月费")
@@ -666,7 +678,8 @@ func TenantPayMonthlyFee(deps *Deps) gin.HandlerFunc {
 			ClientIP:   c.ClientIP(),
 		})
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 4008, "构造支付链接失败: "+err.Error())
+			logger.Error("tenant_finance: build pay submit url failed", "err", err, "order_no", order.OrderNo)
+			middleware.Fail(c, http.StatusInternalServerError, 4008, "构造支付链接失败")
 			return
 		}
 

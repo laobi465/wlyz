@@ -119,6 +119,7 @@ func TestJWTAuth_ValidToken(t *testing.T) {
 	})
 
 	claims := JWTClaims{UserID: 42, Username: "alice", Role: "tenant", TenantID: 1001}
+	claims.Subject = "access" // P1-01：业务接口仅允许 access token
 	token, err := GenerateToken(secret, "keyauth-test", 1, claims)
 	require.NoError(t, err)
 
@@ -152,6 +153,7 @@ func TestJWTAuth_JTI注入上下文(t *testing.T) {
 		Role:     "admin",
 	}
 	claims.ID = testJTI
+	claims.Subject = "access" // P1-01：业务接口仅允许 access token
 	token, err := GenerateToken(secret, "keyauth-test", 1, claims)
 	require.NoError(t, err)
 
@@ -214,8 +216,10 @@ func TestJWTAuth_RoleMismatch(t *testing.T) {
 	r.Use(JWTAuth("secret", "tenant")) // 只允许 tenant
 	r.GET("/test", func(c *gin.Context) { c.Status(200) })
 
-	// 生成 admin 角色的 token
-	token, err := GenerateToken("secret", "test", 1, JWTClaims{UserID: 1, Role: "admin"})
+	// 生成 admin 角色的 token（Subject=access，确保角色校验逻辑能被触发）
+	claims := JWTClaims{UserID: 1, Role: "admin"}
+	claims.Subject = "access"
+	token, err := GenerateToken("secret", "test", 1, claims)
 	require.NoError(t, err)
 
 	w := httptest.NewRecorder()
@@ -234,7 +238,9 @@ func TestJWTAuth_MultipleAllowedRoles(t *testing.T) {
 
 	// 三角色都应通过
 	for _, role := range []string{"admin", "tenant", "agent"} {
-		token, err := GenerateToken("secret", "test", 1, JWTClaims{UserID: 1, Role: role})
+		claims := JWTClaims{UserID: 1, Role: role}
+		claims.Subject = "access" // P1-01：业务接口仅允许 access token
+		token, err := GenerateToken("secret", "test", 1, claims)
 		require.NoError(t, err)
 		w := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/test", nil)
@@ -378,7 +384,7 @@ func buildSignRequest(t *testing.T, method, path, body, signSecret, appKey strin
 
 	// 签名原文：METHOD\nPATH?QUERY\nTIMESTAMP\nNONCE\nBODY
 	signString := strings.Join([]string{method, path, timestampStr(timestamp), nonce, body}, "\n")
-	sig := crypto.HMACSHA256(signSecret, []byte(signString))
+	sig := crypto.HMACSHA512_256(signSecret, []byte(signString))
 
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("X-App-Key", appKey)
@@ -438,7 +444,7 @@ func TestSignatureAuth_TimestampOutOfTolerance(t *testing.T) {
 	oldTs := time.Now().Add(-time.Hour).Unix()
 	body := `{}`
 	signString := strings.Join([]string{"POST", "/api/v1/client/login", timestampStr(oldTs), "nonce-old", body}, "\n")
-	sig := crypto.HMACSHA256(signSecret, []byte(signString))
+	sig := crypto.HMACSHA512_256(signSecret, []byte(signString))
 
 	req := httptest.NewRequest("POST", "/api/v1/client/login", strings.NewReader(body))
 	req.Header.Set("X-App-Key", app.AppKey)
@@ -494,7 +500,7 @@ func TestSignatureAuth_NonceReplay(t *testing.T) {
 		"nonce-test-12345", // 与 buildSignRequest 第一次相同
 		body,
 	}, "\n")
-	sig := crypto.HMACSHA256(signSecret, []byte(signString))
+	sig := crypto.HMACSHA512_256(signSecret, []byte(signString))
 	req2 = httptest.NewRequest("POST", "/api/v1/client/login", strings.NewReader(body))
 	req2.Header.Set("X-App-Key", app.AppKey)
 	req2.Header.Set("X-Timestamp", timestampStr(time.Now().Unix()))
@@ -767,6 +773,7 @@ func TestGenerateToken_Auth_RoundTrip(t *testing.T) {
 		Role:     "admin",
 		TenantID: 8888,
 	}
+	claims.Subject = "access" // P1-01：业务接口仅允许 access token
 
 	token, err := GenerateToken(secret, "test-issuer", 24, claims)
 	require.NoError(t, err)

@@ -1,18 +1,19 @@
 // Package notify v0.4.0 通知系统核心包
 // 严格遵循铁律 04/05/06：
-//   04 - 无硬编码：三通道开关 / 服务商密钥 / SMTP / 重试策略 / 限流 全部从 sys_config 读取
-//   05 - 配置走后端：16 项 notify.* 配置可通过后台实时调整
-//   06 - 反幻觉：模板变量替换用 strings.NewReplacer 安全替换（不用 text/template 防 SSTI）；测试覆盖正/负/边界全场景
+//
+//	04 - 无硬编码：三通道开关 / 服务商密钥 / SMTP / 重试策略 / 限流 全部从 sys_config 读取
+//	05 - 配置走后端：16 项 notify.* 配置可通过后台实时调整
+//	06 - 反幻觉：模板变量替换用 strings.NewReplacer 安全替换（不用 text/template 防 SSTI）；测试覆盖正/负/边界全场景
 //
 // 核心能力：
-//   1. Manager.Render - 模板变量替换（{{var}} → 实际值）
-//   2. Manager.GetTemplate - 按代码 + 渠道 + 租户查询模板
-//   3. Manager.Send - 同步发送（短信/邮件/站内信）
-//   4. Manager.Enqueue - 异步发送（写日志后由 worker 处理）
-//   5. Manager.SendByTemplateCode - 按模板代码发送（最常用入口）
-//   6. Manager.ListLogs - 查询发送日志
-//   7. Manager.Retry - 重试失败日志
-//   8. SMSProvider / EmailProvider - 服务商接口（aliyun/tencent/smtp 实现）
+//  1. Manager.Render - 模板变量替换（{{var}} → 实际值）
+//  2. Manager.GetTemplate - 按代码 + 渠道 + 租户查询模板
+//  3. Manager.Send - 同步发送（短信/邮件/站内信）
+//  4. Manager.Enqueue - 异步发送（写日志后由 worker 处理）
+//  5. Manager.SendByTemplateCode - 按模板代码发送（最常用入口）
+//  6. Manager.ListLogs - 查询发送日志
+//  7. Manager.Retry - 重试失败日志
+//  8. SMSProvider / EmailProvider - 服务商接口（aliyun/tencent/smtp 实现）
 package notify
 
 import (
@@ -48,32 +49,32 @@ import (
 
 // 配置键常量（铁律 04：禁止硬编码配置键名）
 const (
-	CfgKeySMSEnabled            = "notify.sms.enabled"
-	CfgKeySMSProvider           = "notify.sms.provider"
-	CfgKeySMSAccessKeyID        = "notify.sms.access_key_id"
-	CfgKeySMSAccessSecretEnc    = "notify.sms.access_secret_enc"
-	CfgKeySMSSignName           = "notify.sms.sign_name"
-	CfgKeySMSRegion             = "notify.sms.region"       // 默认 "cn-hangzhou"
-	CfgKeySMSEndpoint           = "notify.sms.endpoint"     // 默认 "dysmsapi.aliyuncs.com"
-	CfgKeyEmailEnabled          = "notify.email.enabled"
-	CfgKeyEmailSMTPHost         = "notify.email.smtp_host"
-	CfgKeyEmailSMTPPort         = "notify.email.smtp_port"
-	CfgKeyEmailSMTPUsername     = "notify.email.smtp_username"
-	CfgKeyEmailSMTPPasswordEnc  = "notify.email.smtp_password_enc"
-	CfgKeyEmailFromAddress      = "notify.email.from_address"
-	CfgKeyEmailFromName         = "notify.email.from_name"
-	CfgKeyInAppEnabled          = "notify.inapp.enabled"
-	CfgKeyRetryTimes            = "notify.retry.times"
-	CfgKeyRetryIntervalSeconds  = "notify.retry.interval_seconds"
-	CfgKeyRateLimitPerMinute    = "notify.rate_limit.per_minute"
-	CfgKeyEmailSMTPEncryption     = "notify.email.smtp_encryption"       // 默认 "ssl"，可选 none/ssl/tls
-	CfgKeyEmailSMTPTimeoutSeconds = "notify.email.smtp_timeout_seconds"  // 默认 10
+	CfgKeySMSEnabled              = "notify.sms.enabled"
+	CfgKeySMSProvider             = "notify.sms.provider"
+	CfgKeySMSAccessKeyID          = "notify.sms.access_key_id"
+	CfgKeySMSAccessSecretEnc      = "notify.sms.access_secret_enc"
+	CfgKeySMSSignName             = "notify.sms.sign_name"
+	CfgKeySMSRegion               = "notify.sms.region"   // 默认 "cn-hangzhou"
+	CfgKeySMSEndpoint             = "notify.sms.endpoint" // 默认 "dysmsapi.aliyuncs.com"
+	CfgKeyEmailEnabled            = "notify.email.enabled"
+	CfgKeyEmailSMTPHost           = "notify.email.smtp_host"
+	CfgKeyEmailSMTPPort           = "notify.email.smtp_port"
+	CfgKeyEmailSMTPUsername       = "notify.email.smtp_username"
+	CfgKeyEmailSMTPPasswordEnc    = "notify.email.smtp_password_enc"
+	CfgKeyEmailFromAddress        = "notify.email.from_address"
+	CfgKeyEmailFromName           = "notify.email.from_name"
+	CfgKeyInAppEnabled            = "notify.inapp.enabled"
+	CfgKeyRetryTimes              = "notify.retry.times"
+	CfgKeyRetryIntervalSeconds    = "notify.retry.interval_seconds"
+	CfgKeyRateLimitPerMinute      = "notify.rate_limit.per_minute"
+	CfgKeyEmailSMTPEncryption     = "notify.email.smtp_encryption"      // 默认 "ssl"，可选 none/ssl/tls
+	CfgKeyEmailSMTPTimeoutSeconds = "notify.email.smtp_timeout_seconds" // 默认 10
 	// v0.5.0 集成扩展：钉钉机器人
-	CfgKeyDingTalkEnabled   = "notify.dingtalk.enabled"     // bool
+	CfgKeyDingTalkEnabled    = "notify.dingtalk.enabled"     // bool
 	CfgKeyDingTalkWebhookURL = "notify.dingtalk.webhook_url" // string 含 access_token
-	CfgKeyDingTalkSecret    = "notify.dingtalk.secret"      // string 加签密钥（可选）
-	CfgKeyDingTalkAtMobiles = "notify.dingtalk.at_mobiles"  // string 逗号分隔手机号
-	CfgKeyDingTalkAtAll     = "notify.dingtalk.at_all"      // bool
+	CfgKeyDingTalkSecret     = "notify.dingtalk.secret"      // string 加签密钥（可选）
+	CfgKeyDingTalkAtMobiles  = "notify.dingtalk.at_mobiles"  // string 逗号分隔手机号
+	CfgKeyDingTalkAtAll      = "notify.dingtalk.at_all"      // bool
 	// v0.5.0 集成扩展：企业微信机器人
 	CfgKeyWeComEnabled    = "notify.wecom.enabled"     // bool
 	CfgKeyWeComWebhookURL = "notify.wecom.webhook_url" // string 含 key
@@ -85,21 +86,21 @@ const (
 
 // Channel 通知渠道
 const (
-	ChannelSMS       = "sms"
-	ChannelEmail     = "email"
-	ChannelInApp     = "inapp"
-	ChannelDingTalk  = "dingtalk"  // v0.5.0 钉钉机器人
-	ChannelWeCom     = "wecom"     // v0.5.0 企业微信机器人
-	ChannelTelegram  = "telegram"  // v0.5.0 Telegram Bot
+	ChannelSMS      = "sms"
+	ChannelEmail    = "email"
+	ChannelInApp    = "inapp"
+	ChannelDingTalk = "dingtalk" // v0.5.0 钉钉机器人
+	ChannelWeCom    = "wecom"    // v0.5.0 企业微信机器人
+	ChannelTelegram = "telegram" // v0.5.0 Telegram Bot
 )
 
 // TemplateCode 预置模板代码
 const (
-	TemplateVerifyCode       = "verify_code"
-	TemplateVerifyCodeEmail  = "verify_code_email"
-	TemplateOrderPaid        = "order_paid"
-	TemplateAgentCommission  = "agent_commission"
-	TemplatePayModeChanged   = "pay_mode_changed" // v0.4.x 收尾项 D：开发者切换支付配置时通知代理
+	TemplateVerifyCode      = "verify_code"
+	TemplateVerifyCodeEmail = "verify_code_email"
+	TemplateOrderPaid       = "order_paid"
+	TemplateAgentCommission = "agent_commission"
+	TemplatePayModeChanged  = "pay_mode_changed" // v0.4.x 收尾项 D：开发者切换支付配置时通知代理
 )
 
 // 配置键常量（v0.4.x 收尾项 D）
@@ -129,12 +130,12 @@ const (
 
 // 错误
 var (
-	ErrTemplateNotFound   = errors.New("notify: template not found")
-	ErrTemplateDisabled   = errors.New("notify: template disabled")
-	ErrChannelDisabled    = errors.New("notify: channel disabled")
-	ErrRateLimitExceeded  = errors.New("notify: rate limit exceeded")
-	ErrInvalidRecipient   = errors.New("notify: invalid recipient")
-	ErrProviderNotConfig  = errors.New("notify: provider not configured")
+	ErrTemplateNotFound  = errors.New("notify: template not found")
+	ErrTemplateDisabled  = errors.New("notify: template disabled")
+	ErrChannelDisabled   = errors.New("notify: channel disabled")
+	ErrRateLimitExceeded = errors.New("notify: rate limit exceeded")
+	ErrInvalidRecipient  = errors.New("notify: invalid recipient")
+	ErrProviderNotConfig = errors.New("notify: provider not configured")
 )
 
 // ============== 类型 ==============
@@ -177,16 +178,16 @@ type WebhookProvider interface {
 
 // Manager 通知管理器
 type Manager struct {
-	db          *gorm.DB
-	cache       *config.ConfigCache
-	crypto      *crypto.Manager
-	smsProvider SMSProvider
+	db            *gorm.DB
+	cache         *config.ConfigCache
+	crypto        *crypto.Manager
+	smsProvider   SMSProvider
 	emailProvider EmailProvider
 	// v0.5.0 集成扩展：3 个 webhook provider
 	dingtalkProvider WebhookProvider
 	wecomProvider    WebhookProvider
 	telegramProvider WebhookProvider
-	mu          sync.Mutex
+	mu               sync.Mutex
 }
 
 // NewManager 创建通知管理器
@@ -433,11 +434,12 @@ func (m *Manager) TestDispatch(ctx context.Context, channel, recipient, subject,
 }
 
 // SetSMSProvider / SetEmailProvider 暴露注入点供测试 mock
-func (m *Manager) SetSMSProvider(p SMSProvider) { m.smsProvider = p }
+func (m *Manager) SetSMSProvider(p SMSProvider)     { m.smsProvider = p }
 func (m *Manager) SetEmailProvider(p EmailProvider) { m.emailProvider = p }
+
 // v0.5.0 集成扩展：webhook provider 注入点
 func (m *Manager) SetDingTalkProvider(p WebhookProvider) { m.dingtalkProvider = p }
-func (m *Manager) SetWeComProvider(p WebhookProvider) { m.wecomProvider = p }
+func (m *Manager) SetWeComProvider(p WebhookProvider)    { m.wecomProvider = p }
 func (m *Manager) SetTelegramProvider(p WebhookProvider) { m.telegramProvider = p }
 
 // ============== 6. 日志查询 / 重试 ==============
@@ -643,7 +645,8 @@ func (p *aliyunSMSProvider) Send(ctx context.Context, phone, signName, templateC
 		return "", err
 	}
 	httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := http.DefaultClient.Do(httpReq)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return "", err
 	}

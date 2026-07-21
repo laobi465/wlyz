@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -815,8 +816,8 @@ func ClientVersion(deps *Deps) gin.HandlerFunc {
 			return
 		}
 
-		// 版本比较（保持原字符串比较逻辑，兼容老 SDK）
-		hasUpdate := req.CurrentVersion == "" || matched.Version != req.CurrentVersion
+		// 版本比较（P1-14 修复：原用字符串 != 比较，"1.10.0" vs "1.9.0" 字典序结果错误，改为按段数值比较）
+		hasUpdate := req.CurrentVersion == "" || compareVersions(matched.Version, req.CurrentVersion) != 0
 
 		resp := gin.H{
 			"has_update":         hasUpdate,
@@ -879,6 +880,34 @@ func maskCardKey(key string) string {
 		return strings.Repeat("*", len(key))
 	}
 	return key[:4] + "****" + key[len(key)-4:]
+}
+
+// compareVersions 比较 semver 版本号（如 "1.10.0" vs "1.9.0"），返回 -1/0/1
+// P1-14 修复：原用字符串 != 比较版本号，"1.10.0" 与 "1.9.0" 字典序比较结果错误
+// 逐段按数值比较，缺失段视为 0
+func compareVersions(v1, v2 string) int {
+	parts1 := strings.Split(v1, ".")
+	parts2 := strings.Split(v2, ".")
+	maxLen := len(parts1)
+	if len(parts2) > maxLen {
+		maxLen = len(parts2)
+	}
+	for i := 0; i < maxLen; i++ {
+		n1, n2 := 0, 0
+		if i < len(parts1) {
+			n1, _ = strconv.Atoi(parts1[i])
+		}
+		if i < len(parts2) {
+			n2, _ = strconv.Atoi(parts2[i])
+		}
+		if n1 < n2 {
+			return -1
+		}
+		if n1 > n2 {
+			return 1
+		}
+	}
+	return 0
 }
 
 // 标记未使用导入

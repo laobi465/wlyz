@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 )
@@ -23,8 +24,8 @@ const (
 	CfgKeyNoticeRichtextEnabled    = "notice.richtext.enabled"
 	CfgKeyNoticeRichtextMaxLength  = "notice.richtext.max_length"
 
-	CfgKeyStatsVerifyTrendDefaultDays = "stats.verify_trend.default_days"
-	CfgKeyStatsVerifyTrendMaxDays     = "stats.verify_trend.max_days"
+	CfgKeyStatsVerifyTrendDefaultDays   = "stats.verify_trend.default_days"
+	CfgKeyStatsVerifyTrendMaxDays       = "stats.verify_trend.max_days"
 	CfgKeyStatsAgentRankingDefaultLimit = "stats.agent_ranking.default_limit"
 	CfgKeyStatsAgentRankingMaxLimit     = "stats.agent_ranking.max_limit"
 )
@@ -35,10 +36,10 @@ const (
 	defaultNoticePopupDismissTTLHrs = 24
 	defaultNoticeRichtextMaxLength  = 10000
 
-	defaultStatsVerifyTrendDays    = 30
-	maxStatsVerifyTrendDays        = 90
-	defaultStatsAgentRankingLimit  = 10
-	maxStatsAgentRankingLimit      = 100
+	defaultStatsVerifyTrendDays   = 30
+	maxStatsVerifyTrendDays       = 90
+	defaultStatsAgentRankingLimit = 10
+	maxStatsAgentRankingLimit     = 100
 )
 
 // ============== 1. 公告弹窗：admin / tenant / agent 三端 popup 列表 ==============
@@ -58,10 +59,10 @@ type popupNoticeItem struct {
 
 // popupListResponse 弹窗列表响应
 type popupListResponse struct {
-	Enabled       bool              `json:"enabled"`
-	DismissTTLHours int             `json:"dismiss_ttl_hours"`
-	List          []popupNoticeItem `json:"list"`
-	Total         int64             `json:"total"`
+	Enabled         bool              `json:"enabled"`
+	DismissTTLHours int               `json:"dismiss_ttl_hours"`
+	List            []popupNoticeItem `json:"list"`
+	Total           int64             `json:"total"`
 }
 
 // queryPopupNotices 通用查询：返回当前用户未读的 is_popup=true 已发布公告
@@ -153,7 +154,8 @@ func AdminPopupNotices(deps *Deps) gin.HandlerFunc {
 		userID := getUserID(c)
 		list, err := queryPopupNotices(deps, "admin", userID, 0)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询弹窗公告失败: "+err.Error())
+			logger.Error("notice_stats: query popup notices failed", "err", err, "role", "admin", "user_id", userID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询弹窗公告失败")
 			return
 		}
 
@@ -308,21 +310,21 @@ func MarkNoticeReadByPopup(deps *Deps, userType string) gin.HandlerFunc {
 
 // verifyTrendDay 验证趋势单日数据
 type verifyTrendDay struct {
-	Date         string `json:"date"`
-	Total        int64  `json:"total"`
-	Success      int64  `json:"success"`
-	Fail         int64  `json:"fail"`
-	Banned       int64  `json:"banned"`
-	Expired      int64  `json:"expired"`
-	DeviceMismatch int64 `json:"device_mismatch"`
-	RateLimited  int64  `json:"rate_limited"`
+	Date           string `json:"date"`
+	Total          int64  `json:"total"`
+	Success        int64  `json:"success"`
+	Fail           int64  `json:"fail"`
+	Banned         int64  `json:"banned"`
+	Expired        int64  `json:"expired"`
+	DeviceMismatch int64  `json:"device_mismatch"`
+	RateLimited    int64  `json:"rate_limited"`
 }
 
 // verifyTrendResponse 验证趋势响应
 type verifyTrendResponse struct {
-	Days        int               `json:"days"`
-	Total       int64             `json:"total"`
-	Trend       []verifyTrendDay  `json:"trend"`
+	Days            int              `json:"days"`
+	Total           int64            `json:"total"`
+	Trend           []verifyTrendDay `json:"trend"`
 	ActionBreakdown map[string]int64 `json:"action_breakdown"`
 }
 
@@ -413,9 +415,9 @@ func queryVerifyTrend(deps *Deps, tenantID, appID uint64, days int) ([]verifyTre
 	}
 
 	type dayRow struct {
-		Date         string
-		Result       string
-		Count        int64
+		Date   string
+		Result string
+		Count  int64
 	}
 	var rows []dayRow
 	if err := q.Select("DATE(created_at) AS date, result, COUNT(*) AS count").
@@ -493,26 +495,26 @@ func queryVerifyTrend(deps *Deps, tenantID, appID uint64, days int) ([]verifyTre
 
 // agentRankingItem 代理排行单项
 type agentRankingItem struct {
-	AgentID         uint64  `json:"agent_id"`
-	Username        string  `json:"username"`
-	RealName        string  `json:"real_name"`
-	TenantID        uint64  `json:"tenant_id"`
-	TenantName      string  `json:"tenant_name"`
-	OrderCount      int64   `json:"order_count"`
-	TotalAmount     float64 `json:"total_amount"`
-	Commission      float64 `json:"commission"`
-	NetAmount       float64 `json:"net_amount"`
-	Rank            int     `json:"rank"`
+	AgentID     uint64  `json:"agent_id"`
+	Username    string  `json:"username"`
+	RealName    string  `json:"real_name"`
+	TenantID    uint64  `json:"tenant_id"`
+	TenantName  string  `json:"tenant_name"`
+	OrderCount  int64   `json:"order_count"`
+	TotalAmount float64 `json:"total_amount"`
+	Commission  float64 `json:"commission"`
+	NetAmount   float64 `json:"net_amount"`
+	Rank        int     `json:"rank"`
 }
 
 // agentRankingResponse 排行响应
 type agentRankingResponse struct {
-	StartAt      string             `json:"start_at"`
-	EndAt        string             `json:"end_at"`
-	SortBy       string             `json:"sort_by"`
-	Limit        int                `json:"limit"`
-	Total        int64              `json:"total"`
-	List         []agentRankingItem `json:"list"`
+	StartAt string             `json:"start_at"`
+	EndAt   string             `json:"end_at"`
+	SortBy  string             `json:"sort_by"`
+	Limit   int                `json:"limit"`
+	Total   int64              `json:"total"`
+	List    []agentRankingItem `json:"list"`
 }
 
 // AdminAgentRanking admin 端代理业绩排行（全平台）
@@ -522,7 +524,8 @@ func AdminAgentRanking(deps *Deps) gin.HandlerFunc {
 		tenantID := uint64(0)
 		list, total, sortBy, limit, startAt, endAt, err := queryAgentRanking(c, deps, tenantID)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询代理排行失败: "+err.Error())
+			logger.Error("notice_stats: query agent ranking failed", "err", err, "tenant_id", tenantID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询代理排行失败")
 			return
 		}
 		middleware.Success(c, agentRankingResponse{
@@ -547,7 +550,8 @@ func TenantAgentRanking(deps *Deps) gin.HandlerFunc {
 		}
 		list, total, sortBy, limit, startAt, endAt, err := queryAgentRanking(c, deps, tenantID)
 		if err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询代理排行失败: "+err.Error())
+			logger.Error("notice_stats: query agent ranking failed", "err", err, "tenant_id", tenantID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询代理排行失败")
 			return
 		}
 		middleware.Success(c, agentRankingResponse{

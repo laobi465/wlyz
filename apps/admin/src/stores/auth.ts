@@ -60,8 +60,17 @@ export const useAuthStore = defineStore('auth', {
       this.expiresAt = payload.expires_at || Math.floor(Date.now() / 1000) + 7200
 
       // 同步写入 Cookie（供 SSR / nginx 鉴权使用，7 天过期）
-      Cookies.set('keyauth_token', payload.access_token, { expires: 7, sameSite: 'lax' })
-      Cookies.set('keyauth_role', payload.role, { expires: 7, sameSite: 'lax' })
+      // P1-03: 生产环境（HTTPS）下补 secure，避免中间人嗅探
+      Cookies.set('keyauth_token', payload.access_token, {
+        expires: 7,
+        sameSite: 'lax',
+        secure: import.meta.env.PROD
+      })
+      Cookies.set('keyauth_role', payload.role, {
+        expires: 7,
+        sameSite: 'lax',
+        secure: import.meta.env.PROD
+      })
 
       this.scheduleRefresh()
     },
@@ -98,7 +107,12 @@ export const useAuthStore = defineStore('auth', {
         this.accessToken = resp.access_token
         this.refreshToken = resp.refresh_token
         this.expiresAt = resp.expires_at
-        Cookies.set('keyauth_token', resp.access_token, { expires: 7, sameSite: 'lax' })
+        // P1-03: 生产环境（HTTPS）下补 secure，避免中间人嗅探
+        Cookies.set('keyauth_token', resp.access_token, {
+          expires: 7,
+          sameSite: 'lax',
+          secure: import.meta.env.PROD
+        })
         this.scheduleRefresh()
       } catch (e) {
         // refresh 失败：清空登录态

@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
 	"github.com/your-org/keyauth-saas/apps/server/internal/quota"
@@ -122,68 +123,69 @@ func TenantCreateApp(deps *Deps) gin.HandlerFunc {
 		}
 
 		// 4. 填充默认值（从 sys_config 读取，铁律 05）
-	maxDevices := req.MaxDevices
-	if maxDevices == 0 {
-		maxDevices = deps.CfgCache.GetInt(ctx, "app.default.max_devices", 1)
-	}
-	heartbeatInterval := req.HeartbeatInterval
-	if heartbeatInterval == 0 {
-		heartbeatInterval = deps.CfgCache.GetInt(ctx, "app.default.heartbeat_interval", 60)
-	}
-	heartbeatTimeout := req.HeartbeatTimeout
-	if heartbeatTimeout == 0 {
-		heartbeatTimeout = deps.CfgCache.GetInt(ctx, "app.default.heartbeat_timeout", 180)
-	}
-	offlineGrace := req.OfflineGrace
-	if offlineGrace == 0 {
-		offlineGrace = deps.CfgCache.GetInt(ctx, "app.default.offline_grace", 86400)
-	}
-	unbindDeduct := req.UnbindDeductSeconds
-	if unbindDeduct == 0 {
-		unbindDeduct = deps.CfgCache.GetInt(ctx, "app.default.unbind_deduct_seconds", 86400)
-	}
-	commissionMode := req.AgentCommissionMode
-	if commissionMode == "" {
-		commissionMode = "diff"
-	}
+		maxDevices := req.MaxDevices
+		if maxDevices == 0 {
+			maxDevices = deps.CfgCache.GetInt(ctx, "app.default.max_devices", 1)
+		}
+		heartbeatInterval := req.HeartbeatInterval
+		if heartbeatInterval == 0 {
+			heartbeatInterval = deps.CfgCache.GetInt(ctx, "app.default.heartbeat_interval", 60)
+		}
+		heartbeatTimeout := req.HeartbeatTimeout
+		if heartbeatTimeout == 0 {
+			heartbeatTimeout = deps.CfgCache.GetInt(ctx, "app.default.heartbeat_timeout", 180)
+		}
+		offlineGrace := req.OfflineGrace
+		if offlineGrace == 0 {
+			offlineGrace = deps.CfgCache.GetInt(ctx, "app.default.offline_grace", 86400)
+		}
+		unbindDeduct := req.UnbindDeductSeconds
+		if unbindDeduct == 0 {
+			unbindDeduct = deps.CfgCache.GetInt(ctx, "app.default.unbind_deduct_seconds", 86400)
+		}
+		commissionMode := req.AgentCommissionMode
+		if commissionMode == "" {
+			commissionMode = "diff"
+		}
 
-	// v0.4.x S-04：审核状态受 sys_config app.audit.enabled 控制（铁律 05）
-	//   app.audit.enabled=1 → 新应用初始 audit_status=pending，需 admin 审核通过后才能用于客户端验证
-	//   app.audit.enabled=0 → 新应用直接 audit_status=approved（默认行为，向后兼容）
-	auditStatus := "approved"
-	if deps.CfgCache.GetBool(ctx, "app.audit.enabled", false) {
-		auditStatus = "pending"
-	}
+		// v0.4.x S-04：审核状态受 sys_config app.audit.enabled 控制（铁律 05）
+		//   app.audit.enabled=1 → 新应用初始 audit_status=pending，需 admin 审核通过后才能用于客户端验证
+		//   app.audit.enabled=0 → 新应用直接 audit_status=approved（默认行为，向后兼容）
+		auditStatus := "approved"
+		if deps.CfgCache.GetBool(ctx, "app.audit.enabled", false) {
+			auditStatus = "pending"
+		}
 
-	// 5. 入库
-	app := &model.App{
-		TenantID:            tenantID,
-		AppKey:              appKey,
-		AppSecret:           appSecretEnc,
-		SignSecret:          signSecretEnc,
-		Name:                req.Name,
-		Description:         req.Description,
-		Icon:                req.Icon,
-		Status:              "active",
-		MaxDevices:          maxDevices,
-		HeartbeatInterval:   heartbeatInterval,
-		HeartbeatTimeout:    heartbeatTimeout,
-		OfflineGrace:        offlineGrace,
-		UnbindDeductSeconds: unbindDeduct,
-		AgentCommissionMode: commissionMode,
-		AuditStatus:         auditStatus,
-	}
+		// 5. 入库
+		app := &model.App{
+			TenantID:            tenantID,
+			AppKey:              appKey,
+			AppSecret:           appSecretEnc,
+			SignSecret:          signSecretEnc,
+			Name:                req.Name,
+			Description:         req.Description,
+			Icon:                req.Icon,
+			Status:              "active",
+			MaxDevices:          maxDevices,
+			HeartbeatInterval:   heartbeatInterval,
+			HeartbeatTimeout:    heartbeatTimeout,
+			OfflineGrace:        offlineGrace,
+			UnbindDeductSeconds: unbindDeduct,
+			AgentCommissionMode: commissionMode,
+			AuditStatus:         auditStatus,
+		}
 		if err := deps.DB.Create(app).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5009, "创建应用失败: "+err.Error())
+			logger.Error("app: create app failed", "err", err, "tenant_id", tenantID)
+			middleware.Fail(c, http.StatusInternalServerError, 5009, "创建应用失败")
 			return
 		}
 
 		// 6. 返回（含明文密钥，仅此一次返回）
 		middleware.Success(c, gin.H{
-			"app":          app,
-			"app_secret":   appSecretPlain,   // 明文，仅本次返回，开发者必须立即保存
-			"sign_secret":  signSecretPlain,  // 明文，仅本次返回
-			"secret_warn":  "AppSecret 与 SignSecret 仅本次返回一次，请立即妥善保存，丢失需重置",
+			"app":         app,
+			"app_secret":  appSecretPlain,  // 明文，仅本次返回，开发者必须立即保存
+			"sign_secret": signSecretPlain, // 明文，仅本次返回
+			"secret_warn": "AppSecret 与 SignSecret 仅本次返回一次，请立即妥善保存，丢失需重置",
 		})
 	}
 }
@@ -222,7 +224,8 @@ func TenantListApps(deps *Deps) gin.HandlerFunc {
 
 		var apps []model.App
 		if err := q.Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&apps).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败: "+err.Error())
+			logger.Error("app: list apps failed", "err", err, "tenant_id", tenantID)
+			middleware.Fail(c, http.StatusInternalServerError, 5001, "查询失败")
 			return
 		}
 
@@ -327,7 +330,8 @@ func TenantUpdateApp(deps *Deps) gin.HandlerFunc {
 
 		if err := deps.DB.Model(&model.App{}).Where("id = ? AND tenant_id = ?", appID, tenantID).
 			Updates(updates).Error; err != nil {
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "更新失败: "+err.Error())
+			logger.Error("app: update app failed", "err", err, "app_id", appID, "tenant_id", tenantID)
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "更新失败")
 			return
 		}
 

@@ -1,14 +1,15 @@
 // v0.5.0 集成扩展：Webhook 通知渠道实现
 //
 // 三个 Provider：
-//   1. dingtalkWebhookProvider - 钉钉群机器人（webhook + 加签 secret + @mobiles）
-//   2. wecomWebhookProvider    - 企业微信群机器人（webhook + text/markdown）
-//   3. telegramWebhookProvider - Telegram Bot（sendMessage API + MarkdownV2）
+//  1. dingtalkWebhookProvider - 钉钉群机器人（webhook + 加签 secret + @mobiles）
+//  2. wecomWebhookProvider    - 企业微信群机器人（webhook + text/markdown）
+//  3. telegramWebhookProvider - Telegram Bot（sendMessage API + MarkdownV2）
 //
 // 严格遵循铁律 04/05/06：
-//   04 - webhook URL / Bot Token / 加签 secret 全部从 sys_config 读取
-//   05 - 8 项 notify.{dingtalk,wecom,telegram}.* 配置可通过后台实时调整
-//   06 - 各家签名算法与官方文档对齐，不编造任何字段；HTTP 调用走标准库 net/http
+//
+//	04 - webhook URL / Bot Token / 加签 secret 全部从 sys_config 读取
+//	05 - 8 项 notify.{dingtalk,wecom,telegram}.* 配置可通过后台实时调整
+//	06 - 各家签名算法与官方文档对齐，不编造任何字段；HTTP 调用走标准库 net/http
 package notify
 
 import (
@@ -30,6 +31,10 @@ import (
 // telegramAPIBase Telegram Bot API 基础 URL
 // 默认官方端点；测试中可覆盖以指向 httptest.Server
 var telegramAPIBase = "https://api.telegram.org"
+
+// webhookHTTPClient 包级别共享 HTTP 客户端，设置 10 秒超时避免下游不可用时挂起
+// 复用连接池，所有 webhook 渠道（钉钉 / 企微 / Telegram）共用
+var webhookHTTPClient = &http.Client{Timeout: 10 * time.Second}
 
 // ============== 1. 钉钉群机器人 ==============
 
@@ -122,7 +127,7 @@ func (p *dingtalkWebhookProvider) Send(ctx context.Context, recipient, subject, 
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := webhookHTTPClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("dingtalk: http: %w", err)
 	}
@@ -193,7 +198,7 @@ func (p *wecomWebhookProvider) Send(ctx context.Context, recipient, subject, con
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := webhookHTTPClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("wecom: http: %w", err)
 	}
@@ -294,7 +299,7 @@ func (p *telegramWebhookProvider) Send(ctx context.Context, recipient, subject, 
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := webhookHTTPClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("telegram: http: %w", err)
 	}
@@ -307,8 +312,8 @@ func (p *telegramWebhookProvider) Send(ctx context.Context, recipient, subject, 
 
 	// TG 响应：{"ok":true,"result":{"message_id":123,"date":...}}
 	var result struct {
-		OK          bool `json:"ok"`
-		ErrorCode   int  `json:"error_code"`
+		OK          bool   `json:"ok"`
+		ErrorCode   int    `json:"error_code"`
 		Description string `json:"description"`
 		Result      struct {
 			MessageID int64 `json:"message_id"`
