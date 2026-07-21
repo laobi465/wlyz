@@ -7,6 +7,15 @@
 
 ---
 
+## v0.6.4 Critical Bug 修复 ✅ 已完成 2026-07-21
+
+### [P0] GORM AutoMigrate 触发 Error 1067 (Invalid default value for 'created_at') ✅ 已完成 v0.6.4
+- [x] [已完成 2026-07-21] **根因**：33 个 migration 全部应用后，`db.AutoMigrate(&model.SysConfig{})` 触发 `ALTER TABLE MODIFY COLUMN created_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP`，MySQL 8.0 + sql_mode=STRICT_TRANS_TABLES 下报 `Error 1067 (42000): Invalid default value for 'created_at'`
+- [x] [已完成 2026-07-21] **根因分析**：GORM 默认把 `time.Time` 推断为 `datetime(3)`（带毫秒精度），但 migration 001 用 `DATETIME`（无毫秒）建表，AutoMigrate 检测到列定义不匹配试图 ALTER MODIFY，MySQL 8.0 在 MODIFY 时对 `CURRENT_TIMESTAMP` 默认值与 `datetime(3)` 类型校验更严格导致报错
+- [x] [已完成 2026-07-21] **修复**：`SysConfig` struct 的 `CreatedAt`/`UpdatedAt` GORM tag 显式声明 `type:datetime`，让 GORM 不再修改列定义，保持 migration 001 的 schema 不变
+
+---
+
 ## v0.6.3 Critical Bug 修复 ✅ 已完成 2026-07-21
 
 ### [P0] migration 030 报 Error 1136 (Column count doesn't match value count) ✅ 已完成 v0.6.3
@@ -635,6 +644,6 @@
 
 ---
 
-**文档版本**：0.6.3
-**最后更新**：2026-07-21（v0.6.3 Critical Bug 修复：migration 030 报 Error 1136 (Column count doesn't match value count at row 1)。根因：030_v0.5.0_notify_webhook.up.sql 的 INSERT 声明 6 列但每行 VALUES 写了 7 个值（多余空字符串）。修复：移除多余字段，列顺序对齐 sys_config 表 schema；Python 脚本全量扫描所有 migration 文件确认仅此一处 bug）
+**文档版本**：0.6.4
+**最后更新**：2026-07-21（v0.6.4 Critical Bug 修复：33 个 migration 全部应用后 `db.AutoMigrate(&model.SysConfig{})` 触发 `ALTER TABLE MODIFY COLUMN created_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP` 失败，MySQL 8.0 报 Error 1067 (Invalid default value for 'created_at')。根因：GORM 默认把 time.Time 推断为 datetime(3)（带毫秒），但 migration 001 用 DATETIME（无毫秒）建表。修复：SysConfig struct 的 CreatedAt/UpdatedAt GORM tag 显式声明 type:datetime，让 GORM 不再修改列定义）
 **维护者**：KeyAuth SaaS Team

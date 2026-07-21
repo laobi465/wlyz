@@ -14,6 +14,13 @@ type BaseModel struct {
 // ============== 平台层 ==============
 
 // SysConfig 系统配置表（铁律 05 核心）
+//
+// v0.6.4 修复：CreatedAt/UpdatedAt 显式声明 type:datetime
+// 原因：GORM AutoMigrate 默认把 time.Time 推断为 datetime(3)（带毫秒精度），
+//   而 migration 001 用 DATETIME（无毫秒）建表，AutoMigrate 触发 ALTER TABLE MODIFY
+//   在 MySQL 8.0 + sql_mode=STRICT_TRANS_TABLES 下报 Error 1067
+//   "Invalid default value for 'created_at'"
+// 修复：显式 type:datetime 让 GORM 不再修改列定义，保持 migration 001 的 schema 不变
 type SysConfig struct {
 	ID          uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
 	ConfigKey   string    `gorm:"uniqueIndex;size:128;not null" json:"config_key"`
@@ -22,8 +29,8 @@ type SysConfig struct {
 	ConfigName  string    `gorm:"size:128" json:"config_name"`
 	ConfigGroup string    `gorm:"size:64;index;not null;default:system" json:"config_group"`
 	Remark      string    `gorm:"size:255" json:"remark"`
-	CreatedAt   time.Time `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
-	UpdatedAt   time.Time `gorm:"not null;default:CURRENT_TIMESTAMP;ON UPDATE:CURRENT_TIMESTAMP" json:"updated_at"`
+	CreatedAt   time.Time `gorm:"type:datetime;not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+	UpdatedAt   time.Time `gorm:"type:datetime;not null;default:CURRENT_TIMESTAMP;ON UPDATE:CURRENT_TIMESTAMP" json:"updated_at"`
 }
 
 func (SysConfig) TableName() string { return "sys_config" }

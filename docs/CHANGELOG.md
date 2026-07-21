@@ -9,6 +9,106 @@
 
 ---
 
+## [0.6.4] - 2026-07-21（GORM AutoMigrate 与 MySQL 8.0 datetime(3) 兼容修复）
+
+### [修复] Critical：db.AutoMigrate(&model.SysConfig{}) 触发 Error 1067 (Invalid default value for 'created_at')
+
+#### 背景
+
+v0.6.3 修复 migration 030 后，33 个 migration 全部应用成功，但 server 启动时在 `db.AutoMigrate(&model.SysConfig{})` 阶段失败：
+
+```
+[MIGRATE] 数据库已是最新版本（共 33 个迁移文件，全部已应用）
+[MIGRATE] 已释放 advisory lock：keyauth_migration_lock
+Error 1067 (42000): Invalid default value for 'created_at'
+[FATAL] 初始化依赖失败: 自动迁移 sys_config 失败: Error 1067 (42000): Invalid default value for 'created_at'
+```
+
+#### 根因分析
+
+**GORM AutoMigrate 与 migration 001 schema 不一致**：
+
+1. migration 001 用 `DATETIME`（无毫秒）建表：
+   ```sql
+   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+   ```
+
+2. `model.SysConfig` struct 的 `CreatedAt`/`UpdatedAt` 字段原 GORM tag：
+   ```go
+   CreatedAt time.Time `gorm:"not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+   UpdatedAt time.Time `gorm:"not null;default:CURRENT_TIMESTAMP;ON UPDATE:CURRENT_TIMESTAMP" json:"updated_at"`
+   ```
+
+3. GORM AutoMigrate 默认把 `time.Time` 推断为 `datetime(3)`（带毫秒精度），与已有的 `DATETIME` 不匹配
+
+4. AutoMigrate 触发 ALTER TABLE 试图修改列定义：
+   ```sql
+   ALTER TABLE `sys_config` MODIFY COLUMN `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+   ```
+
+5. MySQL 8.0 + sql_mode=STRICT_TRANS_TABLES 在 ALTER MODIFY 时对 `CURRENT_TIMESTAMP` 默认值与 `datetime(3)` 类型校验更严格，报 `Error 1067 (42000): Invalid default value for 'created_at'`
+
+**MySQL 8.0 datetime(3) 与 CURRENT_TIMESTAMP 的兼容性问题**：
+
+MySQL 8.0 对 `ALTER TABLE MODIFY COLUMN` 时 DEFAULT 值的类型校验比 5.7 更严格。`datetime(3)`（带毫秒）与 `CURRENT_TIMESTAMP`（无毫秒）的组合在某些 sql_mode 下会被拒绝，需要用 `CURRENT_TIMESTAMP(3)` 或 `NOW(3)`。
+
+#### 修复内容
+
+`apps/server/internal/model/model.go` 的 `SysConfig` struct 显式声明 GORM `type:datetime`：
+
+```go
+// v0.6.4 修复：CreatedAt/UpdatedAt 显式声明 type:datetime
+// 原因：GORM AutoMigrate 默认把 time.Time 推断为 datetime(3)（带毫秒精度），
+//   而 migration 001 用 DATETIME（无毫秒）建表，AutoMigrate 触发 ALTER TABLE MODIFY
+//   在 MySQL 8.0 + sql_mode=STRICT_TRANS_TABLES 下报 Error 1067
+//   "Invalid default value for 'created_at'"
+// 修复：显式 type:datetime 让 GORM 不再修改列定义，保持 migration 001 的 schema 不变
+type SysConfig struct {
+    ID          uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+    ConfigKey   string    `gorm:"uniqueIndex;size:128;not null" json:"config_key"`
+    ConfigValue string    `gorm:"type:text" json:"config_value"`
+    ConfigType  string    `gorm:"size:32;not null;default:string" json:"config_type"`
+    ConfigName  string    `gorm:"size:128" json:"config_name"`
+    ConfigGroup string    `gorm:"size:64;index;not null;default:system" json:"config_group"`
+    Remark      string    `gorm:"size:255" json:"remark"`
+    CreatedAt   time.Time `gorm:"type:datetime;not null;default:CURRENT_TIMESTAMP" json:"created_at"`
+    UpdatedAt   time.Time `gorm:"type:datetime;not null;default:CURRENT_TIMESTAMP;ON UPDATE:CURRENT_TIMESTAMP" json:"updated_at"`
+}
+```
+
+#### 为什么不修改 migration 001 的 DATETIME 为 datetime(3)
+
+- migration 001 是项目最初的 schema，已经在生产环境运行
+- 修改 migration 001 会触发新的 ALTER TABLE，可能引入新的兼容性问题
+- `type:datetime` 让 GORM 与 migration 001 保持一致，是最小改动方案
+- 其他 model 的 CreatedAt 字段也会遇到同样问题，但只有 SysConfig 在启动时调用 AutoMigrate，所以本次只改 SysConfig
+
+#### 铁律遵循
+
+- 04 禁硬编码：无新增硬编码
+- 05 配置后台化：不涉及配置变更
+- 06 防幻觉：根因分析基于 GORM 文档和 MySQL 8.0 行为，修复前编译验证通过
+
+#### 验证
+
+- `go build ./...` 通过 ✓
+- 真实环境：用户拉取 v0.6.4 后重启 server，AutoMigrate 不再触发 ALTER MODIFY，server 应正常启动
+
+#### 操作命令
+
+```bash
+cd /www/wwwroot/keyauth
+git pull origin main
+docker compose up -d --build server
+# 观察日志：应看到 "[MIGRATE] 数据库已是最新版本" + 服务正常启动，无 Error 1067
+# 若已开启 MIGRATION_REPAIR_DIRTY=true，修复成功后移除：
+sed -i '/^MIGRATION_REPAIR_DIRTY=/d' .env
+docker compose up -d server
+```
+
+---
+
 ## [0.6.3] - 2026-07-21（migration 030 列数不匹配修复）
 
 ### [修复] Critical：migration 030 报 Error 1136 (Column count doesn't match value count at row 1)
