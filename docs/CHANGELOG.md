@@ -9,6 +9,254 @@
 
 ---
 
+## [0.6.8] - 2026-07-21（UpdateNotifier setInterval 累积导致 /admin/dashboard 卡死修复）
+
+### [修复] P0 紧急 bug：v0.6.7 修复后管理员登录依然卡死
+
+#### 症状
+
+v0.6.7 修复 `scheduleRefresh` 无限异步递归后，用户反馈「依旧进不去 /admin/dashboard 会卡死」。浏览器 CPU 飙升、内存持续增长、最终死机。
+
+#### 根因定位（10 个方向深度排查）
+
+使用 search subagent 排查 10 个潜在方向：
+
+| 方向 | 是否死循环根因 | 紧急度 |
+|---|---|---|
+| **UpdateNotifier setInterval 累积** | **是（P0）** | 立即修复 |
+| **UpdateNotifier 卸载后回调泄漏** | 是（放大 P0） | 立即修复 |
+| pinia persist 不恢复 scheduleRefresh | 否（功能性退化） | 建议修复 |
+| http.ts doRefresh 锁 return 后无效重试 | 否 | 建议修复 |
+| Dashboard toFixed NaN 风险 | 否 | 建议修复 |
+| ThemeSwitcher matchMedia 监听器累积 | 否 | 建议修复 |
+| 路由守卫 / Vue 响应式 / enduser store / EP 组件 | 否 | 无需修复 |
+
+**头号根因**：`apps/admin/src/components/UpdateNotifier.vue` 的 `scheduleNext` 函数使用 `setInterval` 调度异步轮询。
+
+#### 死循环代码（修复前）
+
+```ts
+// 修复前（v0.4.0 引入，v0.6.8 修复）
+const timer = ref<ReturnType<typeof setInterval> | null>(null)
+
+const scheduleNext = (intervalSec: number) => {
+  timer.value = setInterval(async () => {
+    const next = await pollOnce()
+    if (next === 0) {
+      stopPolling()
+      return
+    }
+    if (next !== intervalSec) {
+      stopPolling()        // ← 只能清除当前 timer.value 指向的 setInterval
+      scheduleNext(next)   // ← 创建新 setInterval，但排队中的旧回调仍会执行
+    }
+  }, intervalSec * 1000)
+}
+
+const stopPolling = () => {
+  if (timer.value) {
+    clearInterval(timer.value)
+    timer.value = null
+  }
+}
+
+onBeforeUnmount(() => {
+  stopPolling()  // ← 无法取消已在事件循环中排队但尚未执行的 setInterval 回调
+})
+```
+
+#### 三个致命问题
+
+##### 问题 1：setInterval 不等待 async 回调完成 → 并发回调累积
+
+`setInterval` 触发回调时**不等待** async 函数完成。当 `pollOnce()`（含 HTTP 请求）耗时超过 `interval` 时：
+
+- 第 N 秒：回调 A 开始执行，await pollOnce()（耗时 5s）
+- 第 N+interval 秒：回调 B 开始执行（A 还在 await），又 await pollOnce()
+- 第 N+2*interval 秒：回调 C 开始执行（A、B 都在 await），又 await pollOnce()
+- ...
+
+多个回调并发执行 → 多个 HTTP 请求并发 → 网络拥塞 → pollOnce 更慢 → 更多回调累积 → CPU 100%
+
+##### 问题 2：interval 变化时引用覆盖泄漏
+
+当后端返回新的 `interval_seconds`（如管理员后台调整轮询间隔），代码执行 `stopPolling() + scheduleNext(next)`：
+
+1. `stopPolling()` 清除当前 `timer.value` 指向的 setInterval
+2. `scheduleNext(next)` 创建新 setInterval，`timer.value` 被覆盖为新引用
+
+**但事件循环中排队中的旧 setInterval 回调仍会执行**！这些旧回调执行时：
+- 调用 `pollOnce()` 获取新 interval
+- 调用 `scheduleNext(next)` 创建**另一个**新 setInterval
+- `timer.value` 再次被覆盖
+
+结果：旧 setInterval 永远无法被 `clearInterval` 清除（引用已丢失），形成**引用覆盖泄漏**。每次 interval 变化都泄漏一个 setInterval，指数级增长。
+
+##### 问题 3：组件卸载后回调泄漏
+
+`onBeforeUnmount` 中 `stopPolling()` 只能清除当前 `timer.value`。但**已在事件循环中排队但尚未执行的 setInterval 回调**无法取消，这些回调在组件卸载后继续执行：
+- 调用 `pollOnce()` → 发起 HTTP 请求（组件已卸载，响应处理可能报错）
+- 调用 `scheduleNext(next)` → 创建新 setInterval（`timer.value` 被赋值，但已无人清理）
+- 形成永久泄漏的定时器，持续发起 HTTP 请求直到页面关闭
+
+#### 修复方案
+
+##### 修复 1：scheduleNext 改用 setTimeout 自递归
+
+`setTimeout` 自递归保证：**每次 pollOnce 完成后才调度下一次**，从根上消除并发。
+
+```ts
+// 修复后
+const scheduleNext = (intervalSec: number) => {
+  timer.value = setTimeout(async () => {
+    if (isUnmounted) return           // 卸载后不再执行
+
+    const next = await pollOnce()
+
+    if (isUnmounted) return           // await 期间组件可能已卸载
+
+    if (next === 0) {
+      timer.value = null
+      return                          // 后端关闭弹窗通知，不再调度
+    }
+
+    // 不论 next 是否等于 intervalSec，都重新调度（自递归）
+    scheduleNext(next)
+  }, intervalSec * 1000)
+}
+```
+
+优势：
+- 同一时刻**只有一个 setTimeout 在排队**（前一个执行并 await 完成后才会创建下一个）
+- interval 变化时**无需 stopPolling + scheduleNext 二步操作**，直接 `scheduleNext(next)` 即可
+- 不存在引用覆盖泄漏（每次只有一个 timer 引用）
+
+##### 修复 2：timer 类型与 stopPolling 适配
+
+```ts
+// 修复前
+const timer = ref<ReturnType<typeof setInterval> | null>(null)
+const stopPolling = () => {
+  if (timer.value) {
+    clearInterval(timer.value)
+    timer.value = null
+  }
+}
+
+// 修复后
+const timer = ref<ReturnType<typeof setTimeout> | null>(null)
+const stopPolling = () => {
+  if (timer.value) {
+    clearTimeout(timer.value)
+    timer.value = null
+  }
+}
+```
+
+##### 修复 3：isUnmounted 标志位防止卸载后回调执行
+
+```ts
+// 修复后
+let isUnmounted = false
+
+onBeforeUnmount(() => {
+  // 先标记卸载，再清除定时器
+  // - 标记 isUnmounted 后，已在事件循环中排队但尚未执行的 setTimeout 回调开头会直接 return
+  // - clearTimeout 取消尚未触发的定时器
+  isUnmounted = true
+  stopPolling()
+})
+```
+
+setTimeout 回调中有两处 `isUnmounted` 检查：
+1. 回调开头（防止 onBeforeUnmount 后回调执行）
+2. `await pollOnce()` 之后（防止 await 期间组件卸载后继续执行）
+
+##### 修复 4：startPolling 首次 await 期间防御性检查
+
+```ts
+const startPolling = async () => {
+  const interval = await pollOnce()
+  if (interval === 0) return
+
+  // v0.6.8：首次 await 期间组件可能已卸载，防御性检查
+  if (isUnmounted) return
+
+  scheduleNext(interval)
+}
+```
+
+#### 修复后完整代码
+
+```ts
+// v0.6.8 修复后完整代码
+const timer = ref<ReturnType<typeof setTimeout> | null>(null)
+let isUnmounted = false
+
+const scheduleNext = (intervalSec: number) => {
+  timer.value = setTimeout(async () => {
+    if (isUnmounted) return
+
+    const next = await pollOnce()
+
+    if (isUnmounted) return
+
+    if (next === 0) {
+      timer.value = null
+      return
+    }
+
+    scheduleNext(next)
+  }, intervalSec * 1000)
+}
+
+const stopPolling = () => {
+  if (timer.value) {
+    clearTimeout(timer.value)
+    timer.value = null
+  }
+}
+
+onMounted(() => {
+  startPolling()
+})
+
+onBeforeUnmount(() => {
+  isUnmounted = true
+  stopPolling()
+})
+```
+
+#### 修复涉及的文件
+
+| 文件 | 修改点 |
+|---|---|
+| `apps/admin/src/components/UpdateNotifier.vue` | `scheduleNext` setInterval→setTimeout 自递归；`timer` 类型声明；`stopPolling` clearTimeout；新增 `isUnmounted` 标志位；`onBeforeUnmount` 先标记再 stopPolling；`startPolling` 防御性 isUnmounted 检查 |
+
+#### 验证
+
+- `cd apps/admin && npm run build` 通过（含 `vue-tsc --noEmit` 类型检查，16.85s）
+- 死循环场景逻辑验证：
+  - pollOnce 耗时 > interval → setTimeout 自递归保证只有 1 个回调在执行 → 不累积
+  - interval 变化 → 直接 scheduleNext(next) → 无引用覆盖泄漏
+  - 组件卸载 → isUnmounted=true → 排队回调开头 return → clearTimeout 取消未触发定时器 → 无泄漏
+- 正常场景验证：onMounted 启动 startPolling → pollOnce → setTimeout → 到期执行 → pollOnce → setTimeout → ...
+
+#### 与 v0.6.7 的关系
+
+v0.6.7 修复的 `scheduleRefresh` 死循环是**第一个根因**（token 续期递归），v0.6.8 修复的 `UpdateNotifier.scheduleNext` setInterval 累积是**第二个根因**（更新轮询并发累积）。两者独立存在，v0.6.7 仅修复第一个，导致用户反馈「依旧进不去 /admin/dashboard 会卡死」。v0.6.8 修复第二个根因后，管理员登录卡死问题应彻底解决。
+
+#### 后续建议（非阻断性）
+
+| 项 | 紧急度 | 说明 |
+|---|---|---|
+| pinia persist 不恢复 scheduleRefresh | 建议修复 | 页面刷新后 scheduleRefresh 不自动重启，access token 过期后无法自动续期（功能性退化，非死循环） |
+| http.ts doRefresh 锁 return 后无效重试 | 建议修复 | 401 拦截器 `_refreshing` 锁 return 后仍可能重试原请求，建议返回 Promise.reject |
+| Dashboard toFixed NaN 兜底 | 建议修复 | 数据为 null/undefined 时 toFixed 报错，建议 `Number(x) \|\| 0` |
+| ThemeSwitcher init 幂等 | 建议修复 | matchMedia 监听器无去重，多次调用 init 会累积监听器 |
+
+---
+
 ## [0.6.7] - 2026-07-21（管理员登录后死机 + token 续期死循环修复）
 
 ### [修复] P0 紧急 bug：管理员登录后浏览器死机

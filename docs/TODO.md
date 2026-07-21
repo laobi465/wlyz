@@ -7,6 +7,42 @@
 
 ---
 
+## v0.6.8 UpdateNotifier setInterval 累积卡死 P0 修复 ✅ 已完成 2026-07-21
+
+### [P0] v0.6.7 修复后管理员登录依然进不去 /admin/dashboard 卡死 ✅ 已完成 v0.6.8
+- [x] [已完成 2026-07-21] **背景**：v0.6.7 修复 scheduleRefresh 死循环后，用户反馈「依旧进不去 /admin/dashboard 会卡死」。表明 v0.6.7 仅修复第一个根因，存在第二个独立根因
+- [x] [已完成 2026-07-21] **10 方向深度排查**：使用 search subagent 排查 10 个潜在方向（路由守卫 / Vue 响应式 / enduser store / EP 组件 / Dashboard toFixed / ThemeSwitcher matchMedia / UpdateNotifier setInterval / http.ts doRefresh / pinia persist restore），确认头号根因为 `UpdateNotifier.vue` 的 `scheduleNext` setInterval 累积
+- [x] [已完成 2026-07-21] **根因定位**：`apps/admin/src/components/UpdateNotifier.vue` 的 `scheduleNext` 使用 `setInterval` 调度 async 轮询，存在三个致命问题：
+  - 问题 1：setInterval 不等待 async 回调完成 → pollOnce 耗时超过 interval 时多个回调并发执行 → CPU 100%
+  - 问题 2：interval 变化时 stopPolling+scheduleNext 创建新 setInterval，但排队中的旧回调仍执行并创建更多 setInterval → 引用覆盖泄漏（timer.value 被覆盖，旧 setInterval 永远无法 clearInterval）
+  - 问题 3：组件卸载后排队回调继续执行 → 内存泄漏 + 卡死
+- [x] [已完成 2026-07-21] **修复 1：scheduleNext 改用 setTimeout 自递归**：每次 pollOnce 完成后才调度下一次，从根上消除并发。同一时刻只有一个 setTimeout 在排队
+- [x] [已完成 2026-07-21] **修复 2：timer 类型与 stopPolling 适配**：`ReturnType<typeof setInterval>` → `ReturnType<typeof setTimeout>`，`clearInterval` → `clearTimeout`
+- [x] [已完成 2026-07-21] **修复 3：isUnmounted 标志位**：新增 `let isUnmounted = false`，`onBeforeUnmount` 中先标记 `isUnmounted = true` 再 `stopPolling`，setTimeout 回调开头与 `await pollOnce()` 之后双重检查
+- [x] [已完成 2026-07-21] **修复 4：startPolling 首次 await 期间防御性检查**：首次 `await pollOnce()` 后检查 `isUnmounted`，避免首次轮询未完成时组件已卸载还调度定时器
+- [x] [已完成 2026-07-21] **简化逻辑**：原 `if (next !== intervalSec) { stopPolling(); scheduleNext(next) }` 简化为始终 `scheduleNext(next)` 自递归（间隔变化时自动用新间隔，无需二步操作）
+
+### v0.6.8 验证
+- [x] [已完成 2026-07-21] `cd apps/admin && npm run build` 通过（含 `vue-tsc --noEmit` 类型检查，16.85s）
+- [x] [已完成 2026-07-21] 死循环场景逻辑验证：
+  - pollOnce 耗时 > interval → setTimeout 自递归保证只有 1 个回调在执行 → 不累积
+  - interval 变化 → 直接 scheduleNext(next) → 无引用覆盖泄漏
+  - 组件卸载 → isUnmounted=true → 排队回调开头 return → clearTimeout 取消未触发定时器 → 无泄漏
+- [x] [已完成 2026-07-21] 正常场景验证：onMounted 启动 startPolling → pollOnce → setTimeout → 到期执行 → pollOnce → setTimeout → ...
+
+### v0.6.8 待真实环境验证
+- [ ] [待开始] 真实浏览器环境登录流程验证（建议先清除 localStorage 后管理员登录测试 /admin/dashboard 不再卡死）
+- [ ] [待开始] 故意把 `update.poll.interval_seconds` 配为 5 秒（小于 pollOnce 耗时）验证 setTimeout 自递归不累积
+- [ ] [待开始] 组件卸载场景验证（频繁切换路由离开 /admin/* 后查看 Console 无报错、Network 无持续 poll 请求）
+
+### v0.6.8 后续建议（非阻断性）
+- [ ] [待开始 P3] pinia persist 不恢复 scheduleRefresh：页面刷新后 scheduleRefresh 不自动重启，access token 过期后无法自动续期（功能性退化，非死循环）
+- [ ] [待开始 P3] http.ts doRefresh 锁 return 后无效重试：401 拦截器 `_refreshing` 锁 return 后仍可能重试原请求，建议返回 Promise.reject
+- [ ] [待开始 P3] Dashboard toFixed NaN 兜底：数据为 null/undefined 时 toFixed 报错，建议 `Number(x) || 0`
+- [ ] [待开始 P3] ThemeSwitcher init 幂等：matchMedia 监听器无去重，多次调用 init 会累积监听器
+
+---
+
 ## v0.6.7 管理员登录死机 P0 修复 ✅ 已完成 2026-07-21
 
 ### [P0] 管理员登录后浏览器死机 ✅ 已完成 v0.6.7
