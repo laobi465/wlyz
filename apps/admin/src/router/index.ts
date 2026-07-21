@@ -121,6 +121,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'sys-config',  name: 'AdminSysConfig',  component: lazy(() => import('@/views/admin/SysConfig.vue')), meta: { title: '系统配置', titleKey: 'route.adminSysConfig', icon: 'Setting' } },
       { path: 'logs',        name: 'AdminLogs',       component: lazy(() => import('@/views/admin/Logs.vue')),       meta: { title: '日志审计',  titleKey: 'route.adminLogs', icon: 'Document' } },
       { path: 'security',    name: 'AdminSecurity',   component: lazy(() => import('@/views/admin/Security.vue')),   meta: { title: '安全防护',  titleKey: 'route.adminSecurity', icon: 'Lock' } },
+      { path: 'update',      name: 'AdminUpdate',     component: lazy(() => import('@/views/admin/Update.vue')),     meta: { title: '更新管理',  titleKey: 'route.adminUpdate', icon: 'Refresh' } },
       { path: 'profile',     name: 'AdminProfile',    component: lazy(() => import('@/views/admin/Profile.vue')), meta: { title: '账号设置',  titleKey: 'route.adminProfile', icon: 'Setting' } }
     ]
   },

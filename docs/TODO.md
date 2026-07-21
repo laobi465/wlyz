@@ -7,6 +7,33 @@
 
 ---
 
+## v0.9.1 GitHub Release 检查更新 / 更新管理面板 ✅ 已完成 2026-07-21
+
+### [P1] 给后台添加 GitHub 检查更新 ✅ 已完成 v0.9.1
+- [x] [已完成 2026-07-21] **后端 CheckUpdate 函数**（`apps/server/internal/update/update.go`）：调 GitHub releases/latest API + 进程内缓存 60 秒防限流 + 版本对比
+- [x] [已完成 2026-07-21] **后端 AdminCheckUpdate handler**（`apps/server/internal/handler/update.go`）：错误返回 502/5002，成功记录操作日志
+- [x] [已完成 2026-07-21] **路由注册**（`apps/server/internal/router/router.go`）：`GET /admin/update/check`
+- [x] [已完成 2026-07-21] **migration 035**（`apps/server/migrations/035_v0.9.0_github_release_check.up/down.sql`）：4 项 sys_config 配置（update.github.owner/repo/token/current_version）
+- [x] [已完成 2026-07-21] **前端 API**（`apps/admin/src/api/update.ts`）：CheckUpdateResult 类型 + checkUpdateApi 函数 + 修复 triggerUpdateApi 返回类型
+- [x] [已完成 2026-07-21] **前端更新管理面板**（`apps/admin/src/views/admin/Update.vue`）：检查更新按钮 + 立即更新按钮 + 当前/最新版本 + Release Notes + 部署状态 + 更新历史表格 + 详情对话框
+- [x] [已完成 2026-07-21] **前端路由 + i18n + 菜单**：`/admin/update` 路由 + `route.adminUpdate` 翻译键（zh: 更新管理 / en: Updates）+ 菜单自动生成
+- [x] [已完成 2026-07-21] **构建验证**：后端 `go vet` 3 包 PASS + 前端 `npm run build` PASS（17.09s）
+
+### v0.9.1 待真实环境验证
+- [ ] [待开始] 真实浏览器验证：管理员在「系统配置 > update」中配置 `update.github.owner` / `update.github.repo` / `update.github.current_version`
+- [ ] [待开始] 真实浏览器验证：进入「更新管理」页面，点击「检查更新」按钮，能看到当前版本 / 最新版本 / Release Notes
+- [ ] [待开始] 真实浏览器验证：检测到有更新时，点击「立即更新」按钮能触发更新流程
+- [ ] [待开始] 真实浏览器验证：未配置 GitHub 仓库信息时显示 el-alert 配置提示
+- [ ] [待开始] 真实浏览器验证：60 秒内重复点击「检查更新」返回缓存结果（不触发 GitHub API 限流）
+- [ ] [待开始] 真实浏览器验证：移动端布局适配（dialog 宽度 92%、信息块自适应）
+
+### v0.9.1 后续可选优化
+- [ ] [P3 待开始] Release Notes markdown 渲染（当前用 `<pre>` 保留原文，可引入 marked + dompurify 渲染 HTML）
+- [ ] [P3 待开始] 检查更新自动化定时任务（当前需管理员手动点击，可加后台定时检查 + 有新版本时推送通知）
+- [ ] [P3 待开始] 多 release 历史展示（当前仅查 latest，可加列表查看所有 release）
+
+---
+
 ## v0.9.0 登录入口分离 / 注册按钮失效 / 代理注册路由独立 ✅ 已完成 2026-07-21
 
 ### [P0] 管理员登录状态不保存 ✅ 已完成 v0.9.0

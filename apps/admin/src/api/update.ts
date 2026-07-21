@@ -47,6 +47,23 @@ export interface UpdatePoll {
   last_commit: string | null
 }
 
+/** GitHub release 检查更新结果（GET /admin/update/check，v0.9.0） */
+export interface CheckUpdateResult {
+  current_version: string // 当前部署版本
+  latest_version: string // GitHub 最新 release 版本号
+  has_update: boolean // 是否有新版本
+  release_notes: string // 更新内容（markdown）
+  release_url: string // release 页面 URL
+  published_at: string // 发布时间（ISO 8601）
+  author: string // 发布者
+  prerelease: boolean // 是否预发布
+  repo_owner: string // 仓库 owner
+  repo_name: string // 仓库名
+  current_commit: string // 当前部署 commit hash
+  checked_at: number // 检查时间戳（秒）
+  is_locked: boolean // 当前是否有更新锁
+}
+
 // ============== API ==============
 
 /** 更新状态（GET /admin/update/status） */
@@ -56,7 +73,7 @@ export const updateStatusApi = () => {
 
 /** 手动触发更新（POST /admin/update/trigger） */
 export const triggerUpdateApi = (data: { branch?: string }) => {
-  return request.post<{ log_id: number }>('/admin/update/trigger', data)
+  return request.post<{ triggered: boolean; branch: string; message: string }>('/admin/update/trigger', data)
 }
 
 /** 更新历史（GET /admin/update/history） */
@@ -85,4 +102,12 @@ export const rollbackUpdateApi = (data: { log_id: number }) => {
 /** 弹窗通知轻量轮询（GET /admin/update/poll，v0.4.0） */
 export const pollUpdateApi = () => {
   return request.get<UpdatePoll>('/admin/update/poll')
+}
+
+/** GitHub release 检查更新（GET /admin/update/check，v0.9.0）
+ *  主动调用 GitHub releases/latest API 对比当前部署版本
+ *  进程内缓存 60 秒，防止频繁调用触发 GitHub 限流
+ */
+export const checkUpdateApi = () => {
+  return request.get<CheckUpdateResult>('/admin/update/check')
 }

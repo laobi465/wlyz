@@ -9,6 +9,104 @@
 
 ---
 
+## [0.9.1] - 2026-07-21（GitHub Release 检查更新 / 更新管理面板）
+
+### 背景
+
+用户要求「给后台添加 GitHub 检查更新」。v0.4.0 已实现 GitHub Webhook 被动接收 push event 触发自动更新 + 管理员弹窗通知（commit 变化），但缺少「主动检查 GitHub 是否有新 release」的能力。本次新增 v0.9.1 主动检查更新功能：管理员可在「更新管理」面板点击「检查更新」按钮，调用 GitHub `releases/latest` API 对比当前部署版本与最新 release tag，提示是否有新版本可更新。
+
+### 与 v0.4.0 在线更新的区别
+
+| 维度 | v0.4.0 Webhook 自动更新 | v0.9.1 GitHub Release 检查 |
+|---|---|---|
+| 触发方式 | 被动接收 GitHub push event | 主动调用 GitHub releases/latest API |
+| 对比维度 | 本地 commit hash 变化（更新已部署后弹窗） | 远端 release tag 与本地配置 current_version（部署前检查） |
+| 用途 | 通知管理员「服务已更新，请刷新页面」 | 通知管理员「GitHub 有新 release，可考虑更新」 |
+| 配置键前缀 | `update.webhook.*` / `update.deploy.*` / `update.healthcheck.*` / `update.rollback.*` / `update.poll.*` / `update.lock.*` | `update.github.owner` / `update.github.repo` / `update.github.token` / `update.github.current_version` |
+
+### 改动清单
+
+#### 1. `[新增]` 后端 CheckUpdate 函数（`apps/server/internal/update/update.go`）
+
+- 新增 4 项配置键常量：`CfgKeyGithubOwner` / `CfgKeyGithubRepo` / `CfgKeyGithubToken` / `CfgKeyGithubCurrent`
+- 新增 `GitHubAPILimitMinInterval = 60` 常量（进程内缓存 60 秒防 GitHub 限流）
+- 新增 `GitHubRelease` 结构体（tag_name / name / body / html_url / published_at / prerelease / draft / author）
+- 新增 `CheckUpdateResult` 结构体（current_version / latest_version / has_update / release_notes / release_url / published_at / author / prerelease / repo_owner / repo_name / current_commit / checked_at / is_locked）
+- 新增进程内缓存变量 `githubCheckCache` / `githubCheckCacheAt` / `githubCheckCacheLock`
+- 新增 `CheckUpdate(ctx)` 方法：
+  1. 进程内缓存检查（60 秒内直接返回缓存，防管理员频繁点击触发限流）
+  2. 从 sys_config 读取 owner/repo/token/current_version
+  3. 调 GitHub API：`GET https://api.github.com/repos/{owner}/{repo}/releases/latest`
+  4. 设置请求头：`Accept: application/vnd.github+json`、`X-GitHub-Api-Version: 2022-11-28`、`User-Agent: KeyAuth-SaaS-UpdateChecker`；若有 token 加 `Authorization: Bearer {token}`
+  5. 处理 404（仓库无 release）/ 401/403（限流或 token 无效）/ 其他非 200 错误
+  6. 解析 JSON → 版本对比（`normalizeVersionTag` 去除 v/V 前缀后字符串比较）
+  7. 写入进程内缓存
+- 新增 `normalizeVersionTag(tag)` 辅助函数
+
+#### 2. `[新增]` 后端 AdminCheckUpdate handler（`apps/server/internal/handler/update.go`）
+
+- 新增 `AdminCheckUpdate(deps)` handler，对应路由 `GET /admin/update/check`
+- 调用 `mgr.CheckUpdate(ctx)` 返回检查结果
+- 错误时返回 HTTP 502 + 错误码 5002 + 可读错误信息（配置缺失 / 网络错误 / 限流 / 仓库无 release 等）
+- 成功时记录操作日志（trigger_by / current / latest / has_update / repo）
+
+#### 3. `[新增]` 路由注册（`apps/server/internal/router/router.go`）
+
+- `adminAuth.GET("/update/check", handler.AdminCheckUpdate(deps))` — v0.9.0 主动检查 GitHub release
+
+#### 4. `[新增]` migration 035（`apps/server/migrations/035_v0.9.0_github_release_check.up.sql` + `.down.sql`）
+
+- 新增 4 项 sys_config 配置项（config_group='update'）：
+  - `update.github.owner` — GitHub 仓库 owner（如 laobi465）
+  - `update.github.repo` — GitHub 仓库名（如 wlyz）
+  - `update.github.token` — GitHub Personal Access Token（可选，避免匿名限流 60次/小时；配置后提升至 5000次/小时）
+  - `update.github.current_version` — 当前部署版本号（如 v0.9.1；空=未配置，默认认为有更新）
+- 配置默认值均为空，部署后需管理员到「系统配置 > update」中填写
+
+#### 5. `[新增]` 前端 API（`apps/admin/src/api/update.ts`）
+
+- 新增 `CheckUpdateResult` TypeScript 类型（与后端 `CheckUpdateResult` 字段对齐）
+- 新增 `checkUpdateApi()` 函数，调用 `GET /admin/update/check`
+- 修复 `triggerUpdateApi` 返回类型：补充 `triggered` / `branch` / `message` 字段（原仅 `log_id`）
+
+#### 6. `[新增]` 前端更新管理面板（`apps/admin/src/views/admin/Update.vue`）
+
+- 顶部「GitHub Release 检查」卡片：
+  - 检查更新按钮（loading 状态 + 错误提示）
+  - 立即更新按钮（仅 `has_update=true` 且未锁定时显示，触发 `triggerUpdateApi`）
+  - 当前版本 / 最新版本 / 是否有更新 / 仓库链接 4 个信息块
+  - 发布时间 / 发布者 / 检查时间 元信息行
+  - 当前部署 commit hash + 锁状态标签
+  - Release Notes 预格式化展示（`<pre>` 保留 markdown 原文）
+  - 配置缺失时显示 el-alert 提示需要配置的 4 项 sys_config
+- 中部「当前部署状态」卡片：commit / 锁状态 / 自动开关 / 目标分支 + 最近一次审计 + 成功/失败统计
+- 下部「更新历史」表格：使用 ResponsiveTable 分页展示，含状态/触发源/分支/commit/耗时/错误/时间字段，点击查看详情对话框
+- 详情对话框：el-descriptions 展示完整字段 + 错误信息 + 完整 log_text
+- 响应式适配：移动端 dialog 宽度 92%，notes-content 自适应
+
+#### 7. `[新增]` 前端路由 + i18n + 菜单
+
+- 路由：`/admin/update` → `AdminUpdate` → `views/admin/Update.vue`，meta.titleKey='route.adminUpdate'，icon='Refresh'
+- i18n：新增 `route.adminUpdate` 翻译键
+  - zh-CN: `'更新管理'`
+  - en-US: `'Updates'`
+- 菜单：BasicLayout 自动从路由 children 生成菜单，无需额外配置
+
+### 严格遵循铁律
+
+- **铁律 04 禁硬编码**：owner/repo/token/current_version 全部从 sys_config 读取，无硬编码
+- **铁律 05 配置后台化**：4 项 `update.github.*` 配置可通过后台「系统配置」实时调整
+- **铁律 06 防幻觉**：token 仅用于 Authorization 头，不记录日志、不返回前端；网络错误显式返回 error 不编造数据；仓库无 release 时返回明确错误
+- **铁律 13 严格遵循项目文档规范**：handler/router/migration/api/view 命名风格完全对标 v0.4.0 在线更新模块；i18n 翻译键沿用 `route.adminXxx` 命名
+
+### 验证
+
+- `go vet ./internal/update/ ./internal/handler/ ./internal/router/` PASS
+- `cd apps/admin && npm run build` PASS（vue-tsc 类型检查通过，vite 构建 17.09s，Update.vue 打包 13.11KB / gzip 4.61KB）
+- 影响范围：后端新增 1 个路由 + 1 个 handler + 1 个 manager 方法 + 4 项 sys_config；前端新增 1 个页面 + 1 个 API + 1 个 i18n 键
+
+---
+
 ## [0.9.0] - 2026-07-21（登录入口分离 / 注册按钮失效 / 代理注册路由独立）
 
 ### 背景

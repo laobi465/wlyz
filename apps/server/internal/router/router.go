@@ -83,7 +83,7 @@ func Register(container *config.Container) *gin.Engine {
 		Crypto:      container.Crypto,
 		Config:      container.Config,
 		CfgCache:    container.ConfigCache(),
-		RiskMgr:     risk.NewManager(container.DB, container.ConfigCache()),      // v0.4.0 风控规则引擎
+		RiskMgr:     risk.NewManager(container.DB, container.ConfigCache()),     // v0.4.0 风控规则引擎
 		AnalysisMgr: analysis.NewManager(container.DB, container.ConfigCache()), // v0.6.0 高级分析
 	}
 
@@ -149,7 +149,8 @@ func Register(container *config.Container) *gin.Engine {
 		adminAuth.GET("/update/history", handler.AdminListUpdateHistory(deps))
 		adminAuth.POST("/update/rollback", handler.AdminRollbackUpdate(deps))
 		adminAuth.GET("/update/logs/:id", handler.AdminGetUpdateLog(deps))
-		adminAuth.GET("/update/poll", handler.AdminUpdatePoll(deps)) // v0.4.0 弹窗通知轻量轮询
+		adminAuth.GET("/update/poll", handler.AdminUpdatePoll(deps))   // v0.4.0 弹窗通知轻量轮询
+		adminAuth.GET("/update/check", handler.AdminCheckUpdate(deps)) // v0.9.0 主动检查 GitHub release
 
 		// 数据备份恢复（v0.4.0 全库 SQL 备份 + SHA-256 校验 + AES-256-GCM 加密 + gzip 压缩 + 过期清理）
 		adminAuth.GET("/backup/status", handler.AdminBackupStatus(deps))
@@ -205,11 +206,11 @@ func Register(container *config.Container) *gin.Engine {
 		adminAuth.GET("/stats/agent_ranking", handler.AdminAgentRanking(deps))
 
 		// 日志审计（v0.3.3 升级：3 表独立查询 + CSV 导出）
-		adminAuth.GET("/logs", handler.AdminListLogs(deps))                           // 兼容旧接口（仅 operation）
-		adminAuth.GET("/logs/operations", handler.AdminListOperationLogs(deps))       // 操作日志
-		adminAuth.GET("/logs/verify", handler.AdminListVerifyLogs(deps))              // 验证日志
-		adminAuth.GET("/logs/login_failed", handler.AdminListLoginFailedLogs(deps))   // 登录失败日志
-		adminAuth.GET("/logs/export", handler.AdminExportLogs(deps))                  // CSV 导出
+		adminAuth.GET("/logs", handler.AdminListLogs(deps))                         // 兼容旧接口（仅 operation）
+		adminAuth.GET("/logs/operations", handler.AdminListOperationLogs(deps))     // 操作日志
+		adminAuth.GET("/logs/verify", handler.AdminListVerifyLogs(deps))            // 验证日志
+		adminAuth.GET("/logs/login_failed", handler.AdminListLoginFailedLogs(deps)) // 登录失败日志
+		adminAuth.GET("/logs/export", handler.AdminExportLogs(deps))                // CSV 导出
 
 		// 安全中心
 		adminAuth.GET("/security/stats", handler.AdminSecurityStats(deps))
@@ -318,8 +319,8 @@ func Register(container *config.Container) *gin.Engine {
 
 		// 卡密管理
 		tenantAuth.GET("/cards", handler.TenantListCards(deps))
-		tenantAuth.GET("/cards/export", handler.TenantExportCardsCSV(deps))   // v0.3.6
-		tenantAuth.POST("/cards/import", handler.TenantImportCardsCSV(deps))  // v0.3.6
+		tenantAuth.GET("/cards/export", handler.TenantExportCardsCSV(deps))  // v0.3.6
+		tenantAuth.POST("/cards/import", handler.TenantImportCardsCSV(deps)) // v0.3.6
 		tenantAuth.GET("/cards/:id", handler.TenantGetCard(deps))
 		tenantAuth.POST("/cards/generate", handler.TenantGenerateCards(deps))
 		tenantAuth.POST("/cards/:id/ban", handler.TenantBanCard(deps))
@@ -383,11 +384,11 @@ func Register(container *config.Container) *gin.Engine {
 		tenantAuth.POST("/withdrawals/:id/reject", handler.TenantRejectWithdraw(deps))
 
 		// 开发者结算与提现（v0.3.4 新增）
-		tenantAuth.GET("/settlements", handler.TenantListSettlements(deps))           // 自己的结算记录
-		tenantAuth.GET("/balance_overview", handler.TenantBalanceOverview(deps))      // 余额概览
-		tenantAuth.GET("/balance_logs", handler.TenantListBalanceLogs(deps))          // 余额流水
-		tenantAuth.GET("/withdrawals/mine", handler.TenantListOwnWithdrawals(deps))   // 自己的提现申请
-		tenantAuth.POST("/withdraw", handler.TenantWithdraw(deps))                    // 发起提现申请
+		tenantAuth.GET("/settlements", handler.TenantListSettlements(deps))         // 自己的结算记录
+		tenantAuth.GET("/balance_overview", handler.TenantBalanceOverview(deps))    // 余额概览
+		tenantAuth.GET("/balance_logs", handler.TenantListBalanceLogs(deps))        // 余额流水
+		tenantAuth.GET("/withdrawals/mine", handler.TenantListOwnWithdrawals(deps)) // 自己的提现申请
+		tenantAuth.POST("/withdraw", handler.TenantWithdraw(deps))                  // 发起提现申请
 
 		// v0.4.x D-15 开发者安全设置（2 个端点：查询 / 更新）
 		// 铁律 04：IP 黑名单 JSON 数组 + 限速阈值存 tenant_security_config，无硬编码
@@ -496,7 +497,7 @@ func Register(container *config.Container) *gin.Engine {
 		publicGroup.POST("/auth/agent/register", handler.AgentRegister(deps))
 		publicGroup.GET("/auth/agent/register/config", handler.AgentRegisterConfig(deps))               // v0.3.6
 		publicGroup.GET("/auth/agent/register/order/:order_no", handler.AgentRegisterOrderStatus(deps)) // v0.3.6
-		publicGroup.POST("/auth/refresh", handler.RefreshToken(deps)) // 三角色共用
+		publicGroup.POST("/auth/refresh", handler.RefreshToken(deps))                                   // 三角色共用
 		publicGroup.GET("/notices/platform", handler.PublicPlatformNotices(deps))
 		// v0.4.x 残留项 2：U-12 公告详情 H5 页面（公开端点，增加 view_count）
 		publicGroup.GET("/notices/:id", handler.PublicNoticeDetail(deps))

@@ -173,6 +173,7 @@ export default {
     adminSysConfig: '系统配置',
     adminLogs: '日志审计',
     adminSecurity: '安全防护',
+    adminUpdate: '更新管理',
     adminProfile: '账号设置',
 
     // 开发者后台

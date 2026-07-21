@@ -405,3 +405,46 @@ func AdminUpdatePoll(deps *Deps) gin.HandlerFunc {
 		middleware.Success(c, resp)
 	}
 }
+
+// ============== 8. 管理后台：检查 GitHub 是否有新版本（v0.9.0 新增） ==============
+
+// AdminCheckUpdate GET /admin/update/check
+// v0.9.0 主动调用 GitHub API 查询最新 release，对比当前部署版本
+//
+// 与 /admin/update/poll 的区别：
+//   - poll: 对比本地 current_commit 变化（更新已部署后弹窗提示管理员刷新）
+//   - check: 对比 GitHub 远端 release 与本地配置的 current_version（部署前主动检查）
+//
+// 严格遵循铁律：
+//
+//	04 - GitHub owner/repo/token/current_version 全部从 sys_config 读取
+//	05 - 4 项 update.github.* 配置可通过后台「系统配置」实时调整
+//	06 - 网络错误显式返回错误信息，不编造数据；token 不回显
+//
+// 缓存：进程内缓存 60 秒（GitHubAPILimitMinInterval），防止管理员频繁点击触发 GitHub 限流
+func AdminCheckUpdate(deps *Deps) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		mgr := update.NewManager(deps.DB, deps.CfgCache)
+
+		result, err := mgr.CheckUpdate(ctx)
+		if err != nil {
+			// 错误已包含可读信息（配置缺失 / 网络错误 / 限流 / 仓库无 release 等）
+			logger.Warn("update: check github release failed", "err", err)
+			middleware.Fail(c, http.StatusBadGateway, 5002, err.Error())
+			return
+		}
+
+		// 记录操作日志（检查更新动作）
+		adminID := getUserID(c)
+		RecordOperation(deps, c, "update", "check_update", "success", "system", nil, map[string]interface{}{
+			"trigger_by": adminID,
+			"current":    result.CurrentVersion,
+			"latest":     result.LatestVersion,
+			"has_update": result.HasUpdate,
+			"repo":       result.RepoOwner + "/" + result.RepoName,
+		})
+
+		middleware.Success(c, result)
+	}
+}

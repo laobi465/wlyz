@@ -157,6 +157,7 @@ export default {
     adminSysConfig: 'System',
     adminLogs: 'Audit Logs',
     adminSecurity: 'Security',
+    adminUpdate: 'Updates',
     adminProfile: 'Profile',
 
     tenantDashboard: 'Overview',

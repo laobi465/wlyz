@@ -1,16 +1,17 @@
 // Package update v0.4.0 在线更新核心包
 // 严格遵循铁律 04/05/06：
-//   04 - 无硬编码：webhook 密钥 / 分支 / 自动开关 / 部署脚本路径 / 健康检查 URL 全部从 sys_config 读取
-//   05 - 配置走后端：8 项 update.* 配置可通过后台「系统配置」实时调整
-//   06 - 反幻觉：所有 shell 命令显式组合不拼接用户输入；测试覆盖正/负/锁/状态机/边界全场景
+//
+//	04 - 无硬编码：webhook 密钥 / 分支 / 自动开关 / 部署脚本路径 / 健康检查 URL 全部从 sys_config 读取
+//	05 - 配置走后端：8 项 update.* 配置可通过后台「系统配置」实时调整
+//	06 - 反幻觉：所有 shell 命令显式组合不拼接用户输入；测试覆盖正/负/锁/状态机/边界全场景
 //
 // 核心能力：
-//   1. VerifyWebhookSignature - GitHub HMAC-SHA256 签名校验（X-Hub-Signature-256）
-//   2. ParsePushEvent - 解析 GitHub push event payload（提取 ref / head_commit / sender / repository）
-//   3. Manager.AcquireLock / ReleaseLock - Redis 互斥锁（防并发触发）
-//   4. Manager.ExecuteUpdate - 执行更新流程（git pull + deploy script + health check + 回滚）
-//   5. Manager.HealthCheck - 更新后健康检查
-//   6. Manager.Rollback - 失败回滚（git reset --hard <prev_commit> + 重跑脚本）
+//  1. VerifyWebhookSignature - GitHub HMAC-SHA256 签名校验（X-Hub-Signature-256）
+//  2. ParsePushEvent - 解析 GitHub push event payload（提取 ref / head_commit / sender / repository）
+//  3. Manager.AcquireLock / ReleaseLock - Redis 互斥锁（防并发触发）
+//  4. Manager.ExecuteUpdate - 执行更新流程（git pull + deploy script + health check + 回滚）
+//  5. Manager.HealthCheck - 更新后健康检查
+//  6. Manager.Rollback - 失败回滚（git reset --hard <prev_commit> + 重跑脚本）
 package update
 
 import (
@@ -37,16 +38,16 @@ import (
 
 // 配置键常量（铁律 04：禁止硬编码配置键名）
 const (
-	CfgKeyWebhookSecret     = "update.webhook.secret"
-	CfgKeyWebhookBranch     = "update.webhook.branch"
-	CfgKeyAutoUpdate        = "update.webhook.auto_update"
-	CfgKeyDeployScript      = "update.deploy.script_path"
-	CfgKeyHealthCheckURL    = "update.healthcheck.url"
+	CfgKeyWebhookSecret      = "update.webhook.secret"
+	CfgKeyWebhookBranch      = "update.webhook.branch"
+	CfgKeyAutoUpdate         = "update.webhook.auto_update"
+	CfgKeyDeployScript       = "update.deploy.script_path"
+	CfgKeyHealthCheckURL     = "update.healthcheck.url"
 	CfgKeyHealthCheckTimeout = "update.healthcheck.timeout"
-	CfgKeyRollbackEnabled   = "update.rollback.enabled"
-	CfgKeyLockTimeout       = "update.lock.timeout"
-	CfgKeyPollEnabled       = "update.poll.enabled"          // v0.4.0 弹窗通知总开关
-	CfgKeyPollInterval      = "update.poll.interval_seconds" // v0.4.0 弹窗通知轮询间隔（秒）
+	CfgKeyRollbackEnabled    = "update.rollback.enabled"
+	CfgKeyLockTimeout        = "update.lock.timeout"
+	CfgKeyPollEnabled        = "update.poll.enabled"          // v0.4.0 弹窗通知总开关
+	CfgKeyPollInterval       = "update.poll.interval_seconds" // v0.4.0 弹窗通知轮询间隔（秒）
 )
 
 // PollIntervalMin 轮询间隔下限（秒），防止配置错误导致前端打爆后端
@@ -139,10 +140,10 @@ type UpdateResult struct {
 
 // Manager 更新管理器（单例）
 type Manager struct {
-	db       *gorm.DB
-	cache    *config.ConfigCache
-	mu       sync.Mutex // 进程内互斥（Redis 锁之外的二次保险）
-	lockKey  string     // Redis 锁键
+	db      *gorm.DB
+	cache   *config.ConfigCache
+	mu      sync.Mutex // 进程内互斥（Redis 锁之外的二次保险）
+	lockKey string     // Redis 锁键
 }
 
 var (
@@ -646,4 +647,191 @@ func (m *Manager) IsLocked(ctx context.Context) bool {
 		return false
 	}
 	return val != ""
+}
+
+// ============== 7. GitHub Release 检查更新（v0.9.0 新增） ==============
+
+// GitHub release 检查更新相关配置键（铁律 04：禁止硬编码配置键名）
+const (
+	CfgKeyGithubOwner   = "update.github.owner"           // GitHub 仓库 owner（如 laobi465）
+	CfgKeyGithubRepo    = "update.github.repo"            // GitHub 仓库名（如 wlyz）
+	CfgKeyGithubToken   = "update.github.token"           // GitHub Personal Access Token（可选，避免匿名限流）
+	CfgKeyGithubCurrent = "update.github.current_version" // 当前部署版本号（如 v0.9.0，由部署时写入）
+)
+
+// GitHubAPILimitMinInterval GitHub API 调用最小间隔（秒），防止频繁调用触发限流
+// 匿名调用限流：60次/小时；带 token：5000次/小时
+const GitHubAPILimitMinInterval = 60
+
+// GitHubRelease GitHub releases/latest API 响应（仅提取关键字段）
+// 完整字段见 https://docs.github.com/en/rest/releases/releases#get-the-latest-release
+type GitHubRelease struct {
+	TagName     string `json:"tag_name"`     // 版本号，如 v0.9.0
+	Name        string `json:"name"`         // release 标题
+	Body        string `json:"body"`         // release notes（markdown）
+	HTMLURL     string `json:"html_url"`     // release 页面 URL
+	PublishedAt string `json:"published_at"` // ISO 8601 发布时间
+	Prerelease  bool   `json:"prerelease"`   // 是否预发布
+	Draft       bool   `json:"draft"`        // 是否草稿
+	Author      struct {
+		Login string `json:"login"`
+	} `json:"author"`
+}
+
+// CheckUpdateResult 检查更新结果
+type CheckUpdateResult struct {
+	CurrentVersion string `json:"current_version"` // 当前部署版本
+	LatestVersion  string `json:"latest_version"`  // GitHub 最新 release 版本
+	HasUpdate      bool   `json:"has_update"`      // 是否有新版本
+	ReleaseNotes   string `json:"release_notes"`   // 更新内容（markdown）
+	ReleaseURL     string `json:"release_url"`     // release 页面 URL
+	PublishedAt    string `json:"published_at"`    // 发布时间（ISO 8601）
+	Author         string `json:"author"`          // 发布者
+	Prerelease     bool   `json:"prerelease"`      // 是否预发布
+	RepoOwner      string `json:"repo_owner"`      // 仓库 owner（用于前端跳转）
+	RepoName       string `json:"repo_name"`       // 仓库名
+	CurrentCommit  string `json:"current_commit"`  // 当前部署 commit hash
+	CheckedAt      int64  `json:"checked_at"`      // 检查时间戳（秒）
+	IsLocked       bool   `json:"is_locked"`       // 当前是否有更新锁
+}
+
+// githubCheckCache 进程内缓存（避免短时间内重复调用 GitHub API 触发限流）
+// 缓存策略：GitHubAPILimitMinInterval 秒内的重复请求直接返回缓存结果
+var (
+	githubCheckCache     *CheckUpdateResult
+	githubCheckCacheAt   time.Time
+	githubCheckCacheLock sync.Mutex
+)
+
+// CheckUpdate 主动调用 GitHub API 检查是否有新版本 release
+//
+// 严格遵循铁律：
+//
+//	04 - owner/repo/token/current_version 全部从 sys_config 读取，无硬编码
+//	05 - 4 项 update.github.* 配置可通过后台「系统配置」实时调整
+//	06 - token 仅用于 Authorization 头不回显；网络错误显式返回 error 不编造数据
+//
+// 缓存策略：进程内缓存 GitHubAPILimitMinInterval 秒，防止管理员频繁点击触发 GitHub 限流
+// 限流参考：匿名 60次/小时；带 token 5000次/小时
+func (m *Manager) CheckUpdate(ctx context.Context) (*CheckUpdateResult, error) {
+	// 1. 进程内缓存检查（防短时间重复调用）
+	githubCheckCacheLock.Lock()
+	if githubCheckCache != nil && time.Since(githubCheckCacheAt) < time.Duration(GitHubAPILimitMinInterval)*time.Second {
+		cached := *githubCheckCache
+		cached.CheckedAt = githubCheckCacheAt.Unix()
+		cached.IsLocked = m.IsLocked(ctx)
+		githubCheckCacheLock.Unlock()
+		return &cached, nil
+	}
+	githubCheckCacheLock.Unlock()
+
+	// 2. 从 sys_config 读取 GitHub 仓库信息
+	owner := m.cache.GetString(ctx, CfgKeyGithubOwner, "")
+	repo := m.cache.GetString(ctx, CfgKeyGithubRepo, "")
+	if owner == "" || repo == "" {
+		return nil, fmt.Errorf("未配置 GitHub 仓库信息，请在「系统配置 > update.github.owner/repo」中设置")
+	}
+	token := m.cache.GetString(ctx, CfgKeyGithubToken, "")
+	currentVersion := m.cache.GetString(ctx, CfgKeyGithubCurrent, "")
+
+	// 3. 当前部署 commit hash（用于辅助判断）
+	currentCommit := m.GetLatestCommit(ctx)
+
+	// 4. 调用 GitHub API: GET /repos/{owner}/{repo}/releases/latest
+	//    官方文档：https://docs.github.com/en/rest/releases/releases#get-the-latest-release
+	//    注意：releases/latest 不返回 prerelease 和 draft
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, repo)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("创建 GitHub API 请求失败: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", "KeyAuth-SaaS-UpdateChecker")
+	if token != "" {
+		// 铁律 06：token 仅用于 Authorization 头，不记录到日志、不返回给前端
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("调用 GitHub API 失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		// 仓库无 release（新仓库或未发布 release）
+		return nil, fmt.Errorf("GitHub 仓库 %s/%s 暂无 release，请先在 GitHub 上发布一个 release", owner, repo)
+	}
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
+		// 限流或 token 无效
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GitHub API 鉴权/限流失败（HTTP %d）: %s；如未配置 token 建议在「系统配置」中设置 update.github.token", resp.StatusCode, string(body))
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GitHub API 返回异常状态码 %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取 GitHub API 响应失败: %w", err)
+	}
+
+	var release GitHubRelease
+	if err := json.Unmarshal(body, &release); err != nil {
+		return nil, fmt.Errorf("解析 GitHub release 响应失败: %w", err)
+	}
+
+	// 5. 版本对比（规范化 tag 前缀 v/V 后做字符串比较）
+	latestVer := normalizeVersionTag(release.TagName)
+	currentVer := normalizeVersionTag(currentVersion)
+	hasUpdate := false
+	if currentVer == "" {
+		// 当前版本未配置：默认认为有更新（提示管理员去更新）
+		hasUpdate = true
+	} else if latestVer != "" && latestVer != currentVer {
+		hasUpdate = true
+	}
+
+	result := &CheckUpdateResult{
+		CurrentVersion: currentVersion,
+		LatestVersion:  release.TagName,
+		HasUpdate:      hasUpdate,
+		ReleaseNotes:   release.Body,
+		ReleaseURL:     release.HTMLURL,
+		PublishedAt:    release.PublishedAt,
+		Author:         release.Author.Login,
+		Prerelease:     release.Prerelease,
+		RepoOwner:      owner,
+		RepoName:       repo,
+		CurrentCommit:  currentCommit,
+		CheckedAt:      time.Now().Unix(),
+		IsLocked:       m.IsLocked(ctx),
+	}
+
+	// 6. 写入进程内缓存
+	githubCheckCacheLock.Lock()
+	githubCheckCache = result
+	githubCheckCacheAt = time.Now()
+	githubCheckCacheLock.Unlock()
+
+	return result, nil
+}
+
+// normalizeVersionTag 规范化版本号用于比较
+// 去除前缀 v/V，仅保留语义化版本字符串
+// 例：v0.9.0 → 0.9.0；V1.0.0 → 1.0.0；0.9.0 → 0.9.0
+func normalizeVersionTag(tag string) string {
+	if tag == "" {
+		return ""
+	}
+	// 去除前后空格
+	tag = strings.TrimSpace(tag)
+	// 去除前缀 v 或 V
+	if len(tag) > 0 && (tag[0] == 'v' || tag[0] == 'V') {
+		tag = tag[1:]
+	}
+	return tag
 }
