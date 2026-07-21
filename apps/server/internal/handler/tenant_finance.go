@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
@@ -100,7 +101,7 @@ type tenantApproveRechargeReq struct {
 }
 
 // TenantApproveRecharge POST /api/v1/tenant/recharge_requests/:id/approve
-// 流程（事务）：校验流水状态=pending → 加余额 → 更新流水 status=settled → 写审核备注
+// 流程（事务）：加余额 → 带 status=pending 守门的流水更新（RowsAffected 检查防并发双倍加余额）
 func TenantApproveRecharge(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := getTenantID(c)
@@ -118,15 +119,11 @@ func TenantApproveRecharge(deps *Deps) gin.HandlerFunc {
 		var req tenantApproveRechargeReq
 		_ = c.ShouldBindJSON(&req)
 
-		// 查流水
+		// 查流水（仅用于参数读取，事务内会重新做带守门的状态转换）
 		var log model.AgentBalanceLog
 		if err := deps.DB.Where("id = ? AND tenant_id = ? AND type = ?",
 			id, tenantID, "recharge").First(&log).Error; err != nil {
 			middleware.Fail(c, http.StatusNotFound, 1008, "充值申请不存在")
-			return
-		}
-		if log.Status != "pending" {
-			middleware.Fail(c, http.StatusBadRequest, 1012, "当前申请状态不允许审核（"+log.Status+"）")
 			return
 		}
 
@@ -136,12 +133,12 @@ func TenantApproveRecharge(deps *Deps) gin.HandlerFunc {
 			actualAmount = *req.ActualAmount
 		}
 
-		// 事务：加余额 → 更新流水 → 写审核备注
+		// 事务：锁 agent 行 → 加余额 → 带 status=pending 守门的流水更新
 		var newBalance float64
 		txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
-			// 0. 锁定 agent 行（P1-03 修复：防止并发审核双倍加余额）
+			// 0. 锁定 agent 行（防止并发审核双倍加余额）
 			var agent model.Agent
-			if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&agent, log.AgentID).Error; err != nil {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&agent, log.AgentID).Error; err != nil {
 				return err
 			}
 			// 1. 加余额
@@ -154,21 +151,26 @@ func TenantApproveRecharge(deps *Deps) gin.HandlerFunc {
 				Select("balance").Scan(&newBalance).Error; err != nil {
 				return err
 			}
-			// 3. 更新流水
-			updates := map[string]interface{}{
-				"status":        "settled",
-				"amount":        actualAmount,
-				"balance_after": newBalance,
-				"updated_at":    time.Now(),
-			}
+			// 3. 更新流水：带 status=pending 守门 + RowsAffected 检查（数据库级幂等）
 			remark := "审核通过"
 			if req.Remark != "" {
 				remark += "; " + req.Remark
 			}
-			updates["remark"] = remark
-			if err := tx.Model(&model.AgentBalanceLog{}).Where("id = ?", id).
-				Updates(updates).Error; err != nil {
-				return err
+			res := tx.Model(&model.AgentBalanceLog{}).
+				Where("id = ? AND status = ?", id, "pending").
+				Updates(map[string]interface{}{
+					"status":        "settled",
+					"amount":        actualAmount,
+					"balance_after": newBalance,
+					"remark":        remark,
+					"updated_at":    time.Now(),
+				})
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected == 0 {
+				// 状态已不是 pending（被并发审核处理了）
+				return fmt.Errorf("充值申请已被处理或状态已变更")
 			}
 			return nil
 		})
@@ -203,7 +205,7 @@ type tenantRejectReq struct {
 }
 
 // TenantRejectRecharge POST /api/v1/tenant/recharge_requests/:id/reject
-// 流程：校验流水状态=pending → 更新 status=rejected + 写驳回原因
+// 流程（事务）：带 status=pending 守门的流水更新 + RowsAffected 检查（数据库级幂等）
 func TenantRejectRecharge(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := getTenantID(c)
@@ -224,25 +226,34 @@ func TenantRejectRecharge(deps *Deps) gin.HandlerFunc {
 			return
 		}
 
+		// 校验流水归属（仅用于 404 提示与错误码区分，状态守门在事务内）
 		var log model.AgentBalanceLog
 		if err := deps.DB.Where("id = ? AND tenant_id = ? AND type = ?",
 			id, tenantID, "recharge").First(&log).Error; err != nil {
 			middleware.Fail(c, http.StatusNotFound, 1008, "充值申请不存在")
 			return
 		}
-		if log.Status != "pending" {
-			middleware.Fail(c, http.StatusBadRequest, 1012, "当前申请状态不允许审核（"+log.Status+"）")
-			return
-		}
 
-		if err := deps.DB.Model(&model.AgentBalanceLog{}).Where("id = ?", id).
-			Updates(map[string]interface{}{
-				"status":     "rejected",
-				"remark":     "驳回: " + req.Reason,
-				"updated_at": time.Now(),
-			}).Error; err != nil {
-			logger.Error("tenant_finance: reject recharge failed", "err", err)
-			middleware.Fail(c, http.StatusInternalServerError, 5002, "驳回失败")
+		txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
+			res := tx.Model(&model.AgentBalanceLog{}).
+				Where("id = ? AND status = ?", id, "pending").
+				Updates(map[string]interface{}{
+					"status":     "rejected",
+					"remark":     "驳回: " + req.Reason,
+					"updated_at": time.Now(),
+				})
+			if res.Error != nil {
+				logger.Error("tenant_finance: reject recharge failed", "err", res.Error)
+				return res.Error
+			}
+			if res.RowsAffected == 0 {
+				// 状态已不是 pending（被并发审核处理了）
+				return fmt.Errorf("充值申请已被处理或状态已变更")
+			}
+			return nil
+		})
+		if txErr != nil {
+			middleware.Fail(c, http.StatusInternalServerError, 5002, "驳回失败: "+txErr.Error())
 			return
 		}
 
@@ -317,9 +328,9 @@ type tenantPayWithdrawReq struct {
 }
 
 // TenantPayWithdraw POST /api/v1/tenant/withdrawals/:id/pay
-// 流程（事务）：校验 status=pending → 标记 withdraw.status=paid + paid_at + pay_trade_no
+// 流程（事务）：锁 agent 行 → 带 status=pending 守门的 withdraw 更新（RowsAffected 检查）
 //
-//	→ 更新对应 balance_log status=settled
+//	→ 按 related_withdraw_id 精确匹配对应 balance_log 状态置 settled
 //
 // 注：申请提现时已扣余额，此处仅标记已打款，不涉及金额变动
 func TenantPayWithdraw(deps *Deps) gin.HandlerFunc {
@@ -345,10 +356,6 @@ func TenantPayWithdraw(deps *Deps) gin.HandlerFunc {
 			middleware.Fail(c, http.StatusNotFound, 1008, "提现申请不存在")
 			return
 		}
-		if w.Status != "pending" {
-			middleware.Fail(c, http.StatusBadRequest, 1012, "当前提现状态不允许打款（"+w.Status+"）")
-			return
-		}
 
 		now := time.Now()
 		auditRemark := w.AuditRemark
@@ -361,8 +368,14 @@ func TenantPayWithdraw(deps *Deps) gin.HandlerFunc {
 		}
 
 		txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
-			// 1. 更新 withdraw
-			if err := tx.Model(&model.AgentWithdraw{}).Where("id = ?", id).
+			// 0. 锁定 agent 行（防止并发审核/驳回互踩）
+			var agent model.Agent
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&agent, w.AgentID).Error; err != nil {
+				return err
+			}
+			// 1. 更新 withdraw：带 status=pending 守门 + RowsAffected 检查（数据库级幂等）
+			res := tx.Model(&model.AgentWithdraw{}).
+				Where("id = ? AND status = ?", id, "pending").
 				Updates(map[string]interface{}{
 					"status":       "paid",
 					"paid_at":      now,
@@ -370,10 +383,14 @@ func TenantPayWithdraw(deps *Deps) gin.HandlerFunc {
 					"audit_remark": auditRemark,
 					"audited_by":   userID,
 					"updated_at":   now,
-				}).Error; err != nil {
-				return err
+				})
+			if res.Error != nil {
+				return res.Error
 			}
-			// 2. 按 related_withdraw_id 精确匹配对应 balance_log（P1-01/02 修复：原按 agent_id + 时间窗口模糊匹配会错配）
+			if res.RowsAffected == 0 {
+				return fmt.Errorf("提现申请已被处理或状态已变更")
+			}
+			// 2. 按 related_withdraw_id 精确匹配对应 balance_log（避免时间窗口模糊匹配错配）
 			if err := tx.Model(&model.AgentBalanceLog{}).
 				Where("related_withdraw_id = ? AND tenant_id = ? AND type = ?",
 					id, tenantID, "withdraw").
@@ -411,10 +428,10 @@ func TenantPayWithdraw(deps *Deps) gin.HandlerFunc {
 // ============== 6. 提现审核驳回 ==============
 
 // TenantRejectWithdraw POST /api/v1/tenant/withdrawals/:id/reject
-// 流程（事务）：校验 status=pending → 退回余额（balance += amount）
+// 流程（事务）：锁 agent 行 → 退回余额（balance += amount）
 //
-//	→ withdraw.status=rejected + audit_remark
-//	→ 对应 balance_log status=rejected
+//	→ 带 status=pending 守门的 withdraw 更新（RowsAffected 检查）
+//	→ 按 related_withdraw_id 精确匹配对应 balance_log status=rejected
 func TenantRejectWithdraw(deps *Deps) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tenantID := getTenantID(c)
@@ -441,10 +458,6 @@ func TenantRejectWithdraw(deps *Deps) gin.HandlerFunc {
 			middleware.Fail(c, http.StatusNotFound, 1008, "提现申请不存在")
 			return
 		}
-		if w.Status != "pending" {
-			middleware.Fail(c, http.StatusBadRequest, 1012, "当前提现状态不允许审核（"+w.Status+"）")
-			return
-		}
 
 		now := time.Now()
 		auditRemark := "驳回: " + req.Reason
@@ -454,27 +467,37 @@ func TenantRejectWithdraw(deps *Deps) gin.HandlerFunc {
 
 		var newBalance float64
 		txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
-			// 1. 退回余额
-			if err := tx.Model(&model.Agent{}).Where("id = ?", w.AgentID).
-				UpdateColumn("balance", gorm.Expr("balance + ?", w.Amount)).Error; err != nil {
+			// 0. 锁定 agent 行（防止并发审核/驳回互踩，导致余额重复退回）
+			var agent model.Agent
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&agent, w.AgentID).Error; err != nil {
 				return err
 			}
-			// 2. 读新余额
-			if err := tx.Model(&model.Agent{}).Where("id = ?", w.AgentID).
-				Select("balance").Scan(&newBalance).Error; err != nil {
-				return err
-			}
-			// 3. 更新 withdraw
-			if err := tx.Model(&model.AgentWithdraw{}).Where("id = ?", id).
+			// 1. 带 status=pending 守门的 withdraw 更新 + RowsAffected 检查（数据库级幂等，先于此的余额变动才有效）
+			res := tx.Model(&model.AgentWithdraw{}).
+				Where("id = ? AND status = ?", id, "pending").
 				Updates(map[string]interface{}{
 					"status":       "rejected",
 					"audit_remark": auditRemark,
 					"audited_by":   userID,
 					"updated_at":   now,
-				}).Error; err != nil {
+				})
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected == 0 {
+				return fmt.Errorf("提现申请已被处理或状态已变更")
+			}
+			// 2. 退回余额（提现申请时已扣 balance，此处加回；agent 行已锁定）
+			if err := tx.Model(&model.Agent{}).Where("id = ?", w.AgentID).
+				UpdateColumn("balance", gorm.Expr("balance + ?", w.Amount)).Error; err != nil {
 				return err
 			}
-			// 4. 按 related_withdraw_id 精确匹配对应 balance_log（P1-01/02 修复：原按 agent_id + 时间窗口模糊匹配会错配）
+			// 3. 读新余额
+			if err := tx.Model(&model.Agent{}).Where("id = ?", w.AgentID).
+				Select("balance").Scan(&newBalance).Error; err != nil {
+				return err
+			}
+			// 4. 按 related_withdraw_id 精确匹配对应 balance_log（避免时间窗口模糊匹配错配）
 			if err := tx.Model(&model.AgentBalanceLog{}).
 				Where("related_withdraw_id = ? AND tenant_id = ? AND type = ?",
 					id, tenantID, "withdraw").

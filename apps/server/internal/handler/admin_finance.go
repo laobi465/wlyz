@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
@@ -129,31 +130,55 @@ func AdminPayTenantWithdraw(deps *Deps) gin.HandlerFunc {
 
 		now := time.Now()
 		txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
-			// 1. 更新提现记录
+			// 0. 锁定 tenant 行（防止并发打款/驳回互踩）
+			var tenant model.SysTenant
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&tenant, wd.TenantID).Error; err != nil {
+				return fmt.Errorf("查询开发者失败: %w", err)
+			}
+
+			// 1. 更新提现记录：带 status=pending 守门 + RowsAffected 检查（数据库级幂等）
 			updates := map[string]interface{}{
-				"status":       "paid",
-				"paid_at":      now,
-				"audited_by":   adminID,
+				"paid_at":     now,
+				"audited_by":  adminID,
 				"audit_remark": req.Remark,
+				"updated_at":  now,
 			}
 			if req.PayTradeNo != "" {
 				updates["pay_trade_no"] = req.PayTradeNo
 			}
-			if err := tx.Model(&wd).Updates(updates).Error; err != nil {
-				return fmt.Errorf("更新提现记录失败: %w", err)
+			// 先尝试 pending → paid 转换；若已是 paid（重复回调），视为幂等成功直接跳过后续金额变动
+			updates["status"] = "paid"
+			res := tx.Model(&model.TenantWithdraw{}).
+				Where("id = ? AND status = ?", wd.ID, "pending").
+				Updates(updates)
+			if res.Error != nil {
+				return fmt.Errorf("更新提现记录失败: %w", res.Error)
+			}
+			if res.RowsAffected == 0 {
+				// 状态已不是 pending：检查是否已 paid（幂等成功）或处于其他终态
+				var cur model.TenantWithdraw
+				if err := tx.Select("status").First(&cur, wd.ID).Error; err != nil {
+					return fmt.Errorf("复核提现状态失败: %w", err)
+				}
+				if cur.Status == "paid" {
+					// 已被并发处理为 paid：幂等成功，直接返回，不再重复扣 frozen_balance
+					return nil
+				}
+				return fmt.Errorf("提现申请状态已变更（当前=%s），无法打款", cur.Status)
 			}
 
 			// 2. 扣减冻结余额（钱已实际打给开发者，从 frozen_balance 减去）
-			var tenant model.SysTenant
-			if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&tenant, wd.TenantID).Error; err != nil {
-				return fmt.Errorf("查询开发者失败: %w", err)
+			//    带 WHERE id = ? AND frozen_balance >= ? 守门 + RowsAffected 检查
+			//    冻结余额不足必须让事务失败，禁止强制设为 0
+			frozenRes := tx.Model(&model.SysTenant{}).
+				Where("id = ? AND frozen_balance >= ?", wd.TenantID, wd.Amount).
+				UpdateColumn("frozen_balance", gorm.Expr("frozen_balance - ?", wd.Amount))
+			if frozenRes.Error != nil {
+				return fmt.Errorf("更新冻结余额失败: %w", frozenRes.Error)
 			}
-			newFrozen := tenant.FrozenBalance - wd.Amount
-			if newFrozen < 0 {
-				newFrozen = 0 // 防御性兜底
-			}
-			if err := tx.Model(&tenant).Update("frozen_balance", newFrozen).Error; err != nil {
-				return fmt.Errorf("更新冻结余额失败: %w", err)
+			if frozenRes.RowsAffected == 0 {
+				return fmt.Errorf("冻结余额不足，无法完成打款（frozen_balance=%.2f, amount=%.2f）",
+					tenant.FrozenBalance, wd.Amount)
 			}
 
 			// 3. 更新对应的 balance_log 状态为 settled
@@ -222,47 +247,80 @@ func AdminRejectTenantWithdraw(deps *Deps) gin.HandlerFunc {
 
 		var balanceAfter float64
 		txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
-			// 1. 更新提现记录
-			if err := tx.Model(&wd).Updates(map[string]interface{}{
-				"status":       "rejected",
-				"audited_by":   adminID,
-				"audit_remark": req.Reason,
-			}).Error; err != nil {
-				return fmt.Errorf("更新提现记录失败: %w", err)
-			}
-
-			// 2. 退回余额 + 减冻结
+			// 0. 锁定 tenant 行（防止并发打款/驳回互踩）
 			var tenant model.SysTenant
-			if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&tenant, wd.TenantID).Error; err != nil {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&tenant, wd.TenantID).Error; err != nil {
 				return fmt.Errorf("查询开发者失败: %w", err)
 			}
-			newBalance := tenant.Balance + wd.Amount
-			newFrozen := tenant.FrozenBalance - wd.Amount
-			if newFrozen < 0 {
-				newFrozen = 0
-			}
-			if err := tx.Model(&tenant).Updates(map[string]interface{}{
-				"balance":         newBalance,
-				"frozen_balance":  newFrozen,
-			}).Error; err != nil {
-				return fmt.Errorf("退回余额失败: %w", err)
-			}
-			balanceAfter = newBalance
 
-			// 3. 更新原 withdraw 流水状态为 rejected
+			// 1. 更新提现记录：带 status=pending 守门 + RowsAffected 检查（数据库级幂等）
+			res := tx.Model(&model.TenantWithdraw{}).
+				Where("id = ? AND status = ?", wd.ID, "pending").
+				Updates(map[string]interface{}{
+					"status":       "rejected",
+					"audited_by":   adminID,
+					"audit_remark": req.Reason,
+					"updated_at":   time.Now(),
+				})
+			if res.Error != nil {
+				return fmt.Errorf("更新提现记录失败: %w", res.Error)
+			}
+			if res.RowsAffected == 0 {
+				// 状态已不是 pending：检查是否已 rejected（幂等成功）或处于其他终态
+				var cur model.TenantWithdraw
+				if err := tx.Select("status").First(&cur, wd.ID).Error; err != nil {
+					return fmt.Errorf("复核提现状态失败: %w", err)
+				}
+				if cur.Status == "rejected" {
+					// 已被并发处理为 rejected：幂等成功，直接返回，不再重复退回 balance/frozen_balance
+					return nil
+				}
+				return fmt.Errorf("提现申请状态已变更（当前=%s），无法驳回", cur.Status)
+			}
+
+			// 2. 扣减冻结余额（带 WHERE frozen_balance >= amount 守门 + RowsAffected 检查）
+			//    冻结余额不足必须让事务失败，禁止强制设为 0
+			frozenRes := tx.Model(&model.SysTenant{}).
+				Where("id = ? AND frozen_balance >= ?", wd.TenantID, wd.Amount).
+				UpdateColumn("frozen_balance", gorm.Expr("frozen_balance - ?", wd.Amount))
+			if frozenRes.Error != nil {
+				return fmt.Errorf("更新冻结余额失败: %w", frozenRes.Error)
+			}
+			if frozenRes.RowsAffected == 0 {
+				return fmt.Errorf("冻结余额不足，无法完成驳回（frozen_balance=%.2f, amount=%.2f）",
+					tenant.FrozenBalance, wd.Amount)
+			}
+
+			// 3. 退回余额（balance += amount，提现申请时已扣，此处加回）
+			balanceRes := tx.Model(&model.SysTenant{}).
+				Where("id = ?", wd.TenantID).
+				UpdateColumn("balance", gorm.Expr("balance + ?", wd.Amount))
+			if balanceRes.Error != nil {
+				return fmt.Errorf("退回余额失败: %w", balanceRes.Error)
+			}
+			// 读新余额供响应使用
+			if err := tx.Model(&model.SysTenant{}).Where("id = ?", wd.TenantID).
+				Select("balance").Scan(&balanceAfter).Error; err != nil {
+				return fmt.Errorf("读取新余额失败: %w", err)
+			}
+
+			// 4. 更新原 withdraw 流水状态为 rejected
 			if err := tx.Model(&model.TenantBalanceLog{}).
 				Where("related_withdraw_id = ? AND tenant_id = ? AND type = ?",
 					wd.ID, wd.TenantID, "withdraw").
-				Updates(map[string]interface{}{"status": "rejected"}).Error; err != nil {
+				Updates(map[string]interface{}{
+					"status":        "rejected",
+					"balance_after": balanceAfter,
+				}).Error; err != nil {
 				return fmt.Errorf("更新原流水状态失败: %w", err)
 			}
 
-			// 4. 写一条 refund 类型流水（金额为正）
+			// 5. 写一条 refund 类型流水（金额为正）
 			refundLog := &model.TenantBalanceLog{
 				TenantID:          wd.TenantID,
 				Type:              "refund",
 				Amount:            wd.Amount,
-				BalanceAfter:      newBalance,
+				BalanceAfter:      balanceAfter,
 				RelatedWithdrawID: &wd.ID,
 				PayMethod:         wd.PayMethod,
 				Status:            "settled",
@@ -328,7 +386,7 @@ func AdminBatchSettle(deps *Deps) gin.HandlerFunc {
 			// 1. 逐条查询并锁定
 			for _, sid := range req.SettlementIDs {
 				var s model.PlatformSettlement
-				if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&s, sid).Error; err != nil {
+				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&s, sid).Error; err != nil {
 					return fmt.Errorf("结算记录 %d 不存在", sid)
 				}
 				if s.Status == "settled" {
@@ -365,7 +423,7 @@ func AdminBatchSettle(deps *Deps) gin.HandlerFunc {
 				groups = append(groups, *g)
 
 				var tenant model.SysTenant
-				if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&tenant, g.TenantID).Error; err != nil {
+				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&tenant, g.TenantID).Error; err != nil {
 					return fmt.Errorf("查询开发者 %d 失败: %w", g.TenantID, err)
 				}
 				newBalance := tenant.Balance + g.TotalNet

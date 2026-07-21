@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/metrics"
@@ -874,16 +875,26 @@ func processPaidOrder(deps *Deps, notify *epay.NotifyParams) error {
 
 	// 7. 事务：更新订单 + 自动发卡 + 写抽成记录
 	now := time.Now()
+	var processed bool // 标记是否实际完成订单状态转换（幂等返回时为 false，跳过 Webhook）
 	txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
-		// 7.1 更新订单状态
-		if err := tx.Model(&order).Updates(map[string]interface{}{
-			"pay_status":        "paid",
-			"pay_trade_no":      notify.TradeNo,
-			"paid_at":           now,
-			"commission_amount": commissionAmount,
-		}).Error; err != nil {
-			return fmt.Errorf("更新订单状态失败: %w", err)
+		// 7.1 更新订单状态：带 pay_status='pending' 守门 + RowsAffected 检查（数据库级幂等）
+		//     若 RowsAffected==0 说明已被并发处理，直接返回 nil（幂等成功），跳过发卡/抽成
+		res := tx.Model(&model.AppOrder{}).
+			Where("id = ? AND pay_status = ?", order.ID, "pending").
+			Updates(map[string]interface{}{
+				"pay_status":        "paid",
+				"pay_trade_no":      notify.TradeNo,
+				"paid_at":           now,
+				"commission_amount": commissionAmount,
+			})
+		if res.Error != nil {
+			return fmt.Errorf("更新订单状态失败: %w", res.Error)
 		}
+		if res.RowsAffected == 0 {
+			// 已被并发处理：幂等成功，跳过发卡与抽成写入
+			return nil
+		}
+		processed = true
 
 		// 7.2 自动发卡（生成 N 张卡密，关联订单）
 		cardIDs := make([]uint64, 0, order.Quantity)
@@ -943,18 +954,21 @@ func processPaidOrder(deps *Deps, notify *epay.NotifyParams) error {
 	}
 
 	// v0.4.0 Webhook：异步分发 order.paid 事件（通知开发者订单已支付 + 已自动发卡）
-	DispatchWebhookEvent(deps, order.TenantID, openapi.EventOrderPaid, gin.H{
-		"order_no":          order.OrderNo,
-		"order_id":          order.ID,
-		"app_id":            order.AppID,
-		"card_type_id":      order.CardTypeID,
-		"quantity":          order.Quantity,
-		"total_amount":      order.TotalAmount,
-		"commission_amount": commissionAmount,
-		"net_amount":        netAmount,
-		"pay_trade_no":      notify.TradeNo,
-		"paid_at":           now.Unix(),
-	})
+	//     仅在本次事务实际完成订单状态转换时分发；幂等返回时不重复分发
+	if processed {
+		DispatchWebhookEvent(deps, order.TenantID, openapi.EventOrderPaid, gin.H{
+			"order_no":          order.OrderNo,
+			"order_id":          order.ID,
+			"app_id":            order.AppID,
+			"card_type_id":      order.CardTypeID,
+			"quantity":          order.Quantity,
+			"total_amount":      order.TotalAmount,
+			"commission_amount": commissionAmount,
+			"net_amount":        netAmount,
+			"pay_trade_no":      notify.TradeNo,
+			"paid_at":           now.Unix(),
+		})
+	}
 
 	return nil
 }
@@ -1028,8 +1042,27 @@ func processAgentRegisterPaid(deps *Deps, notify *epay.NotifyParams) error {
 		return levelErr
 	}
 	var agentID uint64 // v0.4.0：事务外捕获 agent.ID 供 Webhook 使用
+	var registered bool // 标记是否实际完成新建 Agent（幂等返回时为 false，跳过 Webhook/埋点）
 	txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
-		// 7.1 事务内重复 quota 校验（防 TOCTOU）
+		// 7.1 订单状态守门：带 pay_status='pending' WHERE + RowsAffected 检查（数据库级幂等）
+		//     若 RowsAffected==0 说明已被并发处理，直接返回 nil（幂等成功），跳过建 Agent / 邀请码闭环
+		orderRes := tx.Model(&model.AgentRegistrationOrder{}).
+			Where("id = ? AND pay_status = ?", order.ID, "pending").
+			Updates(map[string]interface{}{
+				"pay_status":   "paid",
+				"pay_trade_no": notify.TradeNo,
+				"paid_at":      now,
+			})
+		if orderRes.Error != nil {
+			return fmt.Errorf("更新订单状态失败: %w", orderRes.Error)
+		}
+		if orderRes.RowsAffected == 0 {
+			// 已被并发处理：幂等成功，跳过后续建 Agent 与邀请码闭环
+			return nil
+		}
+		registered = true
+
+		// 7.2 事务内重复 quota 校验（防 TOCTOU）
 		var agentCount int64
 		if err := tx.Model(&model.Agent{}).Where("tenant_id = ?", order.TenantID).Count(&agentCount).Error; err != nil {
 			return fmt.Errorf("查询代理数失败: %w", err)
@@ -1038,14 +1071,14 @@ func processAgentRegisterPaid(deps *Deps, notify *epay.NotifyParams) error {
 			return fmt.Errorf("开发者代理数已达上限 %d，注册失败", pkg.MaxAgents)
 		}
 
-		// 7.2 重复用户名校验（防并发）
+		// 7.3 重复用户名校验（防并发）
 		var nameExists int64
 		tx.Model(&model.Agent{}).Where("tenant_id = ? AND username = ?", order.TenantID, order.Username).Count(&nameExists)
 		if nameExists > 0 {
 			return fmt.Errorf("用户名 %s 已被占用", order.Username)
 		}
 
-		// 7.3 INSERT Agent（Status=active，可直接登录）
+		// 7.4 INSERT Agent（Status=active，可直接登录）
 		agent := &model.Agent{
 			TenantID:       order.TenantID,
 			Username:       order.Username,
@@ -1065,17 +1098,12 @@ func processAgentRegisterPaid(deps *Deps, notify *epay.NotifyParams) error {
 		}
 		agentID = agent.ID
 
-		// 7.4 回填 AgentRegistrationOrder
-		if err := tx.Model(&order).Updates(map[string]interface{}{
-			"agent_id":     agent.ID,
-			"pay_status":   "paid",
-			"pay_trade_no": notify.TradeNo,
-			"paid_at":      now,
-		}).Error; err != nil {
-			return fmt.Errorf("回填订单失败: %w", err)
+		// 7.5 回填 agent_id 到订单
+		if err := tx.Model(&order).Update("agent_id", agent.ID).Error; err != nil {
+			return fmt.Errorf("回填 agent_id 失败: %w", err)
 		}
 
-		// 7.5 邀请码状态机闭环：原子自增 used_count + 达 max_uses 时置 exhausted
+		// 7.6 邀请码状态机闭环：原子自增 used_count + 达 max_uses 时置 exhausted
 		// P0 高危 7：使用 SQL 原子操作 + WHERE 守门，防并发 TOCTOU 突破 max_uses
 		incrRes := tx.Model(&ic).
 			Where("id = ? AND used_count < max_uses", ic.ID).
@@ -1102,28 +1130,31 @@ func processAgentRegisterPaid(deps *Deps, notify *epay.NotifyParams) error {
 		return txErr
 	}
 
-	// 8. 删除 Redis 中的密码哈希缓存（已用过，安全清理）
+	// 8. 删除 Redis 中的密码哈希缓存（已用过，安全清理；幂等返回时缓存通常已被首笔删除，再删一次也无害）
 	deps.Redis.Del(ctx, pwdHashKey)
 
 	// 9. 审计追溯：AgentRegistrationOrder 自身已记录订单号/username/tenant_id/amount/agent_id/paid_at，
 	//    邀请码 used_by_agent_id 也已写入，无需额外日志（避免回调上下文缺 OperatorID 等字段写入失败）
 
 	// 10. v0.4.0 Webhook：异步分发 agent.registered 事件（通知开发者新代理注册成功）
-	DispatchWebhookEvent(deps, order.TenantID, openapi.EventAgentRegistered, gin.H{
-		"order_no":       order.OrderNo,
-		"agent_id":       agentID,
-		"agent_username": order.Username,
-		"agent_phone":    order.Phone,
-		"invite_code":    ic.Code,
-		"level":          agentLevel,
-		"parent_id":      parentID,
-		"amount":         order.Amount,
-		"pay_trade_no":   notify.TradeNo,
-		"registered_at":  now.Unix(),
-	})
+	//     仅在本次事务实际完成新建 Agent 时分发；幂等返回时不重复分发
+	if registered {
+		DispatchWebhookEvent(deps, order.TenantID, openapi.EventAgentRegistered, gin.H{
+			"order_no":       order.OrderNo,
+			"agent_id":       agentID,
+			"agent_username": order.Username,
+			"agent_phone":    order.Phone,
+			"invite_code":    ic.Code,
+			"level":          agentLevel,
+			"parent_id":      parentID,
+			"amount":         order.Amount,
+			"pay_trade_no":   notify.TradeNo,
+			"registered_at":  now.Unix(),
+		})
 
-	// v0.4.x Prometheus 业务埋点：代理注册成功 +1
-	metrics.IncAgentRegistered()
+		// v0.4.x Prometheus 业务埋点：代理注册成功 +1
+		metrics.IncAgentRegistered()
+	}
 
 	return nil
 }
@@ -1286,13 +1317,21 @@ func processTenantOwnPaidOrder(deps *Deps, notify *epay.NotifyParams) error {
 	// 5. 事务：更新订单 + 自动发卡 + 写开发者流水（balance 累加）
 	now := time.Now()
 	txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
-		// 5.1 更新订单状态
-		if err := tx.Model(&order).Updates(map[string]interface{}{
-			"pay_status":   "paid",
-			"pay_trade_no": notify.TradeNo,
-			"paid_at":      now,
-		}).Error; err != nil {
-			return fmt.Errorf("更新订单状态失败: %w", err)
+		// 5.1 更新订单状态：带 pay_status='pending' 守门 + RowsAffected 检查（数据库级幂等）
+		//     若 RowsAffected==0 说明已被并发处理，直接返回 nil（幂等成功），跳过发卡/流水
+		res := tx.Model(&model.AppOrder{}).
+			Where("id = ? AND pay_status = ?", order.ID, "pending").
+			Updates(map[string]interface{}{
+				"pay_status":   "paid",
+				"pay_trade_no": notify.TradeNo,
+				"paid_at":      now,
+			})
+		if res.Error != nil {
+			return fmt.Errorf("更新订单状态失败: %w", res.Error)
+		}
+		if res.RowsAffected == 0 {
+			// 已被并发处理：幂等成功，跳过发卡与流水写入
+			return nil
 		}
 
 		// 5.2 自动发卡
@@ -1332,7 +1371,7 @@ func processTenantOwnPaidOrder(deps *Deps, notify *epay.NotifyParams) error {
 
 		// 5.4 开发者余额累加 + 流水（自有支付资金已直接到开发者账户）
 		var tenant model.SysTenant
-		if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&tenant, order.TenantID).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&tenant, order.TenantID).Error; err != nil {
 			return fmt.Errorf("查询开发者失败: %w", err)
 		}
 		newBalance := tenant.Balance + order.TotalAmount
@@ -1392,14 +1431,25 @@ func processMonthlyFeePaid(deps *Deps, notify *epay.NotifyParams) error {
 
 	// 4. 事务：更新订单状态
 	now := time.Now()
+	var processed bool // 标记是否实际完成订单状态转换（幂等返回时为 false，跳过 Webhook）
 	txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&order).Updates(map[string]interface{}{
-			"pay_status": "paid",
-			"pay_mode":   "platform_epay",
-			"paid_at":    now,
-		}).Error; err != nil {
-			return fmt.Errorf("更新月费订单状态失败: %w", err)
+		// 带 pay_status='pending' 守门 + RowsAffected 检查（数据库级幂等）
+		// 若 RowsAffected==0 说明已被并发处理，直接返回 nil（幂等成功）
+		res := tx.Model(&model.TenantMonthlyFeeOrder{}).
+			Where("id = ? AND pay_status = ?", order.ID, "pending").
+			Updates(map[string]interface{}{
+				"pay_status": "paid",
+				"pay_mode":   "platform_epay",
+				"paid_at":    now,
+			})
+		if res.Error != nil {
+			return fmt.Errorf("更新月费订单状态失败: %w", res.Error)
 		}
+		if res.RowsAffected == 0 {
+			// 已被并发处理：幂等成功
+			return nil
+		}
+		processed = true
 		return nil
 	})
 
@@ -1408,17 +1458,20 @@ func processMonthlyFeePaid(deps *Deps, notify *epay.NotifyParams) error {
 	}
 
 	// 5. v0.4.0 Webhook：异步分发 order.paid 事件（复用订单已支付事件，payload 标注 order_type=monthly_fee）
-	DispatchWebhookEvent(deps, order.TenantID, openapi.EventOrderPaid, gin.H{
-		"order_no":     order.OrderNo,
-		"order_id":     order.ID,
-		"order_type":   "monthly_fee",
-		"tenant_id":    order.TenantID,
-		"amount":       order.Amount,
-		"period_start": order.PeriodStart.Unix(),
-		"period_end":   order.PeriodEnd.Unix(),
-		"pay_trade_no": notify.TradeNo,
-		"paid_at":      now.Unix(),
-	})
+	//    仅在本次事务实际完成订单状态转换时分发；幂等返回时不重复分发
+	if processed {
+		DispatchWebhookEvent(deps, order.TenantID, openapi.EventOrderPaid, gin.H{
+			"order_no":     order.OrderNo,
+			"order_id":     order.ID,
+			"order_type":   "monthly_fee",
+			"tenant_id":    order.TenantID,
+			"amount":       order.Amount,
+			"period_start": order.PeriodStart.Unix(),
+			"period_end":   order.PeriodEnd.Unix(),
+			"pay_trade_no": notify.TradeNo,
+			"paid_at":      now.Unix(),
+		})
+	}
 
 	return nil
 }
@@ -1561,7 +1614,7 @@ func AdminSettleOrder(deps *Deps) gin.HandlerFunc {
 
 			// 2. 累加开发者可提现余额（FOR UPDATE 防并发）
 			var tenant model.SysTenant
-			if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&tenant, s.TenantID).Error; err != nil {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&tenant, s.TenantID).Error; err != nil {
 				return fmt.Errorf("查询开发者失败: %w", err)
 			}
 			newBalance := tenant.Balance + s.NetAmount

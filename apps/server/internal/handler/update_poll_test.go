@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,8 +28,14 @@ import (
 )
 
 // setupGin 启动测试模式 gin engine
+// 注：使用 sync.Once 保证 gin.SetMode 只被调用一次，避免并发测试中
+// 多 goroutine 同时调用 setupGin 触发 DATA RACE（gin.SetMode 写包级变量）
+var ginModeOnce sync.Once
+
 func setupGin() *gin.Engine {
-	gin.SetMode(gin.TestMode)
+	ginModeOnce.Do(func() {
+		gin.SetMode(gin.TestMode)
+	})
 	return gin.New()
 }
 

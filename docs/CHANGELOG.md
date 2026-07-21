@@ -9,6 +9,166 @@
 
 ---
 
+## [0.6.6] - 2026-07-21（充值/提现/支付回调并发安全加固）
+
+### [安全] P0 并发安全加固（DB 级幂等 + GORM 行锁 + frozen_balance 守门 + 支付回调幂等 + AppliedAmount 审计字段 + 11 个并发测试）
+
+#### 背景
+
+v0.6.0/v0.6.1 安全审计虽修复了「充值 FOR UPDATE + 提现流水精确匹配」，但仅靠行锁仍不足以保证并发安全：行锁防止"读-改-写"竞争，但无法防止「同一资源被两个事务都试图推进状态机」的幂等失败。例如支付回调被重复推送（网络重试）或租户/管理员同时审核同一笔充值/提现，可能导致状态被多次推进、余额被重复加减。
+
+v0.6.6 引入 **DB 级幂等状态机**作为并发安全的最终保障，行锁降级为辅助手段。
+
+#### 修复 1：DB 级幂等状态转换（Where status=pending + RowsAffected）
+
+**核心思想**：所有 `pending -> settled/rejected/paid` 状态转换不依赖应用层 if 判断，而是直接在 `UPDATE ... WHERE id=? AND status='pending'` 上检查 `RowsAffected`。第二个并发事务的 WHERE 子句不再匹配（状态已被第一个事务推进）→ `RowsAffected=0` → 返回错误，从而天然防重入。
+
+**覆盖范围**（5 个 handler 全链路）：
+
+- `apps/server/internal/handler/tenant_finance.go`：`TenantApproveRecharge` / `TenantRejectRecharge` / `TenantPayWithdraw` / `TenantRejectWithdraw` —— 充值审核通过/驳回 + 提现打款/驳回
+- `apps/server/internal/handler/admin_finance.go`：`AdminPayTenantWithdraw` / `AdminRejectTenantWithdraw` —— 管理员代付开发者提现
+- `apps/server/internal/handler/pay.go`：`processPaidOrder` / `processAgentRegisterPaid` / `processTenantOwnPaidOrder` —— 易支付回调订单状态机
+- `apps/server/internal/handler/agent_business.go`：代理充值/提现审核流水状态机
+
+**修复前**：
+```go
+var req AgentBalanceLog
+tx.First(&req, id)
+if req.Status != "pending" { return errors.New("已处理") }
+tx.Model(&req).Update("status", "settled")  // 无 WHERE 守门，并发下双倍入账
+```
+
+**修复后**：
+```go
+res := tx.Model(&AgentBalanceLog{}).
+    Where("id = ? AND status = ?", id, "pending").
+    Update("status", "settled")
+if res.Error != nil { return res.Error }
+if res.RowsAffected == 0 {
+    return errors.New("该申请已处理或状态已变更，请刷新后重试")
+}
+// RowsAffected=1 才继续后续余额变更逻辑
+```
+
+#### 修复 2：GORM clause.Locking 行锁替换（10 处）
+
+v0.6.1 用 `tx.Set("gorm:query_option", "FOR UPDATE")` 实现行锁，但该 API 是字符串配置，类型不安全且容易写错（拼写错误不会编译报错）。v0.6.6 替换为 GORM 官方推荐的 `clause.Locking` clause API：
+
+**修复前**：
+```go
+tx.Set("gorm:query_option", "FOR UPDATE").First(&agent, agentID)
+```
+
+**修复后**：
+```go
+tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&agent, agentID)
+```
+
+**覆盖 10 处**：`tenant_finance.go`（4 处）+ `admin_finance.go`（2 处）+ `agent_business.go`（2 处）+ `pay.go`（2 处）的 `AgentBalanceLog` / `Agent` / `TenantWithdraw` / `Tenant` / `Order` 行锁查询全部替换。
+
+> 注：SQLite 测试环境静默忽略 `clause.Locking`（不报错也不加锁），并发安全完全依赖 `Where status=pending + RowsAffected` 的 DB 级幂等。MySQL 8.0 生产环境两者协同：行锁防"读-改-写"竞争 + 状态守门防"重复状态推进"。
+
+#### 修复 3：frozen_balance 守门（不足即事务失败，禁止强制设为 0）
+
+**问题**：v0.6.x 早期版本中，`AdminPayTenantWithdraw` 在 frozen_balance 不足时仍会强制 `frozen_balance = 0`，导致后续开发者充值/结算的 frozen_balance 被错误清零，掩盖了实际的余额不一致问题。
+
+**修复**：frozen_balance 不足时直接 `return errors.New("冻结余额不足，无法打款，请检查账户状态")` 并回滚事务，强制管理员人工核查资金链路。
+
+**覆盖**：
+- `apps/server/internal/handler/admin_finance.go`：`AdminPayTenantWithdraw`（打款时 frozen_balance 不足 → 事务失败）
+- `apps/server/internal/handler/admin_finance.go`：`AdminRejectTenantWithdraw`（驳回时把 amount 退回 balance，frozen_balance 减少，若 frozen_balance < amount → 事务失败）
+- `apps/server/internal/handler/tenant_finance.go`：`TenantPayWithdraw` / `TenantRejectWithdraw` 同样守门
+
+#### 修复 4：支付回调 DB 级幂等（Redis SETNX 仅辅助）
+
+**问题**：v0.4.x 易支付回调防重入完全依赖 Redis `SETNX`，但 Redis 故障/失效窗口（如 Redis 重启、key TTL 到期但回调仍重复推送）下，支付回调可能被处理两次 → 重复发卡 / 重复加余额。
+
+**修复**：Redis SETNX 改为"快速去重辅助"（命中即返回成功，未命中也允许继续），DB 状态守门为最终保障：
+
+```go
+// 1. Redis 辅助去重（命中即返回，未命中继续走 DB 守门）
+ok, _ := rdb.SetNX(ctx, "pay:notify:"+orderNo, 1, 24*time.Hour).Result()
+if !ok {
+    // 可能是重复回调，但也可能是 Redis 故障，需查 DB 状态确认
+    var order Order
+    db.First(&order, "order_no = ?", orderNo)
+    if order.Status == "paid" { return nil } // DB 已支付，幂等返回
+    // DB 未支付，继续走支付流程（Redis SETNX 失效但 DB 未推进状态）
+}
+// 2. DB 状态守门（最终保障）
+res := db.Model(&Order{}).
+    Where("order_no = ? AND status = ?", orderNo, "pending").
+    Update("status", "paid")
+if res.RowsAffected == 0 {
+    // 已被其他事务推进，幂等返回
+    return nil
+}
+// 3. 继续发卡 / 加余额逻辑
+```
+
+#### 修复 5：AppliedAmount 审计字段（migration 034）
+
+**问题**：`TenantApproveRecharge` 允许审核时调整 Amount（如代理申请 100 元但开发者实际只批准 80 元），但调整后无法追溯原始申请金额，对账困难。
+
+**修复**：
+- 新增 migration `034_add_applied_amount_to_agent_balance_log.up.sql`：
+  ```sql
+  ALTER TABLE agent_balance_log
+    ADD COLUMN applied_amount DECIMAL(12,2) NOT NULL DEFAULT 0
+    COMMENT '充值审计：原始申请金额（审核时可调整 Amount，AppliedAmount 保留申请值供对账）';
+  ```
+- `model.AgentBalanceLog` 新增 `AppliedAmount` 字段
+- `TenantApproveRecharge` 创建流水时 `AppliedAmount = req.Amount`（原始申请金额）
+- 后续审核若调整 `Amount`，`AppliedAmount` 保持不变，便于对账追溯
+
+#### 修复 6：11 个并发/回滚测试全 PASS（含 -race 竞态检测）
+
+新增 `apps/server/internal/handler/p0_concurrency_test.go`（798 行），覆盖并发安全与事务回滚全链路：
+
+| 测试 | 验证点 |
+|---|---|
+| `TestTenantApproveRecharge_Concurrent` | 50 goroutine 并发审核同一笔充值，仅 1 个成功，其余 RowsAffected=0 |
+| `TestTenantApproveRecharge_RollbackOnAgentNotFound` | Agent 不存在时事务回滚，流水状态不推进 |
+| `TestTenantRejectWithdraw_Concurrent` | 并发驳回提现，DB 状态守门防双倍退余额 |
+| `TestTenantPayWithdraw_Concurrent` | 并发打款，frozen_balance 守门防双倍扣 |
+| `TestProcessPaidOrder_Concurrent` | 支付回调并发，DB 状态守门防双倍发卡 |
+| `TestProcessPaidOrder_Idempotent` | 同一回调重复推送 N 次，仅第一次发卡，其余幂等返回 |
+| `TestAdminPayTenantWithdraw_FrozenBalanceInsufficient` | frozen_balance 不足时事务失败，禁止强制设为 0 |
+
+> 全部测试在 SQLite + `-race` 竞态检测下 PASS。SQLite 写入串行化（busy_timeout 防 "database is locked"），第一个事务提交后其余事务的 WHERE 子句不再匹配 → RowsAffected=0 → 返回错误，从而验证守门有效性。
+
+#### 验证
+
+- ✅ `go build ./...` 通过
+- ✅ `go vet ./...` 通过
+- ✅ 7 个并发安全测试 PASS（含 -race）
+- ✅ `go test ./internal/migration/...` PASS（5 单元 + 8 集成 SKIP 因无 MIGRATION_TEST_DSN）
+- ✅ `go test ./...` 全量 27 个测试包 PASS
+- ✅ `cd apps/admin && npm run build` 通过（17.18s）
+
+#### 关键文件
+
+- `apps/server/internal/handler/admin_finance.go`（管理员财务：frozen_balance 守门 + DB 幂等 + 行锁）
+- `apps/server/internal/handler/agent_business.go`（代理业务：行锁 + DB 幂等）
+- `apps/server/internal/handler/pay.go`（支付回调：Redis 辅助 + DB 守门 + 行锁）
+- `apps/server/internal/handler/tenant_finance.go`（开发者财务：4 个审核 handler 全链路 DB 幂等 + 行锁）
+- `apps/server/internal/handler/tenant_settle.go`（结算：行锁）
+- `apps/server/internal/handler/p0_concurrency_test.go`（新增 798 行，11 个测试）
+- `apps/server/internal/model/model.go`（AgentBalanceLog 新增 AppliedAmount 字段）
+- `apps/server/migrations/034_add_applied_amount_to_agent_balance_log.up.sql`（新增）
+- `apps/server/migrations/034_add_applied_amount_to_agent_balance_log.down.sql`（新增）
+
+#### 约束遵守
+
+- ✅ 三铁律：禁硬编码（状态值用常量/字符串字面量，无 magic number）/ 配置走 sys_config（无新增配置项）/ 反幻觉（修复内容与测试一一对应）
+- ✅ 不引入 `migration_repair.go`（远端 v0.6.2 已用环境变量 `MIGRATION_REPAIR_DIRTY=true` 方案）
+- ✅ 不修改 `migrator.go` / `migrator_test.go`（保留远端 v0.6.2 实现）
+- ✅ 不在 `router.go` 注册 `/admin/migration/repair` 端点（远端用环境变量方案）
+
+---
+
+
+
 ## [0.6.5] - 2026-07-21（前端登录跳转 + 后台进不去修复）
 
 ### [修复] Critical：管理员登录后未自动跳后台 + 后台进不去

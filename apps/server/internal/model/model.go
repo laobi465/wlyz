@@ -330,6 +330,7 @@ type AgentBalanceLog struct {
 	TenantID         uint64   `gorm:"index;not null" json:"tenant_id"`
 	Type             string   `gorm:"size:32;not null" json:"type"` // recharge/deduct/commission/withdraw/adjust
 	Amount           float64  `gorm:"type:decimal(12,2);not null" json:"amount"`
+	AppliedAmount    float64  `gorm:"type:decimal(12,2);not null;default:0" json:"applied_amount"` // 充值审计：原始申请金额（审核时可调整 Amount，AppliedAmount 保留申请值供对账）
 	BalanceAfter     float64  `gorm:"type:decimal(12,2);not null" json:"balance_after"`
 	RelatedOrderID   *uint64  `gorm:"index" json:"related_order_id"`
 	RelatedWithdrawID *uint64 `gorm:"index" json:"related_withdraw_id"` // P1-01/02 修复：关联 agent_withdraw id，精确匹配避免时间窗口模糊匹配错配

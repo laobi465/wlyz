@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/your-org/keyauth-saas/apps/server/internal/middleware"
 	"github.com/your-org/keyauth-saas/apps/server/internal/model"
@@ -213,7 +214,7 @@ func TenantWithdraw(deps *Deps) gin.HandlerFunc {
 		txErr := deps.DB.Transaction(func(tx *gorm.DB) error {
 			// 1. 查开发者并锁定
 			var tenant model.SysTenant
-			if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&tenant, tenantID).Error; err != nil {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&tenant, tenantID).Error; err != nil {
 				return fmt.Errorf("查询开发者失败: %w", err)
 			}
 			if tenant.Status != "active" {

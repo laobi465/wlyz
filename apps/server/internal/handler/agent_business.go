@@ -1090,16 +1090,18 @@ func AgentRecharge(deps *Deps) gin.HandlerFunc {
 		}
 
 		// 写入充值流水：status=pending，balance_after 保持当前余额（审核通过后再调整）
+		// amount = 申请金额；applied_amount = 同 amount，作为审计原始值（审核时可调整 amount，applied_amount 不变）
 		log := &model.AgentBalanceLog{
-			AgentID:      agentID,
-			TenantID:     tenantID,
-			Type:         "recharge",
-			Amount:       req.Amount,
-			BalanceAfter: agent.Balance,
-			PayMethod:    req.PayMethod,
-			PayVoucher:   req.PayVoucher,
-			Status:       "pending",
-			Remark:       req.Remark,
+			AgentID:       agentID,
+			TenantID:      tenantID,
+			Type:          "recharge",
+			Amount:        req.Amount,
+			AppliedAmount: req.Amount,
+			BalanceAfter:  agent.Balance,
+			PayMethod:     req.PayMethod,
+			PayVoucher:    req.PayVoucher,
+			Status:        "pending",
+			Remark:        req.Remark,
 		}
 		if err := deps.DB.Create(log).Error; err != nil {
 			logger.Error("agent: submit recharge request failed", "err", err, "agent_id", agentID, "tenant_id", tenantID)

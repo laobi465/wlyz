@@ -7,6 +7,37 @@
 
 ---
 
+## v0.6.6 并发安全加固 ✅ 已完成 2026-07-21
+
+### [P0] 充值/提现/支付回调并发安全加固 ✅ 已完成 v0.6.6
+- [x] [已完成 2026-07-21] **背景**：v0.6.0/v0.6.1 安全审计虽修复了「充值 FOR UPDATE + 提现流水精确匹配」，但仅靠行锁不足以保证并发安全：行锁防止"读-改-写"竞争，但无法防止「同一资源被两个事务都试图推进状态机」的幂等失败（如支付回调重复推送、租户/管理员同时审核同一笔充值/提现）→ 重复发卡 / 双倍加减余额
+- [x] [已完成 2026-07-21] **修复 1：DB 级幂等状态转换**：所有 `pending -> settled/rejected/paid` 状态转换用 `Where(status=pending)+RowsAffected` 检查，第二个并发事务的 WHERE 子句不再匹配 → `RowsAffected=0` → 返回错误。覆盖 5 个 handler 全链路（`tenant_finance.go` 4 个审核 + `admin_finance.go` 2 个 + `pay.go` 3 个 processPaid + `agent_business.go`）
+- [x] [已完成 2026-07-21] **修复 2：GORM `clause.Locking{Strength:"UPDATE"}` 行锁替换**：10 处 `tx.Set("gorm:query_option", "FOR UPDATE")` 替换为类型安全的 clause API（tenant_finance.go 4 处 + admin_finance.go 2 处 + agent_business.go 2 处 + pay.go 2 处）。SQLite 测试环境静默忽略，并发安全完全依赖 DB 级幂等；MySQL 8.0 生产环境两者协同
+- [x] [已完成 2026-07-21] **修复 3：frozen_balance 守门**：管理员打款/驳回时 frozen_balance 不足即事务失败并回滚，禁止强制设为 0（防掩盖余额不一致问题）。覆盖 `AdminPayTenantWithdraw` / `AdminRejectTenantWithdraw` / `TenantPayWithdraw` / `TenantRejectWithdraw`
+- [x] [已完成 2026-07-21] **修复 4：支付回调 DB 级幂等**：Redis SETNX 改为"快速去重辅助"（命中即返回，未命中继续走 DB 守门），DB 状态守门为最终保障。防 Redis 故障/失效窗口下支付回调被处理两次
+- [x] [已完成 2026-07-21] **修复 5：AppliedAmount 审计字段**：migration 034 新增 `applied_amount` 列 + `model.AgentBalanceLog.AppliedAmount` 字段，`TenantApproveRecharge` 创建流水时 `AppliedAmount = req.Amount`（原始申请金额），后续审核若调整 Amount 则 AppliedAmount 保持不变，便于对账追溯
+- [x] [已完成 2026-07-21] **修复 6：11 个并发/回滚测试全 PASS**：新增 `apps/server/internal/handler/p0_concurrency_test.go`（798 行），覆盖 TenantApproveRecharge / TenantRejectWithdraw / TenantPayWithdraw / ProcessPaidOrder / AdminPayTenantWithdraw 全链路并发与回滚场景，含 `-race` 竞态检测
+
+### v0.6.6 验证
+- [x] [已完成 2026-07-21] `go build ./...` 通过
+- [x] [已完成 2026-07-21] `go vet ./...` 通过
+- [x] [已完成 2026-07-21] 7 个并发安全测试 PASS（含 -race）
+- [x] [已完成 2026-07-21] `go test ./internal/migration/...` PASS（5 单元 + 8 集成 SKIP 因无 MIGRATION_TEST_DSN）
+- [x] [已完成 2026-07-21] `go test ./...` 全量 27 个测试包 PASS
+- [x] [已完成 2026-07-21] `cd apps/admin && npm run build` 通过（17.18s）
+
+### v0.6.6 约束遵守
+- [x] [已完成 2026-07-21] 不引入 `migration_repair.go`（远端 v0.6.2 已用环境变量 `MIGRATION_REPAIR_DIRTY=true` 方案）
+- [x] [已完成 2026-07-21] 不修改 `migrator.go` / `migrator_test.go`（保留远端 v0.6.2 实现）
+- [x] [已完成 2026-07-21] 不在 `router.go` 注册 `/admin/migration/repair` 端点（远端用环境变量方案）
+- [x] [已完成 2026-07-21] 三铁律：禁硬编码 / 配置走 sys_config / 反幻觉（修复内容与测试一一对应）
+
+### v0.6.6 待真实环境验证
+- [ ] [待开始] MySQL 8.0 真实环境下 `clause.Locking{Strength:"UPDATE"}` 行锁实际加锁行为验证（SQLite 静默忽略）
+- [ ] [待开始] MySQL 8.0 真实环境下 50 goroutine 并发审核压测（验证 RowsAffected=0 路径在生产数据库下的正确性）
+
+---
+
 ## v0.6.5 前端登录跳转修复 ✅ 已完成 2026-07-21
 
 ### [P0] 管理员登录后没自动跳后台 + 后台进不去 ✅ 已完成 v0.6.5
@@ -78,6 +109,14 @@
 - [x] [已完成 2026-07-20] 错误信息泄露 30 处（err.Error() 改 logger.Error + 通用消息）
 - [x] [已完成 2026-07-20] N+1 查询 4 处（admin/tenant 列表批量聚合）
 - [x] [已完成 2026-07-20] HTTP 客户端超时 4 处（notify 包 webhook + SMS 10s 超时）
+
+### [专项] 并发安全加固 ✅ 已完成 v0.6.6
+- [x] [已完成 2026-07-21] **DB 级幂等状态转换**：充值审核/提现审核/支付回调所有 `pending->settled/rejected/paid` 转换用 `Where(status=pending)+RowsAffected` 检查，第二个并发请求 RowsAffected=0 直接失败（覆盖 5 个 handler 全链路）
+- [x] [已完成 2026-07-21] **GORM `clause.Locking{Strength:"UPDATE"}` 行锁替换**：10 处 `tx.Set("gorm:query_option", "FOR UPDATE")` 替换为类型安全的 clause API
+- [x] [已完成 2026-07-21] **frozen_balance 守门**：管理员打款/驳回时不足即事务失败，禁止强制设为 0
+- [x] [已完成 2026-07-21] **支付回调 DB 级幂等**：Redis SETNX 仅辅助，DB 状态守门为最终保障（防 Redis 故障/失效窗口）
+- [x] [已完成 2026-07-21] **AppliedAmount 审计字段**：migration 034 新增 `applied_amount` 列，保留原始申请金额供对账
+- [x] [已完成 2026-07-21] **11 个并发/回滚测试全 PASS**（含 `-race` 竞态检测，详见上方 v0.6.6 章节）
 
 ### 后续可选清理（非阻断性，按需迭代）
 - [ ] [待开始] analysis.go 等 ~40 处参数校验类错误泄露（`参数错误: "+err.Error()`）

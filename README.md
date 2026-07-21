@@ -2,7 +2,7 @@
 
 > 面向开发者的多租户卡密验证 SaaS 平台
 
-[![Version](https://img.shields.io/badge/version-0.6.5-blue.svg)](docs/CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.6.6-blue.svg)](docs/CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Proprietary-red.svg)](#许可证)
 [![Go](https://img.shields.io/badge/Go-1.22+-00ADD8.svg)](https://golang.org)
 [![Vue](https://img.shields.io/badge/Vue-3.4+-42b883.svg)](https://vuejs.org)
@@ -107,7 +107,7 @@ sudo bash scripts/one_click_deploy.sh
 
 > 脚本严格遵守三铁律：禁硬编码（密钥现场生成）/ 配置走 sys_config / 反幻觉（脚本含详细日志和错误处理）。完整说明见 [scripts/one_click_deploy.sh](scripts/one_click_deploy.sh)。
 
-## 当前版本（v0.6.5 前端登录跳转 + 后台进不去 + v0.6.4 GORM datetime + v0.6.3 migration 030 + v0.6.2 dirty 迁移 完成）
+## 当前版本（v0.6.6 并发安全加固 + v0.6.5 前端登录跳转 + v0.6.4 GORM datetime + v0.6.3 migration 030 + v0.6.2 dirty 迁移 完成）
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
@@ -141,6 +141,7 @@ sudo bash scripts/one_click_deploy.sh
 | **migration 030 列数不匹配修复** | ✅ 已完成 v0.6.3 | **根因**：`030_v0.5.0_notify_webhook.up.sql` 的 INSERT 声明 6 列但每行 VALUES 写了 7 个值（多余空字符串），MySQL 报 `Error 1136 (Column count doesn't match value count at row 1)`；**修复** 移除多余字段，列顺序对齐 sys_config 表 schema；**全量扫描** Python 脚本验证所有 `migrations/*.up.sql` 的 `INSERT INTO sys_config` 列数一致性，031/032/033 全部匹配，仅 030 一处 bug |
 | **GORM AutoMigrate datetime(3) 兼容修复** | ✅ 已完成 v0.6.4 | **根因**：`db.AutoMigrate(&model.SysConfig{})` 默认把 `time.Time` 推断为 `datetime(3)`（带毫秒），但 migration 001 用 `DATETIME`（无毫秒）建表，AutoMigrate 触发 `ALTER TABLE MODIFY COLUMN created_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP`，在 MySQL 8.0 + sql_mode=STRICT_TRANS_TABLES 下报 `Error 1067 (Invalid default value for 'created_at')`；**修复** `SysConfig` struct 的 `CreatedAt`/`UpdatedAt` GORM tag 显式声明 `type:datetime`，让 GORM 不再修改列定义，保持 migration 001 schema 不变 |
 | **前端登录跳转 + 后台进不去修复** | ✅ 已完成 v0.6.5 | **根因**：`auth.role` 为空字符串时（localStorage 持久化数据损坏 / 旧版本字段缺失 / 手动篡改），`homePath` 计算为 `//dashboard` → 404；路由守卫回退同样问题；**修复 1** `stores/auth.ts` homePath 兜底 role 为空返回 `/login`；**修复 2** `router/index.ts` 守卫检测 stale state 强制 logout；**修复 3** `login/index.vue` 改为 Promise 风格（原 callback 下 await 是 no-op）；**修复 4** 优先使用后端返回的 `resp.user.role`（防幻觉）；**修复 5** redirect 白名单校验只允许 `/admin /tenant /agent` 开头 |
+| **充值/提现/支付回调并发安全加固** | ✅ 已完成 v0.6.6 | **DB 级幂等状态转换**：充值审核/提现审核/支付回调所有 `pending->settled/rejected/paid` 转换用 `Where(status=pending)+RowsAffected` 检查，第二个并发请求 RowsAffected=0 直接失败；**GORM clause.Locking 行锁**：10 处 `tx.Set("gorm:query_option", "FOR UPDATE")` 替换为 `tx.Clauses(clause.Locking{Strength: "UPDATE"})`，类型安全且可读；**frozen_balance 守门**：管理员打款/驳回时不足即事务失败，禁止强制设为 0；**支付回调 DB 级幂等**：Redis SETNX 仅辅助，DB 状态守门为最终保障（防 Redis 故障/失效窗口）；**AppliedAmount 审计字段**：migration 034 新增 `applied_amount` 列，审核时若调整 Amount 则保留原始申请金额供对账；**11 个并发/回滚测试全 PASS**（含 `-race` 竞态检测，覆盖 TenantApproveRecharge / TenantRejectWithdraw / TenantPayWithdraw / ProcessPaidOrder / AdminPayTenantWithdraw 全链路） |
 
 详细变更见 [CHANGELOG.md](docs/CHANGELOG.md)，任务进度见 [TODO.md](docs/TODO.md)。
 
@@ -327,6 +328,7 @@ bash scripts/reset_admin_password.sh
 | **P1** | 普通 | 21 | ✅ v0.6.1 | Migration 兼容性 + 加密名实一致 + JWT Subject + Nonce 顺序 + IP 黑名单 + CF IP 伪造 + v-html XSS + Cookie Secure + 充值 FOR UPDATE + 提现流水精确匹配 + 版本号比较 + TOTP skew |
 | **P2** | 联调 | 15 | ✅ v0.6.0 | 字段映射 + 枚举对齐 + 分页参数 + 云变量字段 + 收入趋势 + Top 应用 + 邀请码 + 设备 location + 支付配置 + 版本 channel + 公告 type/status + 佣金 type/status |
 | **P3** | 优化 | 34 | ✅ v0.6.1 | 30 处错误信息泄露 + 4 处 N+1 查询 + 4 处 HTTP 客户端超时 |
+| **专项** | 并发安全 | 11 测试 | ✅ v0.6.6 | DB 级幂等状态转换（Where status=pending + RowsAffected）+ GORM `clause.Locking{Strength:"UPDATE"}` 行锁（10 处）+ frozen_balance 守门（不足即事务失败）+ 支付回调 DB 级幂等（Redis 仅辅助）+ AppliedAmount 审计字段（migration 034）+ 11 个并发/回滚测试全 PASS（含 -race 竞态检测） |
 
 ### 安全审计亮点
 
@@ -387,6 +389,7 @@ bash scripts/reset_admin_password.sh
 - **v0.6.3（已完成 2026-07-21）**：**Critical Bug 修复** —— migration 030 (`030_v0.5.0_notify_webhook`) 在 `INSERT INTO sys_config` 阶段报 `Error 1136 (Column count doesn't match value count at row 1)`。根因：INSERT 声明 6 列但每行 VALUES 写了 7 个值（多余空字符串）。修复：移除多余字段，列顺序对齐 sys_config 表 schema；Python 脚本全量扫描所有 migration 文件确认仅此一处 bug
 - **v0.6.4（已完成 2026-07-21）**：**Critical Bug 修复** —— 33 个 migration 全部应用后，`db.AutoMigrate(&model.SysConfig{})` 触发 `ALTER TABLE MODIFY COLUMN created_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP` 失败，MySQL 8.0 报 `Error 1067 (Invalid default value for 'created_at')`。根因：GORM 默认把 `time.Time` 推断为 `datetime(3)`（带毫秒），但 migration 001 用 `DATETIME`（无毫秒）建表。修复：`SysConfig` struct 的 `CreatedAt`/`UpdatedAt` GORM tag 显式声明 `type:datetime`，让 GORM 不再修改列定义
 - **v0.6.5（已完成 2026-07-21）**：**前端登录跳转 + 后台进不去修复** —— 管理员登录后没自动跳后台 + 后台进不去。根因：`auth.role` 为空时（localStorage 持久化数据损坏 / 旧版本字段缺失 / 手动篡改），`homePath` 计算为 `//dashboard` → 404；路由守卫回退同样问题；登录页 callback 风格 `await` 是 no-op。修复：① `stores/auth.ts` homePath 兜底；② `router/index.ts` 守卫检测 stale state 强制 logout；③ `login/index.vue` 改 Promise 风格；④ 优先用后端返回的 role；⑤ redirect 白名单校验
+- **v0.6.6（已完成 2026-07-21）**：**充值/提现/支付回调并发安全加固** —— 修复 v0.6.0/v0.6.1 遗留的并发竞态隐患。**DB 级幂等状态转换**：所有 `pending->settled/rejected/paid` 转换用 `Where(status=pending)+RowsAffected` 检查，第二个并发请求直接失败；**GORM `clause.Locking{Strength:"UPDATE"}` 行锁**：10 处 `tx.Set("gorm:query_option", "FOR UPDATE")` 替换为类型安全的 clause API；**frozen_balance 守门**：管理员打款/驳回时不足即事务失败，禁止强制设为 0；**支付回调 DB 级幂等**：Redis SETNX 仅辅助，DB 状态守门为最终保障（防 Redis 故障/失效窗口）；**AppliedAmount 审计字段**：migration 034 新增 `applied_amount` 列保留原始申请金额；**11 个并发/回滚测试全 PASS**（含 -race 竞态检测，覆盖 TenantApproveRecharge / TenantRejectWithdraw / TenantPayWithdraw / ProcessPaidOrder / AdminPayTenantWithdraw 全链路）；全量 27 个测试包 PASS + admin build PASS
 - **后续**：analysis.go 等 ~40 处参数校验类错误泄露清理、openapi.go/enduser.go c.JSON 直接泄露 ~20 处清理（非阻断性，按需迭代）+ MySQL 8.0 真实环境集成测试验证
 
 ## 开发约束（铁律）
