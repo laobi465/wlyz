@@ -199,28 +199,34 @@ onMounted(async () => {
 // Step 1 提交：调 AgentRegister 创建预支付订单 + 返回 pay_url
 const submitRegister = async () => {
   if (!inviteFormRef.value) return
-  await inviteFormRef.value.validate(async (valid) => {
-    if (!valid) return
-    loading.value = true
-    try {
-      const resp = await agentRegisterApi({
-        invite_code: inviteForm.invite_code,
-        username: inviteForm.username,
-        password: inviteForm.password,
-        phone: inviteForm.phone || undefined,
-        pay_type: selectedMethod.value
-      })
-      currentOrderNo.value = resp.order_no
-      currentPayURL.value = resp.pay_url
-      registerFee.value = resp.amount
-      activeStep.value = 1
-      ElMessage.success('订单已创建，请前往支付')
-    } catch (e: any) {
-      // 错误信息由 http 拦截器统一处理
-    } finally {
-      loading.value = false
-    }
-  })
+  // v0.9.0 修复：原 callback 风格 `await inviteFormRef.value.validate(async (valid) => {...})`
+  // 中 await 立即 resolve，callback 内 async 操作不被等待，finally 立即执行
+  // 表现为"点击下一步按钮没反应"——按钮 loading 一闪而过，注册请求未真正发出
+  // 改为 Promise 风格：validate 失败抛异常被 catch 捕获后直接 return
+  try {
+    await inviteFormRef.value.validate()
+  } catch {
+    return // 校验失败
+  }
+  loading.value = true
+  try {
+    const resp = await agentRegisterApi({
+      invite_code: inviteForm.invite_code,
+      username: inviteForm.username,
+      password: inviteForm.password,
+      phone: inviteForm.phone || undefined,
+      pay_type: selectedMethod.value
+    })
+    currentOrderNo.value = resp.order_no
+    currentPayURL.value = resp.pay_url
+    registerFee.value = resp.amount
+    activeStep.value = 1
+    ElMessage.success('订单已创建，请前往支付')
+  } catch (e: any) {
+    // 错误信息由 http 拦截器统一处理
+  } finally {
+    loading.value = false
+  }
 }
 
 // Step 2 跳转到支付页面（新窗口，避免丢失原页面状态）

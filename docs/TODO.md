@@ -7,6 +7,48 @@
 
 ---
 
+## v0.9.0 登录入口分离 / 注册按钮失效 / 代理注册路由独立 ✅ 已完成 2026-07-21
+
+### [P0] 管理员登录状态不保存 ✅ 已完成 v0.9.0
+- [x] [已完成 2026-07-21] **根因**：Pinia persist 仅持久化 state 字段，`_refreshTimer` 定时器不持久化，刷新页面后定时器丢失，access token 过期前不会自动续期，token 过期后 401 触发 refresh 失败 → logout → 登录状态丢失
+- [x] [已完成 2026-07-21] **修复**：App.vue onMounted 中主动调用 `auth.scheduleRefresh()` 重建定时器
+- [x] [已完成 2026-07-21] **附带修复**：补上 v0.8.0 遗漏的 `theme.init()` 调用
+
+### [P0] 管理员后台改为 /admin 才能登陆，用户端不显示 ✅ 已完成 v0.9.0
+- [x] [已完成 2026-07-21] **新增路由**：`/admin/login` 复用 Login.vue，meta.loginMode='admin'
+- [x] [已完成 2026-07-21] **修改 /login**：增加 meta.loginMode='user'，不再显示 admin Tab
+- [x] [已完成 2026-07-21] **Login.vue 改造**：根据 route.meta.loginMode 决定显示哪些角色 Tab；单 Tab 时不渲染 el-tabs
+- [x] [已完成 2026-07-21] **路由守卫更新**：未登录访问 /admin/* 跳 /admin/login，其他跳 /login
+- [x] [已完成 2026-07-21] **http 拦截器更新**：redirectToLogin 根据当前路径判断跳转目标
+
+### [P0] 登录和注册开发者没反应 ✅ 已完成 v0.9.0
+- [x] [已完成 2026-07-21] **根因**：`await formRef.value.validate(async (valid) => {...})` 中 await 立即 resolve，callback 内 async 操作不被等待
+- [x] [已完成 2026-07-21] **修复 TenantRegister.vue**：handleRegister 改为 Promise 风格 `try { await formRef.value.validate() } catch { return }`
+- [x] [已完成 2026-07-21] **修复 AgentRegister.vue**：submitRegister 改为 Promise 风格
+- [x] [已完成 2026-07-21] **历史**：Login.vue 的 handleLogin 已在 v0.6.5 修复过相同 bug
+
+### [P0] 代理注册显示「无权限访问」 ✅ 已完成 v0.9.0
+- [x] [已完成 2026-07-21] **根因**：/agent/register 嵌套在 /agent 路由下，AgentLayout.onMounted 调用 agentMeApi() 未登录返回 401/403
+- [x] [已完成 2026-07-21] **修复**：将代理注册移至独立顶层路由 /register/agent，不使用 AgentLayout
+
+### [P0] 代理注册页显示余额、侧边栏、头像 ✅ 已完成 v0.9.0
+- [x] [已完成 2026-07-21] **根因**：同上，AgentLayout 渲染完整后台布局
+- [x] [已完成 2026-07-21] **修复**：同上，独立路由不使用 AgentLayout
+
+### v0.9.0 验证
+- [x] [已完成 2026-07-21] `cd apps/admin && npm run build` 通过（vue-tsc 类型检查 + Vite 构建，17.00s）
+- [x] [已完成 2026-07-21] i18n 翻译键新增：login.subtitleAdmin / route.adminLogin / route.agentRegister
+- [x] [已完成 2026-07-21] i18n 重复键清理：删除代理后台菜单块中重复的 agentRegister 键
+
+### v0.9.0 待真实环境验证
+- [ ] [待开始] 真实浏览器验证：管理员通过 /admin/login 登录后刷新页面保持登录状态
+- [ ] [待开始] 真实浏览器验证：/login 页面不显示 admin Tab
+- [ ] [待开始] 真实浏览器验证：开发者注册按钮点击后正常提交
+- [ ] [待开始] 真实浏览器验证：代理注册页 /register/agent 不显示侧边栏/余额/头像
+- [ ] [待开始] 真实浏览器验证：代理注册页不显示「无权限访问」
+
+---
+
 ## v0.8.0 去除多主题与暗黑模式 ✅ 已完成 2026-07-21
 
 ### [移除] 多主题架构（light/dark/blue/purple/green/auto）✅ 已完成 v0.8.0

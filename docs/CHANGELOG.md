@@ -9,6 +9,71 @@
 
 ---
 
+## [0.9.0] - 2026-07-21（登录入口分离 / 注册按钮失效 / 代理注册路由独立）
+
+### 背景
+
+用户反馈 5 个登录/路由/注册相关 bug：
+1. 管理员登录后刷新页面丢失登录状态
+2. 管理员后台应通过 `/admin` 独立入口登录，用户端 `/login` 不显示管理员 Tab
+3. 登录和注册开发者按钮点击没反应
+4. 代理注册页显示「无权限访问」
+5. 代理注册页错误显示余额、侧边栏、头像
+
+### 改动清单
+
+#### 1. `[修复]` App.vue 启动时恢复 scheduleRefresh（`apps/admin/src/App.vue`）
+
+- **根因**：Pinia persist 仅持久化 state 字段（accessToken/refreshToken/role/expiresAt 等），`_refreshTimer` 定时器不会持久化。刷新页面后 state 恢复但定时器丢失，access token 过期前不会自动续期，导致 token 过期后任何 API 401 触发 refresh 失败 → logout → 登录状态丢失
+- **修复**：App.vue onMounted 中主动调用 `auth.scheduleRefresh()` 重建定时器
+- **附带**：同时补上 `theme.init()` 调用（v0.8.0 重写 theme store 后忘记在启动时初始化）
+
+#### 2. `[新增]` 管理员独立登录入口 `/admin/login`
+
+- **背景**：用户要求「把管理员后台改为 /admin 才能登陆，用户端不显示」
+- **新增路由**：`/admin/login` 复用 Login.vue，meta.loginMode='admin'
+- **修改路由**：`/login` 增加 meta.loginMode='user'，不再显示 admin Tab
+- **Login.vue 改造**：
+  - 根据 `route.meta.loginMode` 决定显示哪些角色 Tab
+  - admin 模式：只显示 admin Tab，默认 activeRole='admin'，副标题改为「平台管理员后台」
+  - user 模式：显示 tenant + agent Tab，默认 activeRole='tenant'
+  - 单 Tab 时不渲染 el-tabs 组件（避免冗余 UI）
+- **路由守卫更新**：未登录访问 `/admin/*` 跳 `/admin/login`，访问 `/tenant/*` 或 `/agent/*` 跳 `/login`
+- **http 拦截器更新**：`redirectToLogin()` 根据当前路径判断跳转目标，`/admin/*` 路径强制跳 `/admin/login`
+
+#### 3. `[修复]` 注册按钮点击没反应（callback 风格 validate bug）
+
+- **根因**：`await formRef.value.validate(async (valid) => {...})` 中 `await` 立即 resolve，callback 内 async 操作不被等待，`finally` 立即执行。表现为点击注册按钮 loading 一闪而过，请求未真正发出
+- **影响文件**：
+  - `apps/admin/src/views/register/TenantRegister.vue` 的 `handleRegister`
+  - `apps/admin/src/views/agent/Register.vue` 的 `submitRegister`
+- **修复**：改为 Promise 风格 `try { await formRef.value.validate() } catch { return }`
+- **历史**：Login.vue 的 `handleLogin` 已在 v0.6.5 修复过相同 bug，本次修复遗漏的两个注册页
+
+#### 4. `[修复]` 代理注册路由独立化（移出 AgentLayout）
+
+- **根因**：`/agent/register` 嵌套在 `/agent` 路由下，使用 AgentLayout 作为父组件：
+  - AgentLayout.onMounted 调用 `agentMeApi()` 未登录返回 401/403 → http 拦截器显示「无权限访问」
+  - AgentLayout 渲染完整后台布局（侧边栏、余额标签、用户头像），不应出现在公开注册页
+- **修复**：将代理注册移至独立顶层路由 `/register/agent`，不使用 AgentLayout
+- **改动**：
+  - `router/index.ts`：从 `/agent` children 中移除 register，新增顶层 `/register/agent` 路由
+  - `Login.vue`：`goAgentRegister` 指向 `/register/agent`
+  - `i18n`：新增 `route.agentRegister` 翻译键，删除代理后台菜单块中重复的 `agentRegister` 键
+
+#### 5. `[新增]` i18n 翻译键
+
+- `login.subtitleAdmin`：管理员登录页副标题
+- `route.adminLogin`：管理员登录路由标题
+- `route.agentRegister`：代理注册路由标题（公共 route 块）
+
+### 验证
+
+- `npm run build` PASS（vue-tsc 类型检查通过，vite 构建成功）
+- 影响范围：仅前端 admin 应用，无后端改动
+
+---
+
 ## [0.8.0] - 2026-07-21（去除多主题与暗黑模式，回归单一明亮主题）
 
 ### 背景

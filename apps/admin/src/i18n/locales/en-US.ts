@@ -89,6 +89,7 @@ export default {
 
   login: {
     subtitle: 'Multi-tenant License Verification Platform',
+    subtitleAdmin: 'Platform Admin Console',
     tabAdmin: 'Admin',
     tabTenant: 'Developer',
     tabAgent: 'Agent',
@@ -119,8 +120,10 @@ export default {
   route: {
     landing: 'Home',
     login: 'Sign In',
+    adminLogin: 'Admin Sign In',
     install: 'Installation Wizard',
     tenantRegister: 'Developer Sign Up',
+    agentRegister: 'Agent Sign Up',
     notFound: 'Page Not Found',
 
     h5Home: 'Buy',
@@ -175,7 +178,7 @@ export default {
     tenantProfile: 'Profile',
 
     agentDashboard: 'Overview',
-    agentRegister: 'Register Agent',
+    // v0.9.0：agentRegister 已移至公共 route 块（代理注册独立路由）
     agentCards: 'Buy Cards',
     agentOrders: 'My Orders',
     agentBalance: 'Balance / Withdraw',

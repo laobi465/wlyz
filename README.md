@@ -2,7 +2,7 @@
 
 > 面向开发者的多租户卡密验证 SaaS 平台
 
-[![Version](https://img.shields.io/badge/version-0.8.0-blue.svg)](docs/CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.0-blue.svg)](docs/CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Proprietary-red.svg)](#许可证)
 [![Go](https://img.shields.io/badge/Go-1.22+-00ADD8.svg)](https://golang.org)
 [![Vue](https://img.shields.io/badge/Vue-3.4+-42b883.svg)](https://vuejs.org)
@@ -71,7 +71,7 @@ sudo bash scripts/one_click_deploy.sh
 
 **部署完成后必做**：
 1. `cat /root/keyauth_deploy_info.txt` 查看完整部署信息（含反代教程）
-2. 用 **admin/admin123** 登录后台 → 立即修改默认密码
+2. 用 **admin/admin123** 通过 `http://your-ip:8081/admin/login` 登录管理员后台 → 立即修改默认密码（用户端登录页 `/login` 仅显示开发者/代理入口）
 3. 域名 A 记录解析到本服务器 IP
 4. 宝塔面板「网站」添加站点 → 反向代理到 `http://127.0.0.1:8081`
 5. 宝塔面板「SSL」申请 Let's Encrypt 免费证书 + 强制 HTTPS
@@ -179,9 +179,11 @@ docker compose up -d --build admin server
 
 ## 默认账号
 
-| 角色 | 用户名 | 密码 | 说明 |
-|---|---|---|---|
-| 平台超管 | admin | admin123 | 首次部署自动初始化，登录后请立即改密 |
+| 角色 | 用户名 | 密码 | 登录入口 | 说明 |
+|---|---|---|---|---|
+| 平台超管 | admin | admin123 | `/admin/login` | 首次部署自动初始化，登录后请立即改密 |
+| 开发者 | - | - | `/login` | 用户端登录页，自助注册 |
+| 代理 | - | - | `/login` | 用户端登录页，需开发者邀请码注册 |
 
 ## 技术栈
 

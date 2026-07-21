@@ -26,12 +26,21 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '首页', titleKey: 'route.landing', public: true }
   },
 
-  // 登录
+  // 用户端登录（仅开发者/代理，不显示管理员入口）
   {
     path: '/login',
     name: 'Login',
     component: lazy(() => import('@/views/login/index.vue')),
-    meta: { title: '登录', titleKey: 'route.login', public: true }
+    meta: { title: '登录', titleKey: 'route.login', public: true, loginMode: 'user' }
+  },
+
+  // v0.9.0 新增：管理员独立登录入口 /admin/login
+  // 用户端 /login 不再显示 admin Tab，管理员必须通过 /admin/login 登录
+  {
+    path: '/admin/login',
+    name: 'AdminLogin',
+    component: lazy(() => import('@/views/login/index.vue')),
+    meta: { title: '管理员登录', titleKey: 'route.adminLogin', public: true, loginMode: 'admin' }
   },
 
   // 安装向导（v0.3.6，首次部署用）
@@ -48,6 +57,16 @@ const routes: RouteRecordRaw[] = [
     name: 'TenantRegister',
     component: lazy(() => import('@/views/register/TenantRegister.vue')),
     meta: { title: '开发者注册', titleKey: 'route.tenantRegister', public: true }
+  },
+
+  // v0.9.0 修复：代理注册独立顶层路由，不再嵌套在 /agent 下
+  // 原因：嵌套在 /agent 下会渲染 AgentLayout（侧边栏、余额、头像），
+  // 且 AgentLayout.onMounted 调用 agentMeApi() 未登录返回 401/403 触发"无权限访问"
+  {
+    path: '/register/agent',
+    name: 'AgentRegister',
+    component: lazy(() => import('@/views/agent/Register.vue')),
+    meta: { title: '代理注册', titleKey: 'route.agentRegister', public: true }
   },
 
   // ---------- 终端用户 H5 ----------
@@ -141,7 +160,7 @@ const routes: RouteRecordRaw[] = [
     meta: { role: 'agent', requiresAuth: true },
     children: [
       { path: 'dashboard',   name: 'AgentDashboard',  component: lazy(() => import('@/views/agent/Dashboard.vue')), meta: { title: '概览',     titleKey: 'route.agentDashboard', icon: 'Odometer' } },
-      { path: 'register',    name: 'AgentRegister',   component: lazy(() => import('@/views/agent/Register.vue')), meta: { title: '注册代理', titleKey: 'route.agentRegister', icon: 'Plus', public: true } },
+      // v0.9.0：register 已移至顶层 /register/agent，不再嵌套在 AgentLayout 下
       { path: 'cards',       name: 'AgentCards',      component: lazy(() => import('@/views/agent/Cards.vue')), meta: { title: '购卡',     titleKey: 'route.agentCards', icon: 'Key' } },
       { path: 'orders',      name: 'AgentOrders',     component: lazy(() => import('@/views/agent/Orders.vue')), meta: { title: '我的订单',  titleKey: 'route.agentOrders', icon: 'List' } },
       { path: 'balance',     name: 'AgentBalance',    component: lazy(() => import('@/views/agent/Balance.vue')), meta: { title: '余额/提现', titleKey: 'route.agentBalance', icon: 'Wallet' } },
@@ -206,7 +225,9 @@ router.beforeEach((to, _from, next) => {
   }
 
   if (to.meta.requiresAuth && !auth.isLoggedIn) {
-    next({ name: 'Login', query: { redirect: to.fullPath } })
+    // v0.9.0：管理员路径未登录跳 /admin/login，其他角色跳 /login
+    const loginPath = to.path.startsWith('/admin') ? '/admin/login' : '/login'
+    next({ path: loginPath, query: { redirect: to.fullPath } })
     return
   }
 
@@ -215,7 +236,9 @@ router.beforeEach((to, _from, next) => {
   // 不修复会跳转到 '//dashboard' → 404，导致"后台进不去"
   if (to.meta.requiresAuth && auth.isLoggedIn && !auth.role) {
     auth.logout()
-    next({ name: 'Login', query: { redirect: to.fullPath } })
+    // v0.9.0：管理员路径登出跳 /admin/login，其他角色跳 /login
+    const loginPath = to.path.startsWith('/admin') ? '/admin/login' : '/login'
+    next({ path: loginPath, query: { redirect: to.fullPath } })
     return
   }
 

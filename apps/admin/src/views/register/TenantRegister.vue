@@ -108,30 +108,36 @@ const rules = {
 
 const handleRegister = async () => {
   if (!formRef.value) return
-  await formRef.value.validate(async (valid) => {
-    if (!valid) return
-    if (!agree.value) {
-      ElMessage.warning('请阅读并同意服务协议')
-      return
-    }
-    loading.value = true
-    try {
-      await tenantRegisterApi({
-        username: form.username,
-        password: form.password,
-        email: form.email,
-        phone: form.phone,
-        company: form.company,
-        invite_code: form.invite_code
-      })
-      ElMessage.success('注册成功，请登录')
-      router.push('/login')
-    } catch {
-      // 错误已由 http 拦截器处理
-    } finally {
-      loading.value = false
-    }
-  })
+  // v0.9.0 修复：原 callback 风格 `await formRef.value.validate(async (valid) => {...})`
+  // 中 await 立即 resolve，callback 内 async 操作不被等待，finally 立即执行
+  // 表现为"点击注册按钮没反应"——按钮 loading 一闪而过，注册请求未真正发出
+  // 改为 Promise 风格：validate 失败抛异常被 catch 捕获后直接 return
+  try {
+    await formRef.value.validate()
+  } catch {
+    return // 校验失败
+  }
+  if (!agree.value) {
+    ElMessage.warning('请阅读并同意服务协议')
+    return
+  }
+  loading.value = true
+  try {
+    await tenantRegisterApi({
+      username: form.username,
+      password: form.password,
+      email: form.email,
+      phone: form.phone,
+      company: form.company,
+      invite_code: form.invite_code
+    })
+    ElMessage.success('注册成功，请登录')
+    router.push('/login')
+  } catch {
+    // 错误已由 http 拦截器处理
+  } finally {
+    loading.value = false
+  }
 }
 
 const goLogin = () => router.push('/login')

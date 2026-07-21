@@ -100,6 +100,7 @@ export default {
   // ============== 登录页 ==============
   login: {
     subtitle: '多租户卡密验证平台',
+    subtitleAdmin: '平台管理员后台',
     tabAdmin: '平台管理员',
     tabTenant: '开发者',
     tabAgent: '代理',
@@ -133,8 +134,10 @@ export default {
     // 公共页面
     landing: '首页',
     login: '登录',
+    adminLogin: '管理员登录',
     install: '安装向导',
     tenantRegister: '开发者注册',
+    agentRegister: '代理注册',
     notFound: '页面不存在',
 
     // H5 终端用户
@@ -193,7 +196,7 @@ export default {
 
     // 代理后台
     agentDashboard: '概览',
-    agentRegister: '注册代理',
+    // v0.9.0：agentRegister 已移至公共 route 块（代理注册独立路由）
     agentCards: '购卡',
     agentOrders: '我的订单',
     agentBalance: '余额/提现',

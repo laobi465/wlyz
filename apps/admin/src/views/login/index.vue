@@ -1,6 +1,8 @@
 <!--
   登录页 - 响应式 H5
-  - 三角色切换（admin/tenant/agent）
+  - v0.9.0：根据路由 meta.loginMode 决定显示哪些角色 Tab
+    - /login (loginMode='user')：仅显示 tenant + agent（用户端不显示管理员入口）
+    - /admin/login (loginMode='admin')：仅显示 admin（管理员独立登录入口）
   - 用户名 + 密码
   - 2FA TOTP 二阶段（后端返回 totp_required 时显示）
   - 登录失败锁定提示
@@ -11,7 +13,7 @@
       <div class="login-header">
         <img src="@/assets/logo.svg" alt="logo" />
         <h1>{{ sysConfig.platformName || 'KeyAuth SaaS' }}</h1>
-        <p>{{ t('login.subtitle') }}</p>
+        <p>{{ isAdminMode ? t('login.subtitleAdmin') : t('login.subtitle') }}</p>
       </div>
 
       <!-- v0.5.0 国际化：语言切换器（右上角） -->
@@ -19,10 +21,11 @@
         <LanguageSwitcher />
       </div>
 
-      <el-tabs v-model="activeRole" class="login-tabs" stretch>
-        <el-tab-pane :label="t('login.tabAdmin')" name="admin" />
-        <el-tab-pane :label="t('login.tabTenant')" name="tenant" />
-        <el-tab-pane :label="t('login.tabAgent')" name="agent" />
+      <!-- v0.9.0：管理员模式只显示 admin Tab，用户端模式显示 tenant + agent Tab -->
+      <el-tabs v-if="visibleRoles.length > 1" v-model="activeRole" class="login-tabs" stretch>
+        <el-tab-pane v-if="showAdminTab" :label="t('login.tabAdmin')" name="admin" />
+        <el-tab-pane v-if="showTenantTab" :label="t('login.tabTenant')" name="tenant" />
+        <el-tab-pane v-if="showAgentTab" :label="t('login.tabAgent')" name="agent" />
       </el-tabs>
 
       <!-- 阶段 1：账号密码 -->
@@ -98,8 +101,21 @@ const router = useRouter()
 const auth = useAuthStore()
 const sysConfig = useSysConfigStore()
 
+// v0.9.0：根据路由 meta.loginMode 决定显示哪些角色 Tab
+// - /login (loginMode='user')：用户端，显示 tenant + agent，不显示 admin
+// - /admin/login (loginMode='admin')：管理员独立登录入口，只显示 admin
+const isAdminMode = computed(() => route.meta.loginMode === 'admin')
+const showAdminTab = computed(() => isAdminMode.value)
+const showTenantTab = computed(() => !isAdminMode.value)
+const showAgentTab = computed(() => !isAdminMode.value)
+const visibleRoles = computed<UserRole[]>(() => {
+  if (isAdminMode.value) return ['admin']
+  return ['tenant', 'agent']
+})
+
 const formRef = ref<FormInstance>()
-const activeRole = ref<UserRole>('admin')
+// v0.9.0：默认角色跟随 loginMode（admin 模式默认 admin，用户端默认 tenant）
+const activeRole = ref<UserRole>(isAdminMode.value ? 'admin' : 'tenant')
 const loading = ref(false)
 const totpRequired = ref(false)
 const tempToken = ref('')
@@ -205,8 +221,9 @@ const goRegister = () => {
   router.push('/register/tenant')
 }
 
+// v0.9.0：代理注册已移至 /register/agent（独立顶层路由，不再嵌套 AgentLayout）
 const goAgentRegister = () => {
-  router.push('/agent/register')
+  router.push('/register/agent')
 }
 
 const goHome = () => {

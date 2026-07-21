@@ -253,10 +253,26 @@ http.interceptors.response.use(
 )
 
 function redirectToLogin() {
-  if (location.pathname !== '/login') {
-    ElMessage.error('登录已过期，请重新登录')
-    location.href = '/login?redirect=' + encodeURIComponent(location.pathname)
-  }
+  // v0.9.0：管理员（role=admin）登录过期跳 /admin/login，其他角色跳 /login
+  // 通过 localStorage 中持久化的 keyauth-auth.role 判断（避免依赖 Pinia store 状态）
+  let adminLogin = false
+  try {
+    const raw = localStorage.getItem('keyauth-auth')
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (parsed?.role === 'admin') adminLogin = true
+    }
+  } catch { /* ignore */ }
+
+  // 当前已在登录页则不再跳转，避免循环
+  const targetPath = adminLogin ? '/admin/login' : '/login'
+  if (location.pathname === targetPath) return
+  // 如果当前路径以 /admin 开头，强制跳 /admin/login
+  const isAdminPath = location.pathname.startsWith('/admin')
+  const finalPath = isAdminPath ? '/admin/login' : targetPath
+  if (location.pathname === finalPath) return
+  ElMessage.error('登录已过期，请重新登录')
+  location.href = finalPath + '?redirect=' + encodeURIComponent(location.pathname)
 }
 
 function redirectToH5Login() {
