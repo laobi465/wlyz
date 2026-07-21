@@ -7,6 +7,33 @@
 
 ---
 
+## 安全审计（4 类优先级全覆盖 ✅ v0.6.0 + v0.6.1）
+
+### [P0] 高危 13 个 ✅ 已完成 v0.6.0
+- [x] [已完成 2026-07-20] 部署链路 5 个 bug（端口冲突 / migration dirty / SQL 语法 / nginx / API 契约）
+- [x] [已完成 2026-07-20] P0 高危安全 bug 13 个（认证绕过 / SQL 注入 / 权限提升 / 敏感信息泄露 / 并发竞态）
+
+### [P1] 普通 21 个 ✅ 已完成 v0.6.1
+- [x] [已完成 2026-07-20] Migration + 加密 + 工具 7 个（migration 032/015 兼容性 + crypto 模偏差 + HMAC 名实一致 + update 锁值校验 + TOTP skew）
+- [x] [已完成 2026-07-20] 认证中间件安全 5 个（JWT Subject + Nonce 顺序 + IP 黑名单 fail-open + CF IP 伪造 + public 限流）
+- [x] [已完成 2026-07-20] 业务 handler 5 个（提现流水错配 + 充值 FOR UPDATE + 月费重复 + 对账 tenant_id + 版本号比较）
+- [x] [已完成 2026-07-20] 前端 4 个（v-html XSS + Cookie Secure + 浮点精度 + H5 401 队列）
+
+### [P2] 联调 15 个 ✅ 已完成 v0.6.0
+- [x] [已完成 2026-07-20] 前后端联调 15 个 bug（字段映射 / 枚举对齐 / 分页参数 / 云变量字段 / 收入趋势 / Top 应用 / 邀请码 / 设备 location / 支付配置 / 版本 channel / 公告 type/status / 佣金 type/status）
+
+### [P3] 优化 34 个 ✅ 已完成 v0.6.1
+- [x] [已完成 2026-07-20] 错误信息泄露 30 处（err.Error() 改 logger.Error + 通用消息）
+- [x] [已完成 2026-07-20] N+1 查询 4 处（admin/tenant 列表批量聚合）
+- [x] [已完成 2026-07-20] HTTP 客户端超时 4 处（notify 包 webhook + SMS 10s 超时）
+
+### 后续可选清理（非阻断性，按需迭代）
+- [ ] [待开始] analysis.go 等 ~40 处参数校验类错误泄露（`参数错误: "+err.Error()`）
+- [ ] [待开始] openapi.go / enduser.go 用 `c.JSON` 直接泄露 err.Error() 共 ~20 处
+- [ ] [待开始] risk.go 还有 8 处 5002 类错误泄露
+
+---
+
 ## P0 紧急（一期 MVP 必须）
 
 ### [P0] 一期 MVP 核心闭环

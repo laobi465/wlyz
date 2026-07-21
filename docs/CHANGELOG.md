@@ -9,6 +9,105 @@
 
 ---
 
+## [0.6.1] - 2026-07-20（安全审计 P1 + P3 修复）
+
+### [安全] 全项目安全审计修复（21 P1 普通 + 34 P3 优化）
+
+#### 背景
+
+前序完成 P0 高危（13 个）和 P2 联调（15 个）修复后，本次完成全项目安全审计的 P1（普通）和 P3（优化）类 bug 全部修复，覆盖后端认证/中间件/业务 handler/模型/迁移/加密 + 前端三角色/H5 全栈。审计分类体系：P0 高危（已修 13 个）/ P1 普通（本次修复）/ P2 联调（已修 15 个）/ P3 优化（本次修复）。
+
+#### P1 普通类修复（21 个）
+
+**[Migration + 加密 + 工具]（7 个）**
+
+- **[修复] migration 032 sys_config INSERT 列名错误**：`description`/`is_sensitive` 列在 sys_config 表不存在，改为 `config_name`/`remark`（与 `model.SysConfig` 字段对齐），全新部署必崩的阻断性 bug
+- **[修复] migration 032 config_type ENUM 非法值 'int'**：`config_type` ENUM 定义为 `('string','number','bool','json')`，21 处 `'int'` 改为 `'number'`
+- **[修复] migration 015 ADD COLUMN IF NOT EXISTS 兼容性**：MySQL 8.0 ≤ 8.0.28 不支持该语法，参照 migration 010 改为 `PREPARE stmt + EXECUTE + DEALLOCATE` 模式
+- **[修复] crypto.decodeSegment 模偏差**：charset 长度 31 非 2 的幂，`int(buf[i])%len(charset)` 导致前 8 个字符概率偏高 ~12.5%。改用 `crypto/rand.Int(rand.Reader, big.NewInt(int64(max)))` 拒绝采样
+- **[修复] crypto.HMACSHA256 名实不一致**：函数名声明 SHA-256 但实现用 `sha512.New512_256`。改用标准 `sha256.New` 实现名实一致，新增 `HMACSHA512_256` 函数保留原 SHA-512/256 变体行为供 SDK 对齐调用方使用
+- **[修复] update.ReleaseLock 不校验锁值**：多实例部署时实例 A 锁过期后实例 B 抢锁，A 完成后误删 B 的锁。AcquireLock 改用 UUID token 作为锁值，ReleaseLock 改用 Lua 脚本原子比较并删除
+- **[修复] auth.ValidateTOTP 忽略 skew 参数**：函数签名声明 `skew uint` 但实现调用 `totp.Validate(code, secret)` 完全忽略。改用 `totp.ValidateCustom` 使 skew 参数真正生效
+
+**[认证中间件安全]（5 个）**
+
+- **[修复] JWTAuth 未校验 Token Subject**：refresh token（Subject=refresh, 7d TTL）可直接访问业务接口，泄露后滥用窗口大。增加 `claims.Subject == "access"` 校验
+- **[修复] SignatureAuth Nonce 防重放顺序错误**：原实现先 SetNX 写 nonce 再校验签名，攻击者构造大量随机 nonce + 错误签名即可污染 Redis nonce 命名空间。调整为先校验签名通过后再 SetNX
+- **[修复] IPBlacklist Redis 故障时 fail-open**：原 `if err == nil && exists > 0` 条件下 Redis 故障直接放行。改为 Redis 故障时回退查 MySQL `sec_ip_blacklist` 表（MySQL 也故障时仍 fail-open 保证主链路不阻塞）
+- **[修复] CloudflareRealIP trustedCIDRs 为空时直接信任 CF 头**：默认配置下跳过 CIDR 校验，攻击者伪造 `CF-Connecting-IP` 头即可。改为 trustedCIDRs 为空时回退 `c.ClientIP()`，仅当 remote addr 命中受信 CIDR 才读取 CF 头
+- **[修复] publicGroup 公开端点未挂限流**：登录/refresh/register 等端点完全暴露，可暴力枚举。挂 `RateLimitByIP("sensitive")` 中间件（默认 10 次/分钟，可通过 sys_config 调整）
+
+**[业务 handler]（5 个）**
+
+- **[修复] 提现审核流水按时间窗口模糊匹配**：原 `agent_id + type + status + created_at >= ?` 模糊匹配 + `Limit(1)`，同一代理多笔相同金额提现会错配。新增 `related_withdraw_id` 字段（migration 033）精确匹配，`AgentBalanceLog.RelatedWithdrawID` 落库
+- **[修复] 充值审核未对 agent 行加 FOR UPDATE 锁**：并发审核可能双倍加余额。事务内 `tx.Set("gorm:query_option", "FOR UPDATE").First(&agent, log.AgentID)` 序列化
+- **[修复] 月费订单复用逻辑可能产生重复订单**：原查询仅 `pay_status='pending'`，已 paid 后再访问会创建新订单导致重复扣费。查询条件改为不限 `pay_status`，已 paid/closed 直接复用返回
+- **[修复] AdminReconciliation tenant_id 未传入 stats 查询**：参数被解析但未生效，超管按开发者过滤无效。复用带 `tenant_id` 条件的 `q` 变量执行聚合
+- **[修复] ClientVersion 字符串 != 比较版本号**：`"1.9.0"` vs `"1.10.0"` 字典序比较结果错误。新增 `compareVersions` 函数逐段数值比较
+
+**[前端]（4 个）**
+
+- **[修复] PlatformNoticeBanner / AgentNotifyBanner v-html XSS**：`<div v-html="latestNotice?.content"></div>` 直接渲染后端内容可注入 `<script>`。接入 DOMPurify 在渲染前 sanitize
+- **[修复] stores/auth.ts Cookie 缺 Secure 属性**：HTTPS 部署下仍可被中间人嗅探。所有 `Cookies.set` 补 `secure: import.meta.env.PROD`
+- **[修复] agent/Cards.vue 浮点金额精度误差**：`unitCost * quantity` 存在 IEEE 754 误差，余额边界判断错误。改用 `Math.round(unitCost * 100 * quantity) / 100` 整数分计算
+- **[修复] H5 401 并发 refresh 无队列**：多请求并发 refresh 会导致用户被误登出。新增 `isH5Refreshing` + `h5RefreshSubscribers` 独立队列（复用三角色队列模式，避免 token 串扰）
+
+#### P3 优化类修复（34 处）
+
+**[错误信息泄露]（30 处）**
+
+- 30 处 `middleware.Fail(c, ..., "xxx失败: "+err.Error())` 将 SQL/DB 错误直接暴露给客户端，改为 `logger.Error(...)` 记录原始错误及上下文 + 返回通用消息
+- 覆盖 `install.go` / `admin_business.go` / `tenant_business.go` / `agent_business.go` / `session.go` / `update.go` / `backup.go` / `monitor.go` / `card.go` / `notice_stats.go` / `risk.go` / `tenant_finance.go` / `app.go` / `pay.go` / `analysis.go` 等 15 个 handler 文件
+
+**[N+1 查询]（4 处）**
+
+- `AdminListTenants` / `AdminListAgents` / `AdminListPendingApps` / `TenantListAgents` 改为批量聚合查询：先收集 ID 列表，再用 `WHERE id IN ?` 或子查询一次性聚合，构建 `map[uint64]T` 映射
+- `agent_business.go` 新增 3 个批量查询辅助函数：`agentFrozenBalanceBatch` / `agentTotalCommissionBatch` / `agentTotalWithdrawPaidBatch`
+
+**[HTTP 客户端超时]（4 处）**
+
+- `notify/webhook.go` 3 处 + `notify/notify.go` 1 处 `http.DefaultClient.Do` 无超时，下游不可用时会挂起。改为 `&http.Client{Timeout: 10 * time.Second}`
+
+#### 测试同步与 SDK 兼容
+
+- **JWT 测试同步**：5 个测试用例补 `Subject: "access"`（`TestJWTAuth_ValidToken` / `JTI注入上下文` / `RoleMismatch` / `MultipleAllowedRoles` / `GenerateToken_Auth_RoundTrip`）；`GenerateToken` 改为保留调用方设置的 `Subject`，未指定时默认 `"access"`（向后兼容）
+- **Cloudflare 测试同步**：`TestCloudflareRealIP_EnabledWithHeader` 配置 Cloudflare 官方 CIDR `173.245.48.0/20` + `RemoteAddr` 改为命中 CIDR 的 IP
+- **update_test.go 适配新签名**：8 个测试函数更新 `AcquireLock(ctx) (string, bool)` + `ReleaseLock(ctx, token)` 调用
+- **HMACSHA256 SDK 兼容迁移**：6 个文件（`signature.go` / `middleware_test.go` / `sign_alignment_test.go` / `crypto_test.go` / `card_perf_test.go` 等）将 SDK 对齐调用方迁移到 `HMACSHA512_256`，保持客户端 SDK（csharp/java/php/go/python/node/cpp）签名对齐
+- **新增 migration 033**：`agent_balance_log` 表新增 `related_withdraw_id BIGINT UNSIGNED NULL` + `idx_withdraw` 索引
+
+#### 验证
+
+- `go build ./...` ✅
+- `go vet ./...` ✅
+- `go test ./internal/middleware/... ./pkg/crypto/... ./internal/update/... ./internal/auth/...` ✅ 全 PASS
+- `npm run build` ✅ (built in 16.87s)
+
+#### 铁律遵循
+
+- **铁律 04（禁硬编码）**：所有修复基于真实代码，无新增硬编码；migration 033 字段命名沿用项目惯例
+- **铁律 05（配置走 sys_config）**：限流参数复用现有 `"sensitive"` 策略，可后台调整；HMAC 算法迁移保留双实现
+- **铁律 06（反幻觉）**：每项修复前先 Read 确认现状；修复决策基于真实代码而非臆测（如 `totp.ValidateOpts.Skew` 字段类型为 `uint` 而非 `*uint`，经核实 pquerna/otp v1.4.0 源码确认）
+
+---
+
+## [0.6.0] - 2026-07-20（安全审计 P0 + P2 修复）
+
+### [安全] 全项目安全审计 P0 高危 + P2 联调修复（13 P0 + 15 P2）
+
+#### P0 高危修复（13 个）
+
+- **[修复] 部署链路 5 个 bug**：端口冲突 / migration dirty / SQL 语法 / nginx 配置 / API 契约
+- **[修复] 13 个 P0 高危安全 bug**：覆盖认证绕过 / SQL 注入 / 权限提升 / 敏感信息泄露 / 并发竞态等
+
+#### P2 联调修复（15 个：6 P0 + 9 P1）
+
+- **[修复] 前后端联调 15 个 bug**：字段名映射错误 / 枚举值不一致 / 分页参数 / 云变量字段 / 收入趋势 / Top 应用 / 最近订单 / 邀请码生成 / 设备 location / 支付配置 / 版本 channel / 公告 type/status / 邀请码状态 / 佣金 type/status 等
+
+详见 commit `6be5a45` 和 `972eea4`。
+
+---
+
 ## [0.4.0] - 2026-07-20（v0.4.x 迁移项推进）
 
 ### [新增] 公告增强 + 数据统计看板（v0.4.x 第十六项：首次登录强制弹窗 + 公告置顶 + 显眼标签 + 富文本编辑 + 验证趋势图 + 代理业绩排行）
