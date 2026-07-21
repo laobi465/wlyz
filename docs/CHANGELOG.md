@@ -9,6 +9,87 @@
 
 ---
 
+## [0.6.3] - 2026-07-21（migration 030 列数不匹配修复）
+
+### [修复] Critical：migration 030 报 Error 1136 (Column count doesn't match value count at row 1)
+
+#### 背景
+
+v0.6.2 修复 migration 015 的 dirty 状态后，重新执行迁移流程时遇到新的 dirty：migration 030 (`030_v0.5.0_notify_webhook`) 在 `INSERT INTO sys_config` 阶段失败。
+
+```
+[FATAL] 初始化依赖失败: 数据库迁移失败: dirty 修复失败，version=30（dirty 状态已保留，不会丢失）:
+执行 SQL 失败: Error 1136 (21S01): Column count doesn't match value count at row 1
+```
+
+#### 根因分析
+
+`apps/server/migrations/030_v0.5.0_notify_webhook.up.sql` 的 INSERT 语句声明 6 列：
+
+```sql
+INSERT INTO `sys_config` (`config_key`, `config_value`, `config_type`, `config_name`, `config_group`, `remark`) VALUES
+```
+
+但每个 VALUES 元组写了 **7 个值**（在 `config_value` 和 `config_type` 之间多写了一个空字符串 `''`）：
+
+```sql
+('notify.dingtalk.enabled', '0', '', 'bool', '钉钉机器人开关', 'notify', 'v0.5.0 1=启用钉钉群机器人通道；0=关闭'),
+--                          ↑   ↑   ↑     ↑                  ↑          ↑
+--                          key val 多余 type name             group      remark
+```
+
+MySQL 报 Error 1136：声明的列数与 VALUES 元组字段数不匹配。
+
+#### 修复内容
+
+`apps/server/migrations/030_v0.5.0_notify_webhook.up.sql` 全部 10 行 VALUES 元组移除多余的第 3 个空字符串字段，列顺序对齐 sys_config 表 schema：
+
+```sql
+INSERT INTO `sys_config` (`config_key`, `config_value`, `config_type`, `config_name`, `config_group`, `remark`) VALUES
+('notify.dingtalk.enabled',     '0', 'bool',   '钉钉机器人开关',         'notify', 'v0.5.0 1=启用钉钉群机器人通道；0=关闭'),
+--                              ↑   ↑         ↑                          ↑          ↑
+--                              key val type   name                       group      remark
+```
+
+#### 全量扫描验证
+
+编写 Python 脚本扫描全部 `apps/server/migrations/*.up.sql` 文件，对每条 `INSERT INTO sys_config` 语句：
+1. 解析 INSERT 后括号内的声明列数
+2. 用状态机解析每个 VALUES 元组的实际字段数（处理 `'`/`"`/`\` 转义）
+3. 比较两者是否一致
+
+扫描结果：
+- ✓ 030 migration：修复后 10 行全部 6 字段，匹配 6 列声明
+- ✓ 031 migration：20 行全部 6 字段，匹配 6 列声明
+- ✓ 032 migration：18 行全部 8 字段，匹配 8 列声明（含 created_at/updated_at）
+- ✓ 其他 migration：全部匹配（部分文件混入其他表 INSERT 不影响）
+
+#### 铁律遵循
+
+- 04 禁硬编码：无新增硬编码
+- 05 配置后台化：webhook URL / Bot Token / 加签 secret 全部走 sys_config，可后台调整
+- 06 防幻觉：修复前先用脚本全量扫描所有 migration 文件验证列数一致性，避免再次踩坑
+
+#### 验证
+
+- Python 脚本静态扫描：所有 sys_config INSERT 列数均匹配 ✓
+- MySQL 真实环境：用户在部署环境执行 `MIGRATION_REPAIR_DIRTY=true` 流程后通过（待用户确认）
+
+#### 操作命令
+
+```bash
+cd /www/wwwroot/keyauth
+git pull origin main
+# .env 已有 MIGRATION_REPAIR_DIRTY=true，直接重启
+docker compose up -d server
+# 观察 server 日志：[MIGRATE-REPAIR] dirty 修复成功，version=30
+# 修复成功后移除 MIGRATION_REPAIR_DIRTY
+sed -i '/^MIGRATION_REPAIR_DIRTY=/d' .env
+docker compose up -d server
+```
+
+---
+
 ## [0.6.2] - 2026-07-21（dirty 迁移恢复 + MySQL 8.0 兼容修复）
 
 ### [修复] Critical：Docker Compose 一键部署在 MySQL 8.0 上失败（schema_migrations.dirty=1, version=15）

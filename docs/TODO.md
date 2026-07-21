@@ -7,6 +7,15 @@
 
 ---
 
+## v0.6.3 Critical Bug 修复 ✅ 已完成 2026-07-21
+
+### [P0] migration 030 报 Error 1136 (Column count doesn't match value count) ✅ 已完成 v0.6.3
+- [x] [已完成 2026-07-21] **根因**：`030_v0.5.0_notify_webhook.up.sql` 的 INSERT 声明 6 列但每行 VALUES 写了 7 个值（在 `config_value` 与 `config_type` 之间多了一个空字符串 `''`），MySQL 报 `Error 1136 (21S01): Column count doesn't match value count at row 1`
+- [x] [已完成 2026-07-21] **修复**：全部 10 行 VALUES 元组移除多余空字符串字段，列顺序对齐 sys_config 表 schema（config_key, config_value, config_type, config_name, config_group, remark）
+- [x] [已完成 2026-07-21] **全量扫描验证**：Python 脚本扫描所有 `migrations/*.up.sql` 的 `INSERT INTO sys_config` 列数一致性，031/032/033 全部匹配，仅 030 一处 bug
+
+---
+
 ## v0.6.2 Critical Bug 修复 ✅ 已完成 2026-07-21
 
 ### [P0] Docker Compose 一键部署在 MySQL 8.0 上失败 ✅ 已完成 v0.6.2
@@ -626,6 +635,6 @@
 
 ---
 
-**文档版本**：0.6.2
-**最后更新**：2026-07-21（v0.6.2 Critical Bug 修复：Docker Compose 一键部署在 MySQL 8.0 上失败 / schema_migrations.dirty=1 version=15。根因：migration 015 使用 MariaDB-only 语法 ADD COLUMN/INDEX IF NOT EXISTS。修复：① 重写 015 改用 INFORMATION_SCHEMA + PREPARE/EXECUTE 兼容方案；② migrator.go 新增 MIGRATION_REPAIR_DIRTY=true 显式 dirty 恢复 + MySQL advisory lock 并发保护；③ one_click_deploy.sh 移除破坏性 DELETE，改为自动备份 + 幂等修复；④ clean_dirty_migration.sh 重写为四模式（show/dry-run/repair/force-delete）；⑤ mysql:8.0 → mysql:8.0.36 固定小版本；⑥ 新增 13 个迁移器测试用例 + verify_migration_015.sh 静态验证脚本。6 个 Go 单元测试全 PASS + SQL 静态验证 10/10 通过 + shellcheck -S warning 通过 + YAML 语法有效；MySQL 8.0 集成测试 13 个用例已编写待真实环境运行）
+**文档版本**：0.6.3
+**最后更新**：2026-07-21（v0.6.3 Critical Bug 修复：migration 030 报 Error 1136 (Column count doesn't match value count at row 1)。根因：030_v0.5.0_notify_webhook.up.sql 的 INSERT 声明 6 列但每行 VALUES 写了 7 个值（多余空字符串）。修复：移除多余字段，列顺序对齐 sys_config 表 schema；Python 脚本全量扫描所有 migration 文件确认仅此一处 bug）
 **维护者**：KeyAuth SaaS Team

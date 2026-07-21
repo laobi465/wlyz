@@ -8,6 +8,8 @@
 
 本项目是 **KeyAuth SaaS**：面向开发者的多租户卡密验证 SaaS 平台。
 
+**v0.6.3 已发布（2026-07-21）**：Critical Bug 修复 —— migration 030 (`030_v0.5.0_notify_webhook`) 在 `INSERT INTO sys_config` 阶段报 `Error 1136 (Column count doesn't match value count at row 1)`。根因：INSERT 声明 6 列但每行 VALUES 写了 7 个值（在 `config_value` 与 `config_type` 之间多了一个空字符串 `''`）。修复：移除多余字段，列顺序对齐 sys_config 表 schema；Python 脚本全量扫描所有 `migrations/*.up.sql` 的 `INSERT INTO sys_config` 列数一致性，031/032/033 全部匹配，仅 030 一处 bug。详见 [CHANGELOG v0.6.3](docs/CHANGELOG.md#063---2026-07-21migration-030-列数不匹配修复)。
+
 **v0.6.2 已发布（2026-07-21）**：Critical Bug 修复 —— Docker Compose 一键部署在 MySQL 8.0 上失败（schema_migrations.dirty=1, version=15）。根因：migration 015 使用 MariaDB-only 语法 `ADD COLUMN/INDEX IF NOT EXISTS`。修复内容：① 重写 015 改用 INFORMATION_SCHEMA + PREPARE/EXECUTE 兼容方案；② migrator.go 新增 `MIGRATION_REPAIR_DIRTY=true` 显式 dirty 恢复 + MySQL advisory lock 并发保护；③ one_click_deploy.sh 移除破坏性 DELETE，改为自动备份 + 幂等修复；④ clean_dirty_migration.sh 重写为四模式（show/dry-run/repair/force-delete）；⑤ mysql:8.0 → mysql:8.0.36 固定小版本；⑥ 新增 13 个迁移器测试用例 + verify_migration_015.sh 静态验证脚本。详见 [CHANGELOG v0.6.2](docs/CHANGELOG.md#062---2026-07-21dirty-迁移恢复--mysql-80-兼容修复)。
 
 **v0.6.1 已发布（2026-07-20）**：全项目安全审计 P1 + P3 修复（21 P1 普通 + 34 P3 优化，覆盖认证加固 + 业务逻辑 + 加密签名 + 前端安全 + 性能可靠性）。详见 [CHANGELOG v0.6.1](docs/CHANGELOG.md#061---2026-07-20安全审计-p1--p3-修复)。
