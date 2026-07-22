@@ -6,17 +6,9 @@
 
 ## 一、项目背景速读（2 分钟）
 
+> **v0.6.6（2026-07-21）**：后端 HTTP server 端口冲突自动 +1 重试。新增配置项 `app.port_auto_increment`（默认 false 生产安全）+ `app.port_max_attempts`（默认 20）+ 环境变量 `APP_PORT_AUTO_INCREMENT` / `APP_PORT_MAX_ATTEMPTS`。`main.go` 用 `net.Listen` 探测端口与 `srv.Serve` 解耦，仅对 `EADDRINUSE` 重试。前端 Vite dev server 默认 `strictPort: false` 已具备此行为。开发期 `APP_PORT_AUTO_INCREMENT=true go run ./cmd/` 即可自动避让占用端口。
+
 本项目是 **KeyAuth SaaS**：面向开发者的多租户卡密验证 SaaS 平台。
-
-**v0.6.5 已发布（2026-07-21）**：前端登录跳转 + 后台进不去修复。根因：`auth.role` 为空时（localStorage 持久化数据损坏 / 旧版本字段缺失 / 手动篡改），`homePath` 计算为 `//dashboard` → 404；路由守卫回退同样问题；登录页 callback 风格 `await` 是 no-op。修复：① `stores/auth.ts` homePath 兜底 role 为空返回 `/login`；② `router/index.ts` 守卫检测 stale state（已登录但 role 为空）强制 logout 回登录页；③ `login/index.vue` 改为 Promise 风格；④ 优先使用后端返回的 `resp.user.role`（权威来源，防幻觉）；⑤ redirect 白名单校验只允许 `/admin /tenant /agent` 开头的相对路径。详见 [CHANGELOG v0.6.5](docs/CHANGELOG.md#065---2026-07-21前端登录跳转--后台进不去修复)。
-
-**v0.6.4 已发布（2026-07-21）**：Critical Bug 修复 —— 33 个 migration 全部应用后，`db.AutoMigrate(&model.SysConfig{})` 触发 `ALTER TABLE MODIFY COLUMN created_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP` 失败，MySQL 8.0 报 `Error 1067 (Invalid default value for 'created_at')`。根因：GORM 默认把 `time.Time` 推断为 `datetime(3)`（带毫秒），但 migration 001 用 `DATETIME`（无毫秒）建表。修复：`SysConfig` struct 的 `CreatedAt`/`UpdatedAt` GORM tag 显式声明 `type:datetime`，让 GORM 不再修改列定义。详见 [CHANGELOG v0.6.4](docs/CHANGELOG.md#064---2026-07-21gorm-automigrate-与-mysql-80-datetime3-兼容修复)。
-
-**v0.6.3 已发布（2026-07-21）**：Critical Bug 修复 —— migration 030 (`030_v0.5.0_notify_webhook`) 在 `INSERT INTO sys_config` 阶段报 `Error 1136 (Column count doesn't match value count at row 1)`。根因：INSERT 声明 6 列但每行 VALUES 写了 7 个值（在 `config_value` 与 `config_type` 之间多了一个空字符串 `''`）。修复：移除多余字段，列顺序对齐 sys_config 表 schema；Python 脚本全量扫描所有 `migrations/*.up.sql` 的 `INSERT INTO sys_config` 列数一致性，031/032/033 全部匹配，仅 030 一处 bug。详见 [CHANGELOG v0.6.3](docs/CHANGELOG.md#063---2026-07-21migration-030-列数不匹配修复)。
-
-**v0.6.2 已发布（2026-07-21）**：Critical Bug 修复 —— Docker Compose 一键部署在 MySQL 8.0 上失败（schema_migrations.dirty=1, version=15）。根因：migration 015 使用 MariaDB-only 语法 `ADD COLUMN/INDEX IF NOT EXISTS`。修复内容：① 重写 015 改用 INFORMATION_SCHEMA + PREPARE/EXECUTE 兼容方案；② migrator.go 新增 `MIGRATION_REPAIR_DIRTY=true` 显式 dirty 恢复 + MySQL advisory lock 并发保护；③ one_click_deploy.sh 移除破坏性 DELETE，改为自动备份 + 幂等修复；④ clean_dirty_migration.sh 重写为四模式（show/dry-run/repair/force-delete）；⑤ mysql:8.0 → mysql:8.0.36 固定小版本；⑥ 新增 13 个迁移器测试用例 + verify_migration_015.sh 静态验证脚本。详见 [CHANGELOG v0.6.2](docs/CHANGELOG.md#062---2026-07-21dirty-迁移恢复--mysql-80-兼容修复)。
-
-**v0.6.1 已发布（2026-07-20）**：全项目安全审计 P1 + P3 修复（21 P1 普通 + 34 P3 优化，覆盖认证加固 + 业务逻辑 + 加密签名 + 前端安全 + 性能可靠性）。详见 [CHANGELOG v0.6.1](docs/CHANGELOG.md#061---2026-07-20安全审计-p1--p3-修复)。
 
 **核心定位**：开发者注册账号 → 创建应用 → 生成卡密 → 客户端 SDK 接入验证。代理通过开发者邀请码注册并分销卡密。平台提供总支付（默认）与开发者自定义易支付（按套餐）双轨支付。
 

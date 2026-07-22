@@ -8,6 +8,12 @@
 app:
   port: 8080
   mode: release   # debug / release / test
+  # v0.6.6：端口冲突自动 +1 重试
+  # 开发期设为 true：8080 被占用时自动尝试 8081、8082…（最多 port_max_attempts 次）
+  # 生产期保持 false：避免端口漂移导致 nginx/反代失配（容器内端口固定 8080）
+  # 也可通过环境变量 APP_PORT_AUTO_INCREMENT=true 开启
+  port_auto_increment: false
+  port_max_attempts: 20  # 最大尝试次数（含起始端口）
 
 mysql:
   host: mysql       # docker compose 内部域名

@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -36,6 +37,12 @@ type AppConfig struct {
 	LogLevel  string `yaml:"log_level"`  // v0.4.0：日志级别 debug/info/warn/error（默认 info）
 	LogFormat string `yaml:"log_format"` // v0.4.0：日志格式 json/text（默认 json）
 	LogOutput string `yaml:"log_output"` // v0.4.0：日志输出 stdout/stderr/文件路径（默认 stdout）
+
+	// v0.6.6 新增：端口冲突自动 +1 重试
+	// 开发友好（8080 被占用时自动尝试 8081、8082…），生产建议关闭（避免端口漂移导致 nginx/反代失配）
+	// 铁律 05：行为可配置，默认 false 保证生产安全
+	PortAutoIncrement bool `yaml:"port_auto_increment"` // 端口被占用时自动 +1 重试
+	PortMaxAttempts   int  `yaml:"port_max_attempts"`   // 最大尝试次数（含起始端口），默认 20
 }
 
 type MySQLConfig struct {
@@ -89,18 +96,17 @@ type CryptoConfig struct {
 	RSAPublicKeyPath  string `yaml:"rsa_public_key_path"`  // RSA-4096 公钥文件
 }
 
-// MigrationConfig 数据库迁移配置（v0.3.5 新增，v0.6.2 增强）
+// MigrationConfig 数据库迁移配置（v0.3.5 新增）
 // 铁律 05：迁移目录路径走配置，不硬编码
 type MigrationConfig struct {
-	Auto        bool   `yaml:"auto"`         // 启动时是否自动执行迁移
-	Dir         string `yaml:"dir"`          // 迁移文件目录（绝对路径或相对工作目录）
-	RepairDirty bool   `yaml:"repair_dirty"` // v0.6.2：是否允许 dirty 状态修复（环境变量 MIGRATION_REPAIR_DIRTY=true）
+	Auto bool   `yaml:"auto"` // 启动时是否自动执行迁移
+	Dir  string `yaml:"dir"`  // 迁移文件目录（绝对路径或相对工作目录）
 }
 
 // Load 从文件加载配置，环境变量优先覆盖
 func Load(path string) (*Config, error) {
 	cfg := &Config{
-		App:       AppConfig{Port: "8080", Mode: "debug"},
+		App:       AppConfig{Port: "8080", Mode: "debug", PortMaxAttempts: 20},
 		MySQL:     MySQLConfig{MaxOpenConns: 100, MaxIdleConns: 20},
 		Redis:     RedisConfig{DB: 0},
 		JWT:       JWTConfig{ExpireHours: 24, RefreshHours: 168, Issuer: "keyauth-saas"},
@@ -134,6 +140,15 @@ func applyEnvConfig(cfg *Config) {
 	}
 	if v := os.Getenv("APP_MODE"); v != "" {
 		cfg.App.Mode = v
+	}
+	// v0.6.6：端口冲突自动 +1 重试开关
+	if v := os.Getenv("APP_PORT_AUTO_INCREMENT"); v != "" {
+		cfg.App.PortAutoIncrement = v == "true" || v == "1" || v == "yes"
+	}
+	if v := os.Getenv("APP_PORT_MAX_ATTEMPTS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.App.PortMaxAttempts = n
+		}
 	}
 	if v := os.Getenv("MYSQL_HOST"); v != "" {
 		cfg.MySQL.Host = v
@@ -199,11 +214,6 @@ func applyEnvConfig(cfg *Config) {
 	if v := os.Getenv("MIGRATION_DIR"); v != "" {
 		cfg.Migration.Dir = v
 	}
-	// v0.6.2：MIGRATION_REPAIR_DIRTY=true 允许管理员显式开启 dirty 状态修复
-	// 默认 false：发现 dirty 拒绝启动，避免静默修复掩盖问题
-	if v := os.Getenv("MIGRATION_REPAIR_DIRTY"); v != "" {
-		cfg.Migration.RepairDirty = v == "true" || v == "1" || v == "yes"
-	}
 }
 
 func (c *Config) validate() error {
@@ -262,16 +272,9 @@ func InitContainer(cfg *Config) (*Container, error) {
 	sqlDB.SetMaxOpenConns(cfg.MySQL.MaxOpenConns)
 	sqlDB.SetMaxIdleConns(cfg.MySQL.MaxIdleConns)
 
-	// 1.1 启动时自动迁移（v0.3.5 新增，v0.6.2 增强：支持 dirty 修复 + 并发保护）
+	// 1.1 启动时自动迁移（v0.3.5 新增，替代 mysql entrypoint 自动执行）
 	if cfg.Migration.Auto {
-		// 构建 DBTarget 描述（用于错误消息）
-		dbTarget := fmt.Sprintf("%s:%s/%s", cfg.MySQL.Host, cfg.MySQL.Port, cfg.MySQL.Database)
-		if err := migration.RunWithConfig(db, migration.Config{
-			Auto:        cfg.Migration.Auto,
-			Dir:         cfg.Migration.Dir,
-			RepairDirty: cfg.Migration.RepairDirty,
-			DBTarget:    dbTarget,
-		}); err != nil {
+		if err := migration.Run(db, cfg.Migration.Dir); err != nil {
 			return nil, fmt.Errorf("数据库迁移失败: %w", err)
 		}
 	}

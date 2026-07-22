@@ -4,11 +4,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -17,7 +21,7 @@ import (
 	"github.com/your-org/keyauth-saas/apps/server/internal/handler"
 	"github.com/your-org/keyauth-saas/apps/server/internal/logger"
 	"github.com/your-org/keyauth-saas/apps/server/internal/router"
-	"github.com/your-org/keyauth-saas/apps/server/pkg/snowflake"
+	"github.com/your-org/keyauth-saas/pkg/snowflake"
 )
 
 // @title KeyAuth SaaS API
@@ -81,17 +85,26 @@ func main() {
 	defer analysisCancel()
 	go analysis.StartAggregationWorker(analysisCtx, deps.AnalysisMgr)
 
-	// 5. 启动 HTTP 服务
+	// 5. 启动 HTTP 服务（v0.6.6：支持端口冲突自动 +1 重试）
+	// 端口探测与 serve 解耦：先用 net.Listen 找可用端口，再 srv.Serve(listener)
+	// 好处：端口冲突可重试，且 listener 已绑定后 serve 不会再因端口问题失败
+	listener, actualPort, err := listenWithPortRetry(cfg.App.Port, cfg.App.PortAutoIncrement, cfg.App.PortMaxAttempts)
+	if err != nil {
+		log.Fatalf("[FATAL] HTTP 监听失败: %v", err)
+	}
+	if actualPort != cfg.App.Port {
+		log.Printf("[WARN] 原始端口 :%s 被占用，已自动切换到 :%s", cfg.App.Port, actualPort)
+	}
+
 	srv := &http.Server{
-		Addr:         ":" + cfg.App.Port,
 		Handler:      engine,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 	}
 
 	go func() {
-		log.Printf("[INFO] KeyAuth SaaS 服务启动，监听 :%s", cfg.App.Port)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Printf("[INFO] KeyAuth SaaS 服务启动，监听 :%s", actualPort)
+		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("[FATAL] HTTP 服务异常: %v", err)
 		}
 	}()
@@ -108,4 +121,71 @@ func main() {
 		log.Printf("[ERROR] 服务关闭失败: %v", err)
 	}
 	log.Println("[INFO] 服务已退出")
+}
+
+// listenWithPortRetry 监听 TCP 端口，支持端口冲突自动 +1 重试（v0.6.6 新增）
+//
+// 设计说明：
+//   - 端口探测与 HTTP serve 解耦，先用 net.Listen 找可用端口，再交给 srv.Serve
+//   - autoIncrement=false：只尝试一次，失败直接返回（保持 v0.6.5 前的原行为，生产安全）
+//   - autoIncrement=true：端口被占用（EADDRINUSE）时 +1 重试，最多 maxAttempts 次
+//   - 只对 EADDRINUSE 重试，其他错误（如权限不足、地址格式错误）直接返回，避免无意义重试
+//
+// 参数：
+//   - port: 起始端口（字符串，如 "8080"）
+//   - autoIncrement: 端口被占用时是否自动 +1 重试
+//   - maxAttempts: 最大尝试次数（含起始端口），autoIncrement=true 时生效，<=0 时取默认 20
+//
+// 返回：
+//   - listener: 已绑定的 net.Listener（调用方负责 Close，通常由 srv.Serve 接管）
+//   - actualPort: 实际监听到的端口（字符串，可能与入参 port 不同）
+//   - err: 错误
+func listenWithPortRetry(port string, autoIncrement bool, maxAttempts int) (net.Listener, string, error) {
+	startPort, err := strconv.Atoi(port)
+	if err != nil {
+		return nil, "", fmt.Errorf("无效的端口号 %q: %w", port, err)
+	}
+	if startPort < 1 || startPort > 65535 {
+		return nil, "", fmt.Errorf("端口号 %d 超出有效范围 1-65535", startPort)
+	}
+
+	// autoIncrement=false：单次尝试，失败直接返回（生产模式默认行为）
+	if !autoIncrement {
+		ln, err := net.Listen("tcp", ":"+port)
+		if err != nil {
+			return nil, "", err
+		}
+		return ln, port, nil
+	}
+
+	// autoIncrement=true：端口冲突时 +1 重试
+	if maxAttempts <= 0 {
+		maxAttempts = 20
+	}
+	for i := 0; i < maxAttempts; i++ {
+		curPort := startPort + i
+		if curPort > 65535 {
+			break
+		}
+		addr := ":" + strconv.Itoa(curPort)
+		ln, err := net.Listen("tcp", addr)
+		if err == nil {
+			return ln, strconv.Itoa(curPort), nil
+		}
+		// 只对端口占用错误重试，其他错误（权限不足等）直接返回
+		if !isAddrInUse(err) {
+			return nil, "", err
+		}
+		log.Printf("[WARN] 端口 %s 被占用，尝试下一个端口（第 %d/%d 次）", addr, i+1, maxAttempts)
+	}
+	return nil, "", fmt.Errorf("端口 %d-%d 全部被占用，已尝试 %d 次", startPort, startPort+maxAttempts-1, maxAttempts)
+}
+
+// isAddrInUse 判断错误是否为端口占用（EADDRINUSE）
+func isAddrInUse(err error) bool {
+	var sysErr *os.SyscallError
+	if errors.As(err, &sysErr) {
+		return errors.Is(sysErr.Err, syscall.EADDRINUSE)
+	}
+	return false
 }
